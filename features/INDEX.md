@@ -16,14 +16,15 @@
 | PROJ-1 | SMARD Datenintegration | In Review | [smard-data-integration](PROJ-1-smard-data-integration.md) | 2025-02-21 |
 | PROJ-2 | Preis-Optimierungsalgorithmus | In Review | [price-optimization-algorithm](PROJ-2-price-optimization-algorithm.md) | 2025-02-21 |
 | PROJ-3 | Dashboard UI - Preis-Chart | In Review | [dashboard-price-chart](PROJ-3-dashboard-price-chart.md) | 2025-02-21 |
-| PROJ-4 | Dashboard UI - Heatmap & KPIs | Planned | [dashboard-heatmap-kpis](PROJ-4-dashboard-heatmap-kpis.md) | 2025-02-21 |
+| PROJ-4 | Dashboard UI - Heatmap & KPIs | In Review | [dashboard-heatmap-kpis](PROJ-4-dashboard-heatmap-kpis.md) | 2025-02-21 |
 | PROJ-5 | Szenario-Konfigurator | In Review | [scenario-configurator](PROJ-5-scenario-configurator.md) | 2025-02-21 |
 | PROJ-6 | Passwortschutz | In Review | [password-protection](PROJ-6-password-protection.md) | 2025-02-21 |
-| PROJ-7 | Jahresansicht & Highlights | Planned | [yearly-overview-highlights](PROJ-7-yearly-overview-highlights.md) | 2025-02-21 |
+| PROJ-7 | Jahresansicht & Highlights | In Review | [yearly-overview-highlights](PROJ-7-yearly-overview-highlights.md) | 2025-02-21 |
+| PROJ-8 | Volatilitäts-Analyse & Spread | In Review | [volatility-analysis](PROJ-8-volatility-analysis.md) | 2026-02-22 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-8
+## Next Available ID: PROJ-9
 
 ## Recommended Build Order
 

@@ -142,7 +142,7 @@ export function KPIGrid({ optimization, isLoading }: KPIGridProps) {
         unit="/ Ladung"
         icon={Gift}
         trend="up"
-        description="Ersparnis fuer den Endkunden"
+        description="Ersparnis für den Endkunden"
         colorTheme="purple"
       />
 
@@ -151,7 +151,7 @@ export function KPIGrid({ optimization, isLoading }: KPIGridProps) {
         title="Beste Ladezeit"
         value={getBestChargingTime(optimization)}
         icon={Clock}
-        description="Guenstigste Stunden laut Marktpreis"
+        description="Günstigste Stunden laut Marktpreis"
         colorTheme="amber"
       />
     </div>
