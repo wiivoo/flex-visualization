@@ -22,27 +22,6 @@ export const SMARD_RESOLUTION = {
 } as const
 
 /**
- * Get meta data (timestamp range) for a filter
- */
-async function getSmardMeta(filter: number): Promise<{
-  timestamp: number
-  resolution: string
-}> {
-  const url = `${SMARD_BASE_URL}/${filter}/index.json`
-  const response = await fetch(url, {
-    next: { revalidate: 3600 } // Cache for 1 hour
-  })
-
-  if (!response.ok) {
-    throw new Error(`SMARD meta request failed: ${response.status}`)
-  }
-
-  const data = await response.json()
-  // Return most recent timestamp entry
-  return data[data.length - 1]
-}
-
-/**
  * Get time series data for a specific timestamp
  */
 async function getSmardTimeSeries(
@@ -60,7 +39,18 @@ async function getSmardTimeSeries(
   }
 
   const data = await response.json()
-  return data.data || [] // SMARD returns { meta: {}, data: [] }
+
+  // SMARD returns { meta_data: {...}, series: [[timestamp, price], ...] }
+  // Map the [timestamp, price] arrays to SmardPricePoint objects
+  if (data.series && Array.isArray(data.series)) {
+    return data.series.map((entry: [number, number | null]) => ({
+      timestamp: entry[0],
+      price_eur_mwh: entry[1]
+    }))
+  }
+
+  // Fallback: try data.data for compatibility
+  return data.data || []
 }
 
 /**

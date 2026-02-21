@@ -3,6 +3,7 @@
 import { ChevronLeft, ChevronRight, Calendar, BarChart3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { format, addDays, subDays, addMonths, subMonths, startOfMonth, endOfMonth, startOfQuarter, endOfQuarter, startOfYear, endOfYear } from 'date-fns'
+import { de } from 'date-fns/locale'
 
 export type TimeRange = 'day' | 'month' | 'quarter' | 'year'
 
@@ -103,7 +104,7 @@ export function TimeRangeSelector({
       case 'day':
         return format(selectedDate, 'dd.MM.yyyy')
       case 'month':
-        return format(selectedDate, 'MMMM yyyy')
+        return format(selectedDate, 'MMMM yyyy', { locale: de })
       case 'quarter':
         const q = Math.floor(selectedDate.getMonth() / 3) + 1
         return `Q${q} ${selectedDate.getFullYear()}`
