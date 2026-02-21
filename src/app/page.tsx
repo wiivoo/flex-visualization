@@ -176,7 +176,7 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-xl font-bold tracking-tight">FlexMon</h1>
               <p className="text-xs text-muted-foreground">
-                Flexibilitaets-Monetarisierung
+                Flexibilitäts-Monetarisierung
               </p>
             </div>
           </div>
@@ -256,7 +256,7 @@ export default function DashboardPage() {
                     {optimization.savings_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-green-600 dark:text-green-500">
-                    Gegenueber Standardtarif
+                    Gegenüber Standardtarif
                   </p>
                 </CardContent>
               </Card>
@@ -288,7 +288,7 @@ export default function DashboardPage() {
                     {optimization.customer_benefit_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-purple-600 dark:text-purple-500">
-                    Win-Win fuer den Kunden
+                    Win-Win für den Kunden
                   </p>
                 </CardContent>
               </Card>
@@ -304,7 +304,7 @@ export default function DashboardPage() {
                     {bestTimeLabel}
                   </p>
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                    Guenstigster Zeitraum
+                    Günstigster Zeitraum
                   </p>
                 </CardContent>
               </Card>
@@ -372,9 +372,9 @@ export default function DashboardPage() {
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-lg font-semibold">
                     {timeRange === 'day' ? 'Day-Ahead Preiskurve' :
-                     timeRange === 'month' ? 'Monatsuebersicht Preise' :
-                     timeRange === 'quarter' ? 'Quartalsuebersicht Preise' :
-                     'Jahresuebersicht Preise'}
+                     timeRange === 'month' ? 'Monatsübersicht Preise' :
+                     timeRange === 'quarter' ? 'Quartalsübersicht Preise' :
+                     'Jahresübersicht Preise'}
                   </h2>
                   <span className="text-sm text-muted-foreground">
                     {prices.length} Datenpunkte
