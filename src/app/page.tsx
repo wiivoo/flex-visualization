@@ -11,6 +11,8 @@ import { OptimizationSummary } from '@/components/dashboard/OptimizationSummary'
 import { PriceHeatmap } from '@/components/dashboard/PriceHeatmap'
 import { YearlyOverview } from '@/components/dashboard/YearlyOverview'
 import { VolatilityAnalysis } from '@/components/dashboard/VolatilityAnalysis'
+import { ScenarioComparison } from '@/components/dashboard/ScenarioComparison'
+import { ChargingTimeline } from '@/components/dashboard/ChargingTimeline'
 import { QuickConfigPanel } from '@/components/config/QuickConfigPanel'
 import { ConfigState, PricePoint, OptimizationResult, loadConfig, saveConfig, VEHICLE_PROFILES } from '@/lib/config'
 import { format } from 'date-fns'
@@ -29,31 +31,58 @@ export default function DashboardPage() {
   const fetchData = useCallback(async (date: Date, range: TimeRange, cfg: ConfigState) => {
     const { startDate, endDate } = getDateRange(range, date)
 
-    // For day view, fetch single day. For ranges, fetch all days in range.
-    const dates: Date[] = []
-    let current = new Date(startDate)
-    while (current <= endDate) {
-      dates.push(new Date(current))
-      current.setDate(current.getDate() + 1)
-      // Limit to 90 days for performance
-      if (dates.length > 90) break
-    }
-
     setError(null)
     setIsPricesLoading(true)
     setIsOptimizationLoading(true)
 
     try {
-      // Fetch prices for all dates in range
-      const fetchPromises = dates.map(d => {
-        const dateStr = format(d, 'yyyy-MM-dd')
-        return fetch(`/api/prices?type=day-ahead&date=${dateStr}`)
-          .then(res => res.ok ? res.json() : null)
-          .then(data => data?.prices || [])
-          .catch(() => [])
-      })
-      const results = await Promise.all(fetchPromises)
-      const allPrices: PricePoint[] = results.flat()
+      let allPrices: PricePoint[] = []
+
+      if (range === 'day') {
+        // For day view: single fetch
+        const dateStr = format(date, 'yyyy-MM-dd')
+        const res = await fetch(`/api/prices?type=day-ahead&date=${dateStr}`)
+        if (res.ok) {
+          const data = await res.json()
+          allPrices = data?.prices || []
+        }
+      } else {
+        // For longer ranges: try batch API first, fallback to per-day
+        const startStr = format(startDate, 'yyyy-MM-dd')
+        const endStr = format(endDate, 'yyyy-MM-dd')
+
+        try {
+          const batchRes = await fetch(`/api/prices/batch?startDate=${startStr}&endDate=${endStr}&type=day-ahead`)
+          if (batchRes.ok) {
+            const batchData = await batchRes.json()
+            allPrices = batchData?.prices || []
+          }
+        } catch {
+          // Batch API not available, fallback silently
+        }
+
+        // Fallback: per-day fetching if batch returned nothing
+        if (allPrices.length === 0) {
+          const dates: Date[] = []
+          let current = new Date(startDate)
+          while (current <= endDate) {
+            dates.push(new Date(current))
+            current.setDate(current.getDate() + 1)
+            if (dates.length > 90) break
+          }
+
+          const fetchPromises = dates.map(d => {
+            const dateStr = format(d, 'yyyy-MM-dd')
+            return fetch(`/api/prices?type=day-ahead&date=${dateStr}`)
+              .then(res => res.ok ? res.json() : null)
+              .then(data => data?.prices || [])
+              .catch(() => [])
+          })
+          const results = await Promise.all(fetchPromises)
+          allPrices = results.flat()
+        }
+      }
+
       setPrices(allPrices)
 
       // Only run optimization for day view
@@ -147,7 +176,7 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-xl font-bold tracking-tight">FlexMon</h1>
               <p className="text-xs text-muted-foreground">
-                Flexibilitäts-Monetarisierung
+                Flexibilitaets-Monetarisierung
               </p>
             </div>
           </div>
@@ -227,7 +256,7 @@ export default function DashboardPage() {
                     {optimization.savings_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-green-600 dark:text-green-500">
-                    Gegenüber Standardtarif
+                    Gegenueber Standardtarif
                   </p>
                 </CardContent>
               </Card>
@@ -259,7 +288,7 @@ export default function DashboardPage() {
                     {optimization.customer_benefit_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-purple-600 dark:text-purple-500">
-                    Win-Win für den Kunden
+                    Win-Win fuer den Kunden
                   </p>
                 </CardContent>
               </Card>
@@ -275,7 +304,7 @@ export default function DashboardPage() {
                     {bestTimeLabel}
                   </p>
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                    Günstigster Zeitraum
+                    Guenstigster Zeitraum
                   </p>
                 </CardContent>
               </Card>
@@ -343,9 +372,9 @@ export default function DashboardPage() {
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-lg font-semibold">
                     {timeRange === 'day' ? 'Day-Ahead Preiskurve' :
-                     timeRange === 'month' ? 'Monatsübersicht Preise' :
-                     timeRange === 'quarter' ? 'Quartalsübersicht Preise' :
-                     'Jahresübersicht Preise'}
+                     timeRange === 'month' ? 'Monatsuebersicht Preise' :
+                     timeRange === 'quarter' ? 'Quartalsuebersicht Preise' :
+                     'Jahresuebersicht Preise'}
                   </h2>
                   <span className="text-sm text-muted-foreground">
                     {prices.length} Datenpunkte
@@ -357,20 +386,42 @@ export default function DashboardPage() {
                   optimalEnd={optimalEnd}
                   avgPrice={optimization?.avg_price_without_flex}
                   optimizedAvgPrice={optimization?.avg_price_with_flex}
+                  chargingSchedule={optimization?.charging_schedule}
                   isLoading={isPricesLoading}
                   timeRange={timeRange}
                 />
               </div>
+
+              {/* Charging Timeline - below chart, only for day view */}
+              {timeRange === 'day' && optimization && optimization.charging_schedule.length > 0 && (
+                <div className="mt-4">
+                  <ChargingTimeline
+                    schedule={optimization.charging_schedule}
+                    windowStart={config.window_start}
+                    windowEnd={config.window_end}
+                    isLoading={isOptimizationLoading}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Right sidebar */}
-            <div className="lg:col-span-1">
+            <div className="space-y-4 lg:col-span-1">
               {timeRange === 'day' ? (
                 <>
+                  {/* Scenario Comparison - replaces static config summary */}
+                  <ScenarioComparison
+                    optimization={optimization}
+                    config={config}
+                    prices={prices}
+                    isLoading={isOptimizationLoading}
+                  />
+
+                  {/* Optimization Summary (collapsed) */}
                   <OptimizationSummary optimization={optimization} isLoading={isOptimizationLoading} />
 
-                  {/* Current config summary */}
-                  <div className="mt-4 rounded-xl border bg-white p-4 shadow-sm dark:bg-slate-950">
+                  {/* Config edit button */}
+                  <div className="rounded-xl border bg-white p-4 shadow-sm dark:bg-slate-950">
                     <h3 className="mb-3 text-sm font-semibold">Konfiguration</h3>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
@@ -391,6 +442,12 @@ export default function DashboardPage() {
                           {config.window_start} - {config.window_end}
                         </span>
                       </div>
+                      {config.dso && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">14a DSO:</span>
+                          <span className="font-medium text-purple-600 dark:text-purple-400">{config.dso}</span>
+                        </div>
+                      )}
                     </div>
                     <Button
                       variant="outline"
