@@ -1,8 +1,9 @@
 'use client'
 
-import { ConfigState, VEHICLE_PROFILES, saveConfig } from '@/lib/config'
+import { ConfigState, VEHICLE_PROFILES, DSO_PROFILES, saveConfig } from '@/lib/config'
 import { Button } from '@/components/ui/button'
-import { X, Car, Battery, Clock } from 'lucide-react'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { X, Car, Battery, Clock, Zap } from 'lucide-react'
 
 interface QuickConfigPanelProps {
   config: ConfigState
@@ -19,6 +20,12 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
 
   const updateStartLevel = (level: number) => {
     const newConfig = { ...config, start_level_percent: level }
+    onConfigChange(newConfig)
+    saveConfig(newConfig)
+  }
+
+  const updateDso = (dso: string) => {
+    const newConfig = { ...config, dso: dso === 'none' ? undefined : dso }
     onConfigChange(newConfig)
     saveConfig(newConfig)
   }
@@ -90,18 +97,62 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
         </span>
       </div>
 
+      {/* DSO Selector for 14a */}
+      <div>
+        <label className="mb-2 flex items-center gap-2 text-sm font-medium">
+          <Zap className="h-4 w-4" />
+          Netzbetreiber (14a Modul 3)
+        </label>
+        <Select
+          value={config.dso || 'none'}
+          onValueChange={updateDso}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="Kein Modul 3" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">Kein Modul 3</SelectItem>
+            {Object.values(DSO_PROFILES).map((dso) => (
+              <SelectItem key={dso.id} value={dso.id}>
+                {dso.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* Show HT/ST/NT rates when a DSO is selected */}
+        {config.dso && DSO_PROFILES[config.dso] && (
+          <div className="mt-2 rounded-lg border bg-purple-50/50 p-2 dark:bg-purple-950/20">
+            <div className="grid grid-cols-3 gap-2 text-center text-xs">
+              <div>
+                <p className="text-muted-foreground">HT</p>
+                <p className="font-semibold">{DSO_PROFILES[config.dso].ht_ct_kwh} ct</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">ST</p>
+                <p className="font-semibold">{DSO_PROFILES[config.dso].st_ct_kwh} ct</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">NT</p>
+                <p className="font-semibold text-green-600">{DSO_PROFILES[config.dso].nt_ct_kwh} ct</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="flex gap-2">
         <Button
           variant="outline"
           size="sm"
           className="flex-1"
           onClick={() => {
-            const newConfig = { ...config, start_level_percent: 20 }
+            const newConfig = { ...config, start_level_percent: 20, dso: undefined }
             onConfigChange(newConfig)
             saveConfig(newConfig)
           }}
         >
-          Auf Standard zurücksetzen
+          Auf Standard zuruecksetzen
         </Button>
       </div>
     </div>

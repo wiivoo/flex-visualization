@@ -36,6 +36,27 @@ export const VEHICLE_PROFILES: Record<VehicleProfile['id'], VehicleProfile> = {
   }
 }
 
+export interface DsoProfile {
+  id: string
+  name: string
+  ht_ct_kwh: number  // Hochtarif (day)
+  st_ct_kwh: number  // Standardtarif
+  nt_ct_kwh: number  // Niedertarif (night)
+}
+
+export const DSO_PROFILES: Record<string, DsoProfile> = {
+  'eon': { id: 'eon', name: 'E.ON Netz', ht_ct_kwh: 9.2, st_ct_kwh: 7.5, nt_ct_kwh: 4.8 },
+  'westnetz': { id: 'westnetz', name: 'Westnetz', ht_ct_kwh: 8.8, st_ct_kwh: 7.2, nt_ct_kwh: 4.5 },
+  'tennet': { id: 'tennet', name: 'TenneT (50Hertz)', ht_ct_kwh: 9.0, st_ct_kwh: 7.3, nt_ct_kwh: 4.6 },
+  'netzbw': { id: 'netzbw', name: 'Netze BW', ht_ct_kwh: 8.5, st_ct_kwh: 7.0, nt_ct_kwh: 4.3 },
+  'bayernwerk': { id: 'bayernwerk', name: 'Bayernwerk', ht_ct_kwh: 8.7, st_ct_kwh: 7.1, nt_ct_kwh: 4.4 },
+  'stromnetz-hamburg': { id: 'stromnetz-hamburg', name: 'Stromnetz Hamburg', ht_ct_kwh: 9.5, st_ct_kwh: 7.8, nt_ct_kwh: 5.0 },
+  'stromnetz-berlin': { id: 'stromnetz-berlin', name: 'Stromnetz Berlin', ht_ct_kwh: 9.3, st_ct_kwh: 7.6, nt_ct_kwh: 4.9 },
+  'syna': { id: 'syna', name: 'Syna (Suedwest)', ht_ct_kwh: 8.6, st_ct_kwh: 7.0, nt_ct_kwh: 4.3 },
+  'mitnetz': { id: 'mitnetz', name: 'MITNETZ Strom', ht_ct_kwh: 9.1, st_ct_kwh: 7.4, nt_ct_kwh: 4.7 },
+  'avacon': { id: 'avacon', name: 'Avacon Netz', ht_ct_kwh: 8.9, st_ct_kwh: 7.2, nt_ct_kwh: 4.5 },
+}
+
 export interface ConfigState {
   vehicle: VehicleProfile['id']
   base_price_ct_kwh: number
@@ -44,6 +65,7 @@ export interface ConfigState {
   start_level_percent: number
   window_start: string
   window_end: string
+  dso?: string // Selected DSO for 14a grid fees, undefined = no Modul 3
 }
 
 export const DEFAULT_CONFIG: ConfigState = {

@@ -1,11 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import {
-  LineChart,
+  ComposedChart,
   Line,
   Area,
-  BarChart,
   Bar,
   XAxis,
   YAxis,
@@ -13,11 +12,13 @@ import {
   Tooltip,
   ResponsiveContainer,
   ReferenceArea,
-  ReferenceLine
+  ReferenceLine,
+  Brush,
+  Cell
 } from 'recharts'
-import { PricePoint } from '@/lib/config'
-import { TrendingUp, TrendingDown } from 'lucide-react'
-import { format, startOfDay, eachDayOfInterval, differenceInDays } from 'date-fns'
+import { PricePoint, ChargingBlock } from '@/lib/config'
+import { TrendingDown } from 'lucide-react'
+import { format, startOfDay } from 'date-fns'
 import { de } from 'date-fns/locale'
 import type { TimeRange } from './TimeRangeSelector'
 
@@ -25,10 +26,23 @@ interface PriceChartProps {
   prices: PricePoint[]
   optimalStart?: string
   optimalEnd?: string
-  avgPrice?: number // Average price WITHOUT optimization
-  optimizedAvgPrice?: number // Average price WITH optimization
+  avgPrice?: number
+  optimizedAvgPrice?: number
+  chargingSchedule?: ChargingBlock[]
   isLoading?: boolean
   timeRange?: TimeRange
+  onDataPointClick?: (dataPoint: ChartDataPoint) => void
+}
+
+export interface ChartDataPoint {
+  time: string
+  timeValue: Date
+  price: number
+  fullDate: string
+  isCharging?: boolean
+  chargingKwh?: number
+  minPrice?: number
+  maxPrice?: number
 }
 
 export function PriceChart({
@@ -37,24 +51,58 @@ export function PriceChart({
   optimalEnd,
   avgPrice,
   optimizedAvgPrice,
+  chargingSchedule,
   isLoading,
-  timeRange = 'day'
+  timeRange = 'day',
+  onDataPointClick
 }: PriceChartProps) {
+  const [selectedPoint, setSelectedPoint] = useState<ChartDataPoint | null>(null)
+
+  // Build a set of charging hours for overlay
+  const chargingHours = useMemo(() => {
+    if (!chargingSchedule || chargingSchedule.length === 0) return new Map<string, number>()
+    const map = new Map<string, number>()
+    chargingSchedule.forEach(block => {
+      const [startH, startM] = block.start.split(':').map(Number)
+      const [endH, endM] = block.end.split(':').map(Number)
+      // Walk through 15-min intervals
+      let h = startH
+      let m = startM
+      const kwhPerInterval = block.kwh / (
+        ((endH * 60 + endM) - (startH * 60 + startM) + (endH < startH ? 24 * 60 : 0)) / 15
+      )
+      while (!(h === endH && m === endM)) {
+        const key = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
+        map.set(key, (map.get(key) || 0) + kwhPerInterval)
+        m += 15
+        if (m >= 60) { m = 0; h = (h + 1) % 24 }
+        // Safety: break after 96 iterations (24h of 15-min)
+        if (map.size > 96) break
+      }
+    })
+    return map
+  }, [chargingSchedule])
+
   // Transform and aggregate prices based on time range
   const chartData = useMemo(() => {
     if (prices.length === 0) return []
 
-    // For day view: show hourly data
     if (timeRange === 'day') {
       return prices.map(point => {
         const date = new Date(point.timestamp)
         const hours = date.getHours().toString().padStart(2, '0')
         const minutes = date.getMinutes().toString().padStart(2, '0')
+        const timeKey = `${hours}:${minutes}`
+        const chargingKwh = chargingHours.get(timeKey) || 0
         return {
-          time: `${hours}:${minutes}`,
+          time: timeKey,
           timeValue: date,
           price: point.price_ct_kwh,
-          fullDate: point.timestamp
+          fullDate: point.timestamp,
+          isCharging: chargingKwh > 0,
+          chargingKwh,
+          // Use price as bar height for charging overlay
+          chargingBar: chargingKwh > 0 ? point.price_ct_kwh : 0
         }
       })
     }
@@ -76,19 +124,22 @@ export function PriceChart({
     return Array.from(dailyPrices.entries())
       .sort((a, b) => a[1].date.getTime() - b[1].date.getTime())
       .map(([dayKey, data]) => {
-        const avgPrice = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length
-        const minPrice = Math.min(...data.prices)
-        const maxPrice = Math.max(...data.prices)
+        const avg = data.prices.reduce((sum, p) => sum + p, 0) / data.prices.length
+        const minP = Math.min(...data.prices)
+        const maxP = Math.max(...data.prices)
         return {
           time: dayKey,
           timeValue: data.date,
-          price: avgPrice,
-          minPrice,
-          maxPrice,
-          fullDate: data.date.toISOString()
+          price: avg,
+          minPrice: minP,
+          maxPrice: maxP,
+          fullDate: data.date.toISOString(),
+          isCharging: false,
+          chargingKwh: 0,
+          chargingBar: 0
         }
       })
-  }, [prices, timeRange])
+  }, [prices, timeRange, chargingHours])
 
   // Calculate optimal zone indices
   const optimalZone = useMemo(() => {
@@ -102,25 +153,57 @@ export function PriceChart({
     return { startIndex, endIndex }
   }, [chartData, optimalStart, optimalEnd])
 
-  // Find max price for Y-axis scaling
-  const maxPrice = useMemo(() => {
-    if (chartData.length === 0) return 50
-    const max = Math.max(...chartData.map(d => d.price))
-    return Math.max(50, Math.ceil(max / 50) * 50)
+  // Fix Y-axis scaling: use actual data range with 10-20% padding
+  const yAxisDomain = useMemo(() => {
+    if (chartData.length === 0) return [0, 20]
+    const allPrices = chartData.map(d => d.price)
+    const dataMin = Math.min(...allPrices)
+    const dataMax = Math.max(...allPrices)
+    const range = dataMax - dataMin
+    const padding = Math.max(range * 0.15, 1) // at least 1 ct padding
+
+    const yMin = dataMin < 0 ? Math.floor((dataMin - padding) / 5) * 5 : Math.max(0, Math.floor((dataMin - padding) / 5) * 5)
+    const yMax = Math.ceil((dataMax + padding) / 5) * 5
+
+    return [yMin, yMax]
   }, [chartData])
 
-  // Find min price for Y-axis scaling
-  const minPrice = useMemo(() => {
-    if (chartData.length === 0) return 0
-    const min = Math.min(...chartData.map(d => d.price))
-    return min < 0 ? Math.floor(min / 10) * 10 : 0
-  }, [chartData])
+  // Find cheapest and most expensive hours for annotations
+  const priceAnnotations = useMemo(() => {
+    if (timeRange !== 'day' || chartData.length === 0) return { cheapest: null, expensive: null }
+
+    // Only look at unique hourly prices (skip 15-min duplicates)
+    const hourly = new Map<number, { time: string; price: number }>()
+    chartData.forEach(d => {
+      const hour = d.timeValue.getHours()
+      if (!hourly.has(hour) || d.price < hourly.get(hour)!.price) {
+        hourly.set(hour, { time: d.time, price: d.price })
+      }
+    })
+
+    const sorted = Array.from(hourly.values()).sort((a, b) => a.price - b.price)
+    if (sorted.length < 2) return { cheapest: null, expensive: null }
+
+    return {
+      cheapest: sorted[0],
+      expensive: sorted[sorted.length - 1]
+    }
+  }, [chartData, timeRange])
 
   // Calculate savings percentage
   const savingsPercent = useMemo(() => {
     if (!avgPrice || !optimizedAvgPrice) return null
     return ((avgPrice - optimizedAvgPrice) / avgPrice * 100).toFixed(1)
   }, [avgPrice, optimizedAvgPrice])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleChartClick = (data: any) => {
+    if (data?.activePayload?.[0]?.payload) {
+      const point = data.activePayload[0].payload as ChartDataPoint
+      setSelectedPoint(point)
+      onDataPointClick?.(point)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -136,7 +219,7 @@ export function PriceChart({
   if (chartData.length === 0) {
     return (
       <div className="flex h-[400px] items-center justify-center rounded-lg border bg-muted/20">
-        <p className="text-muted-foreground">Keine Daten verfügbar</p>
+        <p className="text-muted-foreground">Keine Daten verfuegbar</p>
       </div>
     )
   }
@@ -147,10 +230,9 @@ export function PriceChart({
       {timeRange === 'day' && avgPrice && optimizedAvgPrice && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border bg-gradient-to-r from-slate-50 to-blue-50 p-4 dark:from-slate-900 dark:to-blue-950">
           <div className="flex items-center gap-6">
-            {/* Average of time window */}
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700">
-                <span className="text-lg font-bold text-slate-600 dark:text-slate-400">∅</span>
+                <span className="text-lg font-bold text-slate-600 dark:text-slate-400">O/</span>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Fenster-Durchschnitt</p>
@@ -160,14 +242,12 @@ export function PriceChart({
               </div>
             </div>
 
-            {/* Arrow */}
             <div className="text-muted-foreground">
               <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
               </svg>
             </div>
 
-            {/* Optimized price */}
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
                 <TrendingDown className="h-5 w-5 text-green-600 dark:text-green-400" />
@@ -181,18 +261,53 @@ export function PriceChart({
             </div>
           </div>
 
-          {/* Savings Badge */}
           {savingsPercent && (
             <div className="flex items-center gap-2 rounded-full bg-green-500 px-4 py-2 text-white">
               <TrendingDown className="h-4 w-4" />
-              <span className="font-semibold">{savingsPercent}% günstiger</span>
+              <span className="font-semibold">{savingsPercent}% guenstiger</span>
             </div>
           )}
         </div>
       )}
 
+      {/* Selected point detail panel */}
+      {selectedPoint && timeRange === 'day' && (
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 dark:border-blue-800 dark:bg-blue-950/30">
+          <div className="flex items-center gap-4 text-sm">
+            <span className="font-medium">{selectedPoint.time} Uhr</span>
+            <span className="text-lg font-bold">{selectedPoint.price.toFixed(2)} ct/kWh</span>
+            {selectedPoint.isCharging && (
+              <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                Laden aktiv ({selectedPoint.chargingKwh?.toFixed(1)} kWh)
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => setSelectedPoint(null)}
+            className="text-xs text-muted-foreground hover:text-foreground"
+          >
+            Schliessen
+          </button>
+        </div>
+      )}
+
       <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+        <ComposedChart
+          data={chartData}
+          margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+          onClick={handleChartClick}
+        >
+          <defs>
+            <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
+              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
+            </linearGradient>
+            <linearGradient id="chargingGradient" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#22c55e" stopOpacity={0.6} />
+              <stop offset="95%" stopColor="#22c55e" stopOpacity={0.2} />
+            </linearGradient>
+          </defs>
+
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} />
           <XAxis
             dataKey="time"
@@ -204,13 +319,33 @@ export function PriceChart({
                        Math.ceil(chartData.length / 8)}
           />
           <YAxis
-            domain={[minPrice, maxPrice]}
+            domain={yAxisDomain}
             tick={{ fill: '#6b7280', fontSize: 12 }}
             axisLine={{ stroke: '#e5e7eb' }}
             tickLine={{ stroke: '#e5e7eb' }}
             label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft' }}
           />
           <Tooltip content={<CustomTooltip avgPrice={avgPrice} timeRange={timeRange} />} />
+
+          {/* Charging blocks overlay as bars */}
+          {timeRange === 'day' && chargingSchedule && chargingSchedule.length > 0 && (
+            <Bar
+              dataKey="chargingBar"
+              fill="url(#chargingGradient)"
+              isAnimationActive={true}
+              animationDuration={800}
+              radius={[2, 2, 0, 0]}
+            >
+              {chartData.map((entry, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={entry.isCharging ? 'url(#chargingGradient)' : 'transparent'}
+                  stroke={entry.isCharging ? '#22c55e' : 'none'}
+                  strokeWidth={entry.isCharging ? 1 : 0}
+                />
+              ))}
+            </Bar>
+          )}
 
           {/* Average price reference line (time window) */}
           {avgPrice && (
@@ -220,7 +355,7 @@ export function PriceChart({
               strokeDasharray="5 5"
               strokeWidth={2}
               label={{
-                value: 'Ø Fenster',
+                value: 'O/ Fenster',
                 position: 'right',
                 fill: '#64748b',
                 fontSize: 11
@@ -244,13 +379,68 @@ export function PriceChart({
             />
           )}
 
-          {/* Optimal charging zone (green highlight) - only for day view */}
+          {/* Cheapest hour annotation */}
+          {priceAnnotations.cheapest && (
+            <ReferenceLine
+              x={priceAnnotations.cheapest.time}
+              stroke="#22c55e"
+              strokeDasharray="3 3"
+              strokeWidth={1}
+              label={{
+                value: `Min: ${priceAnnotations.cheapest.price.toFixed(1)}`,
+                position: 'top',
+                fill: '#22c55e',
+                fontSize: 10
+              }}
+            />
+          )}
+
+          {/* Most expensive hour annotation */}
+          {priceAnnotations.expensive && (
+            <ReferenceLine
+              x={priceAnnotations.expensive.time}
+              stroke="#ef4444"
+              strokeDasharray="3 3"
+              strokeWidth={1}
+              label={{
+                value: `Max: ${priceAnnotations.expensive.price.toFixed(1)}`,
+                position: 'top',
+                fill: '#ef4444',
+                fontSize: 10
+              }}
+            />
+          )}
+
+          {/* Optimal charging zone (green highlight) - stronger opacity + border */}
           {timeRange === 'day' && optimalZone && (
             <ReferenceArea
               x1={chartData[optimalZone.startIndex]?.time}
               x2={chartData[optimalZone.endIndex]?.time}
               fill="#22c55e"
-              fillOpacity={0.15}
+              fillOpacity={0.25}
+              stroke="#22c55e"
+              strokeOpacity={0.5}
+              strokeWidth={1}
+              label={{
+                value: 'Ladefenster',
+                position: 'insideTop',
+                fill: '#16a34a',
+                fontSize: 11,
+                fontWeight: 600
+              }}
+            />
+          )}
+
+          {/* Gradient fill below line */}
+          {timeRange === 'day' && (
+            <Area
+              type="monotone"
+              dataKey="price"
+              stroke="transparent"
+              fill="url(#priceGradient)"
+              fillOpacity={0.3}
+              isAnimationActive={true}
+              animationDuration={1000}
             />
           )}
 
@@ -261,26 +451,22 @@ export function PriceChart({
             stroke="#3b82f6"
             strokeWidth={timeRange === 'day' ? 3 : 2}
             dot={timeRange === 'day' ? false : chartData.length < 30}
-            activeDot={{ r: 6, fill: '#3b82f6', strokeWidth: 2 }}
+            activeDot={{ r: 6, fill: '#3b82f6', strokeWidth: 2, cursor: 'pointer' }}
+            isAnimationActive={true}
+            animationDuration={1000}
           />
 
-          {/* Gradient fill below line */}
-          {timeRange === 'day' && (
-            <Area
-              type="monotone"
-              dataKey="price"
+          {/* Brush zoom for day view */}
+          {timeRange === 'day' && chartData.length > 24 && (
+            <Brush
+              dataKey="time"
+              height={30}
               stroke="#3b82f6"
-              fill="url(#priceGradient)"
-              fillOpacity={0.3}
+              fill="#f8fafc"
+              travellerWidth={10}
             />
           )}
-          <defs>
-            <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.3} />
-              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-        </LineChart>
+        </ComposedChart>
       </ResponsiveContainer>
 
       {/* Enhanced Legend */}
@@ -291,16 +477,22 @@ export function PriceChart({
             {timeRange === 'day' ? 'Stundlicher Preis' : 'Tagesdurchschnitt'}
           </span>
         </div>
+        {timeRange === 'day' && chargingSchedule && chargingSchedule.length > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="h-3 w-12 rounded bg-green-500/40" />
+            <span className="text-muted-foreground">Laden aktiv</span>
+          </div>
+        )}
         {timeRange === 'day' && optimalZone && (
           <div className="flex items-center gap-2">
-            <div className="h-3 w-12 rounded bg-green-500/25" />
-            <span className="text-muted-foreground">Optimales Fenster</span>
+            <div className="h-3 w-12 rounded border border-green-500 bg-green-500/25" />
+            <span className="text-muted-foreground">Ladefenster</span>
           </div>
         )}
         {timeRange === 'day' && avgPrice && (
           <div className="flex items-center gap-2">
             <div className="h-0.5 w-12 border-t-2 border-dashed border-slate-500" />
-            <span className="text-muted-foreground">Ø Fenster</span>
+            <span className="text-muted-foreground">O/ Fenster</span>
           </div>
         )}
         {timeRange === 'day' && optimizedAvgPrice && (
@@ -320,6 +512,8 @@ interface TooltipPayload {
     price: number
     minPrice?: number
     maxPrice?: number
+    isCharging?: boolean
+    chargingKwh?: number
   }
 }
 
@@ -333,8 +527,6 @@ function CustomTooltip({ active, payload, avgPrice, timeRange }: {
 
   const data = payload[0].payload
   const price = data.price
-  const isCheap = price < 15
-  const isExpensive = price > 30
   const vsAverage = avgPrice ? ((price - avgPrice) / avgPrice * 100) : null
 
   return (
@@ -348,21 +540,16 @@ function CustomTooltip({ active, payload, avgPrice, timeRange }: {
           Spanne: {data.minPrice.toFixed(1)} - {data.maxPrice.toFixed(1)} ct/kWh
         </p>
       )}
+      {data.isCharging && (
+        <p className="mt-1 text-xs font-medium text-green-600 dark:text-green-400">
+          Laden: {data.chargingKwh?.toFixed(1)} kWh
+        </p>
+      )}
       {timeRange === 'day' && vsAverage !== null && Math.abs(vsAverage) > 5 && (
         <p className={`mt-1 text-xs font-medium ${
           vsAverage < 0 ? 'text-green-600' : 'text-red-600'
         }`}>
-          {vsAverage < 0 ? '↓' : '↑'} {Math.abs(vsAverage).toFixed(0)}% vs Durchschnitt
-        </p>
-      )}
-      {timeRange === 'day' && isCheap && (
-        <p className="mt-1 text-xs font-medium text-green-600">
-          Günstig – Gute Ladezeit!
-        </p>
-      )}
-      {timeRange === 'day' && isExpensive && (
-        <p className="mt-1 text-xs font-medium text-red-600">
-          Teuer!
+          {vsAverage < 0 ? 'v' : '^'} {Math.abs(vsAverage).toFixed(0)}% vs Durchschnitt
         </p>
       )}
     </div>
