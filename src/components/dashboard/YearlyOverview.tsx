@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { TrendingDown, TrendingUp, Activity, Calendar, ArrowRight } from 'lucide-react'
 import { PricePoint } from '@/lib/config'
 import { format, startOfMonth, endOfMonth, differenceInDays } from 'date-fns'
+import { de } from 'date-fns/locale'
 import {
   BarChart,
   Bar,
@@ -287,7 +288,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
                     <div>
                       <p className="text-sm font-medium">
                         <Calendar className="inline h-3 w-3 mr-1" />
-                        {format(day.date, 'MMM d, yyyy')}
+                        {format(day.date, 'd. MMM yyyy', { locale: de })}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         Spanne: {day.volatility.toFixed(0)} ct
@@ -322,7 +323,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
                     <div>
                       <p className="text-sm font-medium">
                         <Calendar className="inline h-3 w-3 mr-1" />
-                        {format(day.date, 'MMM d, yyyy')}
+                        {format(day.date, 'd. MMM yyyy', { locale: de })}
                       </p>
                       <p className="text-xs text-green-600 font-medium">
                         Min: {day.min.toFixed(2)} ct/kWh

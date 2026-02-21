@@ -18,6 +18,7 @@ import {
 import { PricePoint } from '@/lib/config'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import { format, startOfDay, eachDayOfInterval, differenceInDays } from 'date-fns'
+import { de } from 'date-fns/locale'
 import type { TimeRange } from './TimeRangeSelector'
 
 interface PriceChartProps {
@@ -63,7 +64,7 @@ export function PriceChart({
 
     prices.forEach(point => {
       const date = new Date(point.timestamp)
-      const dayKey = format(date, 'MMM d')
+      const dayKey = format(date, 'd. MMM', { locale: de })
       const dayStart = startOfDay(date)
 
       if (!dailyPrices.has(dayKey)) {

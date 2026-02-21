@@ -10,11 +10,11 @@ export async function createSession(password: string): Promise<string> {
   const expectedPassword = process.env.DASHBOARD_PASSWORD
 
   if (!expectedPassword) {
-    throw new Error('DASHBOARD_PASSWORD not configured')
+    throw new Error('DASHBOARD_PASSWORD nicht konfiguriert')
   }
 
   if (password !== expectedPassword) {
-    throw new Error('Invalid password')
+    throw new Error('Ungültiges Passwort')
   }
 
   const secret = typeof SECRET_KEY === 'string' ? new TextEncoder().encode(SECRET_KEY) : SECRET_KEY

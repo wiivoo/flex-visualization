@@ -113,8 +113,16 @@ export async function POST(request: NextRequest) {
 
     let currentBlock: ChargingBlock | null = null
 
+    // Sort chronologically, handling overnight windows correctly
+    // Times >= windowStart hour come before times < windowStart hour
+    const { hour: windowStartHour } = parseTime(config.window_start)
     selectedIntervals
-      .sort((a, b) => a.hour - b.hour || a.minute - b.minute) // Sort by time
+      .sort((a, b) => {
+        // Normalize hours relative to window start so overnight wraps are handled
+        const aNorm = a.hour < windowStartHour ? a.hour + 24 : a.hour
+        const bNorm = b.hour < windowStartHour ? b.hour + 24 : b.hour
+        return aNorm - bNorm || a.minute - b.minute
+      }) // Sort by time
       .forEach((interval, index) => {
         const time = formatTime(interval.hour, interval.minute)
         const endTime = new Date()
