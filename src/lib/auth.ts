@@ -2,7 +2,7 @@
 
 import { SignJWT, jwtVerify } from 'jose'
 
-const SECRET_KEY = process.env.AUTH_SECRET || new TextEncoder().encode('fallback-secret-key-change-in-production')
+const SECRET_KEY = process.env.AUTH_SECRET || process.env.DASHBOARD_SESSION_SECRET || new TextEncoder().encode('fallback-secret-key-change-in-production')
 const SESSION_COOKIE_NAME = 'flexmon-session'
 const SESSION_DURATION = 24 * 60 * 60 * 1000 // 24 hours
 

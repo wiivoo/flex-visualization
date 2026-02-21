@@ -10,6 +10,7 @@ import { KPIGrid } from '@/components/dashboard/KPIGrid'
 import { OptimizationSummary } from '@/components/dashboard/OptimizationSummary'
 import { PriceHeatmap } from '@/components/dashboard/PriceHeatmap'
 import { YearlyOverview } from '@/components/dashboard/YearlyOverview'
+import { VolatilityAnalysis } from '@/components/dashboard/VolatilityAnalysis'
 import { QuickConfigPanel } from '@/components/config/QuickConfigPanel'
 import { ConfigState, PricePoint, OptimizationResult, loadConfig, saveConfig, VEHICLE_PROFILES } from '@/lib/config'
 import { format } from 'date-fns'
@@ -146,7 +147,7 @@ export default function DashboardPage() {
             <div>
               <h1 className="text-xl font-bold tracking-tight">FlexMon</h1>
               <p className="text-xs text-muted-foreground">
-                Flexibilitaets-Monetarisierung
+                Flexibilitäts-Monetarisierung
               </p>
             </div>
           </div>
@@ -226,7 +227,7 @@ export default function DashboardPage() {
                     {optimization.savings_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-green-600 dark:text-green-500">
-                    Gegenueber Standardtarif
+                    Gegenüber Standardtarif
                   </p>
                 </CardContent>
               </Card>
@@ -258,7 +259,7 @@ export default function DashboardPage() {
                     {optimization.customer_benefit_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-purple-600 dark:text-purple-500">
-                    Win-Win fuer den Kunden
+                    Win-Win für den Kunden
                   </p>
                 </CardContent>
               </Card>
@@ -274,7 +275,7 @@ export default function DashboardPage() {
                     {bestTimeLabel}
                   </p>
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                    Guenstigster Zeitraum
+                    Günstigster Zeitraum
                   </p>
                 </CardContent>
               </Card>
@@ -453,6 +454,11 @@ export default function DashboardPage() {
 
         {/* Full-width sections below chart */}
         <section className="space-y-6">
+          {/* Volatility Analysis - visible when multi-day data */}
+          {prices.length > 24 && (
+            <VolatilityAnalysis prices={prices} />
+          )}
+
           {/* Price Heatmap - always visible when we have data */}
           {prices.length > 0 && (
             <PriceHeatmap
