@@ -21,10 +21,12 @@
 | PROJ-6 | Passwortschutz | In Review | [password-protection](PROJ-6-password-protection.md) | 2025-02-21 |
 | PROJ-7 | Jahresansicht & Highlights | In Review | [yearly-overview-highlights](PROJ-7-yearly-overview-highlights.md) | 2025-02-21 |
 | PROJ-8 | Volatilitäts-Analyse & Spread | In Review | [volatility-analysis](PROJ-8-volatility-analysis.md) | 2026-02-22 |
+| PROJ-9 | Multi-Source Strompreisdaten | In Review | [multi-source-prices](PROJ-9-multi-source-prices.md) | 2026-02-22 |
+| PROJ-10 | Baseline vs. Load Shifting | In Review | [load-shifting-visualization](PROJ-10-load-shifting-visualization.md) | 2026-02-22 |
 
 <!-- Add features above this line -->
 
-## Next Available ID: PROJ-9
+## Next Available ID: PROJ-11
 
 ## Recommended Build Order
 

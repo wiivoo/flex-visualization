@@ -29,6 +29,8 @@ import {
 } from 'date-fns'
 import { convertSmardPrice, SMARD_FILTER, SMARD_RESOLUTION } from '@/lib/smard'
 import type { SmardPricePoint } from '@/lib/smard'
+import { fetchAwattarRange } from '@/lib/awattar'
+import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchCsvPrices } from '@/lib/csv-prices'
 import { getCachedPrices, setCachedPrices } from '@/lib/price-cache'
 
@@ -176,6 +178,42 @@ async function fetchSmardBatch(
   }
 }
 
+// --- aWATTar Batch-Funktion ---
+
+/**
+ * aWATTar-Preise für gesamten Zeitraum laden (native Bereichsabfrage)
+ */
+async function fetchAwattarBatch(
+  startDate: Date,
+  endDate: Date
+): Promise<PricePoint[] | null> {
+  try {
+    const prices = await fetchAwattarRange(startDate, endDate)
+    return prices.length > 0 ? prices : null
+  } catch (error) {
+    console.error('aWATTar Batch-Fehler:', error)
+    return null
+  }
+}
+
+// --- Energy-Charts Batch-Funktion ---
+
+/**
+ * Energy-Charts-Preise für gesamten Zeitraum laden (native Bereichsabfrage)
+ */
+async function fetchEnergyChartsBatch(
+  startDate: Date,
+  endDate: Date
+): Promise<PricePoint[] | null> {
+  try {
+    const prices = await fetchEnergyChartsRange(startDate, endDate)
+    return prices.length > 0 ? prices : null
+  } catch (error) {
+    console.error('Energy-Charts Batch-Fehler:', error)
+    return null
+  }
+}
+
 // --- CSV Batch-Funktion ---
 
 /**
@@ -317,7 +355,7 @@ async function getCachedDays(
 async function cachePricesByDay(
   prices: PricePoint[],
   type: 'day-ahead' | 'intraday' | 'forward',
-  source: 'smard' | 'csv'
+  source: 'awattar' | 'smard' | 'energy-charts' | 'csv'
 ): Promise<void> {
   // Preise nach Tag gruppieren
   const byDay = new Map<string, PricePoint[]>()
@@ -414,23 +452,34 @@ export async function GET(request: NextRequest) {
 
   // Schritt 2: Fehlende Daten laden
   let fetchedPrices: PricePoint[] | null = null
-  let source: 'smard' | 'csv' | 'demo' = 'demo'
+  let source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo' = 'demo'
 
   // Nur fehlende Tage laden: Berechne Zeitraum der fehlenden Tage
   const uncachedStart = uncachedDays[0]
   const uncachedEnd = uncachedDays[uncachedDays.length - 1]
 
   if (type === 'day-ahead') {
-    // Schritt 2a: SMARD API (wochenweise, parallel)
-    fetchedPrices = await fetchSmardBatch(uncachedStart, uncachedEnd)
+    // Schritt 2a: aWATTar (native Bereichsabfrage, schnellste Quelle)
+    fetchedPrices = await fetchAwattarBatch(uncachedStart, uncachedEnd)
     if (fetchedPrices && fetchedPrices.length > 0) {
-      source = 'smard'
+      source = 'awattar'
     } else {
-      // Schritt 2b: CSV Fallback
-      const csvType = type === 'day-ahead' ? 'day-ahead' : 'day-ahead'
-      fetchedPrices = await fetchCsvBatch(uncachedStart, uncachedEnd, csvType)
+      // Schritt 2b: SMARD API (wochenweise, parallel)
+      fetchedPrices = await fetchSmardBatch(uncachedStart, uncachedEnd)
       if (fetchedPrices && fetchedPrices.length > 0) {
-        source = 'csv'
+        source = 'smard'
+      } else {
+        // Schritt 2c: Energy-Charts (native Bereichsabfrage)
+        fetchedPrices = await fetchEnergyChartsBatch(uncachedStart, uncachedEnd)
+        if (fetchedPrices && fetchedPrices.length > 0) {
+          source = 'energy-charts'
+        } else {
+          // Schritt 2d: CSV Fallback
+          fetchedPrices = await fetchCsvBatch(uncachedStart, uncachedEnd, 'day-ahead')
+          if (fetchedPrices && fetchedPrices.length > 0) {
+            source = 'csv'
+          }
+        }
       }
     }
   } else {

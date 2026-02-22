@@ -66,6 +66,7 @@ export interface ConfigState {
   window_start: string
   window_end: string
   dso?: string // Selected DSO for 14a grid fees, undefined = no Modul 3
+  priceType?: 'day-ahead' | 'intraday' | 'forward'
 }
 
 export const DEFAULT_CONFIG: ConfigState = {
@@ -135,6 +136,9 @@ export interface OptimizationResult {
   avg_price_with_flex?: number
   energy_charged_kwh?: number
   target_level_reached?: boolean
+  // Baseline comparison (sofortiges Laden vs. optimiert)
+  baseline_schedule?: ChargingBlock[]
+  baseline_avg_price?: number
 }
 
 export interface ChargingBlock {

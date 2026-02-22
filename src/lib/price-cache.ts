@@ -10,7 +10,7 @@ export interface CachedPriceData {
   date: string // YYYY-MM-DD
   type: 'day-ahead' | 'intraday' | 'forward'
   cached_at: string // ISO timestamp
-  source: 'smard' | 'csv' | 'demo'
+  source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo'
   prices_json: Array<{ timestamp: string; price_ct_kwh: number | null }>
 }
 
@@ -59,7 +59,7 @@ export async function getCachedPrices(
 export async function setCachedPrices(
   date: string,
   type: 'day-ahead' | 'intraday' | 'forward',
-  source: 'smard' | 'csv' | 'demo',
+  source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo',
   prices: Array<{ timestamp: string; price_ct_kwh: number | null }>
 ): Promise<void> {
   try {
