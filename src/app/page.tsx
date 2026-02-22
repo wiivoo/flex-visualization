@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Zap, LogOut, Settings2, PiggyBank, TrendingUp, Users, Clock, BarChart3, ArrowDown, ArrowUp, Activity } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { TimeRangeSelector, TimeRange, getDateRange } from '@/components/charts/TimeRangeSelector'
 import { PriceChart } from '@/components/charts/PriceChart'
@@ -13,6 +14,7 @@ import { YearlyOverview } from '@/components/dashboard/YearlyOverview'
 import { VolatilityAnalysis } from '@/components/dashboard/VolatilityAnalysis'
 import { ScenarioComparison } from '@/components/dashboard/ScenarioComparison'
 import { ChargingTimeline } from '@/components/dashboard/ChargingTimeline'
+import { LoadShiftingComparison } from '@/components/dashboard/LoadShiftingComparison'
 import { QuickConfigPanel } from '@/components/config/QuickConfigPanel'
 import { ConfigState, PricePoint, OptimizationResult, loadConfig, saveConfig, VEHICLE_PROFILES } from '@/lib/config'
 import { format } from 'date-fns'
@@ -27,6 +29,7 @@ export default function DashboardPage() {
   const [isPricesLoading, setIsPricesLoading] = useState(false)
   const [isOptimizationLoading, setIsOptimizationLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [priceSource, setPriceSource] = useState<string>('')
 
   const fetchData = useCallback(async (date: Date, range: TimeRange, cfg: ConfigState) => {
     const { startDate, endDate } = getDateRange(range, date)
@@ -45,6 +48,7 @@ export default function DashboardPage() {
         if (res.ok) {
           const data = await res.json()
           allPrices = data?.prices || []
+          setPriceSource(data?.source || '')
         }
       } else {
         // For longer ranges: try batch API first, fallback to per-day
@@ -56,6 +60,7 @@ export default function DashboardPage() {
           if (batchRes.ok) {
             const batchData = await batchRes.json()
             allPrices = batchData?.prices || []
+            setPriceSource(batchData?.source || '')
           }
         } catch {
           // Batch API not available, fallback silently
@@ -376,9 +381,16 @@ export default function DashboardPage() {
                      timeRange === 'quarter' ? 'Quartalsübersicht Preise' :
                      'Jahresübersicht Preise'}
                   </h2>
-                  <span className="text-sm text-muted-foreground">
-                    {prices.length} Datenpunkte
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      {prices.length} Datenpunkte
+                    </span>
+                    {priceSource && (
+                      <Badge variant="outline" className="text-xs">
+                        Quelle: {priceSource}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 <PriceChart
                   prices={prices}
@@ -511,6 +523,16 @@ export default function DashboardPage() {
 
         {/* Full-width sections below chart */}
         <section className="space-y-6">
+          {/* Load Shifting - der zentrale Business Case */}
+          <LoadShiftingComparison
+            prices={prices}
+            optimization={optimization}
+            config={config}
+            timeRange={timeRange}
+            selectedDate={selectedDate}
+            isLoading={isPricesLoading || isOptimizationLoading}
+          />
+
           {/* Volatility Analysis - visible when multi-day data */}
           {prices.length > 24 && (
             <VolatilityAnalysis prices={prices} />

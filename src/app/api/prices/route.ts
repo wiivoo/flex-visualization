@@ -14,6 +14,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { parseISO, format, startOfDay, addMinutes } from 'date-fns'
 import { fetchSmardDayAhead, convertSmardPrice } from '@/lib/smard'
+import { fetchAwattarDayAhead } from '@/lib/awattar'
+import { fetchEnergyChartsDayAhead } from '@/lib/energy-charts'
 import { fetchCsvPrices, hasCsvData } from '@/lib/csv-prices'
 import { getCachedPrices, setCachedPrices } from '@/lib/price-cache'
 
@@ -59,6 +61,32 @@ function generateDemoPrices(date: Date): PricePoint[] {
   }
 
   return prices
+}
+
+/**
+ * Fetch from aWATTar API (Day-Ahead, EPEX Spot)
+ */
+async function fetchFromAwattar(date: Date): Promise<PricePoint[] | null> {
+  try {
+    const prices = await fetchAwattarDayAhead(date)
+    return prices.length > 0 ? prices : null
+  } catch (error) {
+    console.error('aWATTar Abruffehler:', error)
+    return null
+  }
+}
+
+/**
+ * Fetch from Energy-Charts API (Fraunhofer ISE)
+ */
+async function fetchFromEnergyCharts(date: Date): Promise<PricePoint[] | null> {
+  try {
+    const prices = await fetchEnergyChartsDayAhead(date)
+    return prices.length > 0 ? prices : null
+  } catch (error) {
+    console.error('Energy-Charts Abruffehler:', error)
+    return null
+  }
 }
 
 /**
@@ -150,21 +178,35 @@ export async function GET(request: NextRequest) {
     })
   }
 
-  let result: { prices: PricePoint[]; source: 'smard' | 'csv' | 'demo' }
+  let result: { prices: PricePoint[]; source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo' }
 
-  // Step 2: Try SMARD API (Day-Ahead only)
+  // Step 2: Try API sources (Day-Ahead only)
+  // Fallback-Kette: aWATTar → SMARD → Energy-Charts → CSV → Demo
   if (type === 'day-ahead') {
-    const smardPrices = await fetchFromSmard(date)
-    if (smardPrices && smardPrices.length > 0) {
-      result = { prices: smardPrices, source: 'smard' }
+    // Step 2a: aWATTar (schnellste Quelle, EPEX Spot)
+    const awattarPrices = await fetchFromAwattar(date)
+    if (awattarPrices && awattarPrices.length > 0) {
+      result = { prices: awattarPrices, source: 'awattar' }
     } else {
-      // Step 3: Fallback to CSV
-      const csvPrices = await fetchFromCsv(date, 'day-ahead')
-      if (csvPrices && csvPrices.length > 0) {
-        result = { prices: csvPrices, source: 'csv' }
+      // Step 2b: SMARD API
+      const smardPrices = await fetchFromSmard(date)
+      if (smardPrices && smardPrices.length > 0) {
+        result = { prices: smardPrices, source: 'smard' }
       } else {
-        // Step 4: Final fallback to demo data
-        result = fetchDemoData(date)
+        // Step 2c: Energy-Charts (Fraunhofer ISE)
+        const energyChartsPrices = await fetchFromEnergyCharts(date)
+        if (energyChartsPrices && energyChartsPrices.length > 0) {
+          result = { prices: energyChartsPrices, source: 'energy-charts' }
+        } else {
+          // Step 3: Fallback to CSV
+          const csvPrices = await fetchFromCsv(date, 'day-ahead')
+          if (csvPrices && csvPrices.length > 0) {
+            result = { prices: csvPrices, source: 'csv' }
+          } else {
+            // Step 4: Final fallback to demo data
+            result = fetchDemoData(date)
+          }
+        }
       }
     }
   }
