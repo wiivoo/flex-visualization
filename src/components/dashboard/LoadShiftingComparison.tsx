@@ -20,7 +20,6 @@ import { PricePoint, OptimizationResult, ChargingBlock, ConfigState, VEHICLE_PRO
 import { getDateRange } from '@/components/charts/TimeRangeSelector'
 import type { TimeRange } from '@/components/charts/TimeRangeSelector'
 import { format } from 'date-fns'
-import { de } from 'date-fns/locale'
 
 interface LoadShiftingComparisonProps {
   prices: PricePoint[]
@@ -59,10 +58,10 @@ interface BatchResult {
 }
 
 const RANGE_LABELS: Record<TimeRange, string> = {
-  day: 'Tag',
-  month: 'Monat',
-  quarter: 'Quartal',
-  year: 'Jahr'
+  day: 'Day',
+  month: 'Month',
+  quarter: 'Quarter',
+  year: 'Year'
 }
 
 function mapScheduleToHours(schedule: ChargingBlock[]): Map<number, number> {
@@ -181,7 +180,7 @@ export function LoadShiftingComparison({
 
     if (!baselineStart || !optStart) return null
     if (baselineStart === optStart) return null
-    return `${baselineStart}–${baselineEnd} \u2192 ${optStart}–${optEnd}`
+    return `${baselineStart}\u2013${baselineEnd} \u2192 ${optStart}\u2013${optEnd}`
   }, [optimization])
 
   // Multi-day chart data
@@ -192,7 +191,7 @@ export function LoadShiftingComparison({
       cumSavings += d.savings_eur
       return {
         date: d.date,
-        dateLabel: format(new Date(d.date), 'd. MMM', { locale: de }),
+        dateLabel: format(new Date(d.date), 'MMM d'),
         baseline: d.cost_baseline_eur,
         optimized: d.cost_optimized_eur,
         savings: d.savings_eur,
@@ -233,7 +232,7 @@ export function LoadShiftingComparison({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Keine Optimierungsdaten verfügbar. Bitte Konfiguration prüfen.
+            No optimization data available. Please check configuration.
           </p>
         </CardContent>
       </Card>
@@ -251,7 +250,7 @@ export function LoadShiftingComparison({
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Keine Batch-Daten verfügbar für diesen Zeitraum.
+            No batch data available for this period.
           </p>
         </CardContent>
       </Card>
@@ -278,7 +277,7 @@ export function LoadShiftingComparison({
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Vergleich: sofortiges Laden vs. preisoptimiertes Laden
+            Comparison: immediate charging vs. price-optimized charging
           </p>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -345,7 +344,7 @@ export function LoadShiftingComparison({
                 fill="url(#optimizedGrad)"
                 radius={[2, 2, 0, 0]}
                 barSize={12}
-                name="Optimiert"
+                name="Optimized"
               >
                 {shiftData.map((entry, index) => (
                   <Cell
@@ -364,7 +363,7 @@ export function LoadShiftingComparison({
                 strokeWidth={2.5}
                 dot={false}
                 activeDot={{ r: 5, fill: '#3b82f6' }}
-                name="Preis"
+                name="Price"
               />
             </ComposedChart>
           </ResponsiveContainer>
@@ -373,15 +372,15 @@ export function LoadShiftingComparison({
           <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-blue-500" />
-              <span>Strompreis</span>
+              <span>Electricity Price</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-red-500/60" />
-              <span>Baseline (sofort)</span>
+              <span>Baseline (immediate)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-green-500/60" />
-              <span>Optimiert</span>
+              <span>Optimized</span>
             </div>
           </div>
 
@@ -389,19 +388,19 @@ export function LoadShiftingComparison({
           {shiftLabel && (
             <div className="flex items-center justify-center gap-2 rounded-lg border border-blue-200/60 bg-blue-50 px-4 py-2 text-sm dark:border-blue-900/60 dark:bg-blue-950/20">
               <ArrowRight className="h-4 w-4 text-blue-600" />
-              <span className="text-muted-foreground">Laden verschoben:</span>
+              <span className="text-muted-foreground">Charging shifted:</span>
               <span className="font-semibold text-blue-700 dark:text-blue-400">{shiftLabel}</span>
             </div>
           )}
 
           {/* Cost comparison bars */}
           <div className="space-y-3">
-            <h4 className="text-sm font-semibold">Kostenvergleich</h4>
+            <h4 className="text-sm font-semibold">Cost Comparison</h4>
 
             {/* Baseline bar */}
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Baseline (sofort laden)</span>
+                <span className="text-muted-foreground">Baseline (immediate)</span>
                 <span className="font-semibold">{baselineCost.toFixed(2)} EUR</span>
               </div>
               <div className="h-6 w-full overflow-hidden rounded-full bg-muted/30">
@@ -417,7 +416,7 @@ export function LoadShiftingComparison({
             {/* Optimized bar */}
             <div className="space-y-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Optimiert (Load Shifting)</span>
+                <span className="text-muted-foreground">Optimized (Load Shifting)</span>
                 <span className="font-semibold text-green-600">{optimizedCost.toFixed(2)} EUR</span>
               </div>
               <div className="h-6 w-full overflow-hidden rounded-full bg-muted/30">
@@ -435,7 +434,7 @@ export function LoadShiftingComparison({
               <div className="flex justify-end">
                 <Badge className="bg-green-600 text-sm text-white hover:bg-green-700">
                   <PiggyBank className="mr-1.5 h-3.5 w-3.5" />
-                  Ersparnis: {savings.toFixed(2)} EUR
+                  Savings: {savings.toFixed(2)} EUR
                 </Badge>
               </div>
             )}
@@ -462,7 +461,7 @@ export function LoadShiftingComparison({
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Aggregierte Ersparnis durch optimiertes Laden
+            Aggregated savings from optimized charging
           </p>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -471,7 +470,7 @@ export function LoadShiftingComparison({
             <div className="rounded-lg border border-green-200/60 bg-gradient-to-br from-green-50 to-emerald-50 p-3 transition-all duration-200 hover:shadow-md dark:border-green-900/60 dark:from-green-950/20 dark:to-emerald-950/20">
               <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
                 <PiggyBank className="h-3.5 w-3.5" />
-                Gesamt gespart
+                Total Saved
               </div>
               <p className="mt-1 text-2xl font-bold text-green-700 dark:text-green-300">
                 {totals.total_savings_eur.toFixed(2)} EUR
@@ -481,7 +480,7 @@ export function LoadShiftingComparison({
             <div className="rounded-lg border border-blue-200/60 bg-gradient-to-br from-blue-50 to-indigo-50 p-3 transition-all duration-200 hover:shadow-md dark:border-blue-900/60 dark:from-blue-950/20 dark:to-indigo-950/20">
               <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
                 <TrendingUp className="h-3.5 w-3.5" />
-                Ø Ersparnis/Tag
+                Avg. Savings/Day
               </div>
               <p className="mt-1 text-2xl font-bold text-blue-700 dark:text-blue-300">
                 {totals.avg_savings_per_day_eur.toFixed(2)} EUR
@@ -491,7 +490,7 @@ export function LoadShiftingComparison({
             <div className="rounded-lg border border-slate-200/60 bg-gradient-to-br from-slate-50 to-gray-50 p-3 transition-all duration-200 hover:shadow-md dark:border-slate-800/60 dark:from-slate-950/20 dark:to-gray-950/20">
               <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
                 <Calendar className="h-3.5 w-3.5" />
-                Tage analysiert
+                Days Analyzed
               </div>
               <p className="mt-1 text-2xl font-bold">{totals.days_analyzed}</p>
             </div>
@@ -499,7 +498,7 @@ export function LoadShiftingComparison({
             <div className="rounded-lg border border-purple-200/60 bg-gradient-to-br from-purple-50 to-violet-50 p-3 transition-all duration-200 hover:shadow-md dark:border-purple-900/60 dark:from-purple-950/20 dark:to-violet-950/20">
               <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
                 <Zap className="h-3.5 w-3.5" />
-                Gesamt verschoben
+                Total Shifted
               </div>
               <p className="mt-1 text-2xl font-bold text-purple-700 dark:text-purple-300">
                 {totals.total_energy_kwh.toFixed(0)} kWh
@@ -535,7 +534,7 @@ export function LoadShiftingComparison({
                   axisLine={{ stroke: '#e5e7eb' }}
                   tickLine={false}
                   width={50}
-                  label={{ value: 'EUR kum.', angle: 90, position: 'insideRight', fontSize: 10 }}
+                  label={{ value: 'EUR cum.', angle: 90, position: 'insideRight', fontSize: 10 }}
                 />
                 <Tooltip content={<MultiDayTooltip />} />
 
@@ -557,7 +556,7 @@ export function LoadShiftingComparison({
                   fill="#22c55e"
                   radius={[2, 2, 0, 0]}
                   barSize={8}
-                  name="Optimiert"
+                  name="Optimized"
                   opacity={0.7}
                 />
 
@@ -570,7 +569,7 @@ export function LoadShiftingComparison({
                   strokeWidth={2.5}
                   dot={multiDayData.length < 20}
                   activeDot={{ r: 5, fill: '#3b82f6' }}
-                  name="Kumulative Ersparnis"
+                  name="Cumulative Savings"
                 />
               </ComposedChart>
             </ResponsiveContainer>
@@ -580,15 +579,15 @@ export function LoadShiftingComparison({
           <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-red-500/70" />
-              <span>Baseline-Kosten</span>
+              <span>Baseline Cost</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-green-500/70" />
-              <span>Optimierte Kosten</span>
+              <span>Optimized Cost</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-blue-500" />
-              <span>Kumulative Ersparnis</span>
+              <span>Cumulative Savings</span>
             </div>
           </div>
         </CardContent>
@@ -610,13 +609,13 @@ function DayTooltip({ active, payload }: {
 
   return (
     <div className="rounded-lg border border-slate-200/60 bg-white/95 px-3 py-2.5 shadow-[var(--shadow-lg)] backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/95">
-      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{data.time} Uhr</p>
-      <p className="mt-0.5 text-sm font-semibold text-blue-600">Preis: {data.price.toFixed(2)} ct/kWh</p>
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{data.time}</p>
+      <p className="mt-0.5 text-sm font-semibold text-blue-600">Price: {data.price.toFixed(2)} ct/kWh</p>
       {data.baseline !== null && (
         <p className="text-xs text-red-600">Baseline: {data.baseline.toFixed(1)} kWh</p>
       )}
       {data.optimized !== null && (
-        <p className="text-xs text-green-600">Optimiert: {data.optimized.toFixed(1)} kWh</p>
+        <p className="text-xs text-green-600">Optimized: {data.optimized.toFixed(1)} kWh</p>
       )}
     </div>
   )
@@ -641,13 +640,13 @@ function MultiDayTooltip({ active, payload }: {
   return (
     <div className="rounded-lg border border-slate-200/60 bg-white/95 px-3 py-2.5 shadow-[var(--shadow-lg)] backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/95">
       <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        {format(new Date(data.date), 'dd.MM.yyyy', { locale: de })}
+        {format(new Date(data.date), 'MM/dd/yyyy')}
       </p>
       <div className="mt-1.5 space-y-0.5 text-xs">
         <p className="text-red-600">Baseline: {data.baseline.toFixed(2)} EUR</p>
-        <p className="text-green-600">Optimiert: {data.optimized.toFixed(2)} EUR</p>
+        <p className="text-green-600">Optimized: {data.optimized.toFixed(2)} EUR</p>
         <p className="border-t border-slate-200/60 pt-1 font-semibold text-blue-600 dark:border-slate-700/60">
-          Ersparnis: {data.savings.toFixed(2)} EUR
+          Savings: {data.savings.toFixed(2)} EUR
         </p>
       </div>
     </div>

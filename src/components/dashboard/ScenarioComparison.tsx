@@ -44,7 +44,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
       vehicle.battery_kwh * (100 - config.start_level_percent) / 100
     )
 
-    // 1. Flat Tariff (Standardtarif)
+    // 1. Flat Tariff
     const flatMarketPrice = config.base_price_ct_kwh
     const flatGridFee = STANDARD_GRID_FEE_CT
     const flatTaxes = TOTAL_TAXES_CT
@@ -62,7 +62,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
     const optTaxes = TOTAL_TAXES_CT
     const optTotal = (optPrice + optGridFee + optTaxes) * energyKwh / 100
 
-    // 4. With 14a Modul 3 (DA + variable grid fees)
+    // 4. With 14a Module 3 (DA + variable grid fees)
     let modul3GridFee = STANDARD_GRID_FEE_CT
     if (config.dso && DSO_PROFILES[config.dso]) {
       const dso = DSO_PROFILES[config.dso]
@@ -73,7 +73,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
 
     const result: ScenarioData[] = [
       {
-        name: 'Standardtarif',
+        name: 'Flat Tariff',
         shortName: 'Flat',
         totalCost: flatTotal,
         marketPrice: flatMarketPrice * energyKwh / 100,
@@ -83,7 +83,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
         savings: 0
       },
       {
-        name: 'Fenster-Durchschnitt',
+        name: 'Window Average',
         shortName: 'DA-Idx',
         totalCost: windowTotal,
         marketPrice: windowAvgPrice * energyKwh / 100,
@@ -93,7 +93,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
         savings: Math.max(0, flatTotal - windowTotal)
       },
       {
-        name: 'Optimiertes Laden',
+        name: 'Optimized Charging',
         shortName: 'Opt.',
         totalCost: optTotal,
         marketPrice: optPrice * energyKwh / 100,
@@ -103,7 +103,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
         savings: Math.max(0, flatTotal - optTotal)
       },
       {
-        name: 'Mit 14a Modul 3',
+        name: 'With 14a Module 3',
         shortName: '14a',
         totalCost: modul3Total,
         marketPrice: optPrice * energyKwh / 100,
@@ -121,7 +121,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Szenario-Vergleich</CardTitle>
+          <CardTitle className="text-base">Scenario Comparison</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex h-[200px] items-center justify-center">
@@ -136,10 +136,10 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Szenario-Vergleich</CardTitle>
+          <CardTitle className="text-base">Scenario Comparison</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">Keine Optimierungsdaten verfügbar.</p>
+          <p className="text-sm text-muted-foreground">No optimization data available.</p>
         </CardContent>
       </Card>
     )
@@ -150,8 +150,8 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">Szenario-Vergleich</CardTitle>
-        <p className="text-xs text-muted-foreground">Gesamtkosten pro Ladung inkl. aller Abgaben</p>
+        <CardTitle className="text-base">Scenario Comparison</CardTitle>
+        <p className="text-xs text-muted-foreground">Total cost per charge incl. all fees</p>
       </CardHeader>
       <CardContent className="space-y-3">
         {/* Bar Chart */}
@@ -222,11 +222,11 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
         {/* Price breakdown footnote */}
         <div className="rounded-lg bg-muted/50 p-2">
           <p className="text-xs text-muted-foreground">
-            Aufschluesselung: Marktpreis + Netzentgelt ({STANDARD_GRID_FEE_CT.toFixed(1)} ct/kWh) + Steuern/Abgaben ({TOTAL_TAXES_CT.toFixed(2)} ct/kWh)
+            Breakdown: Market price + grid fee ({STANDARD_GRID_FEE_CT.toFixed(1)} ct/kWh) + taxes/levies ({TOTAL_TAXES_CT.toFixed(2)} ct/kWh)
           </p>
           {config.dso && DSO_PROFILES[config.dso] && (
             <p className="mt-1 text-xs text-purple-600 dark:text-purple-400">
-              14a Netzentgelt ({DSO_PROFILES[config.dso].name}): NT {DSO_PROFILES[config.dso].nt_ct_kwh.toFixed(1)} ct/kWh
+              14a grid fee ({DSO_PROFILES[config.dso].name}): NT {DSO_PROFILES[config.dso].nt_ct_kwh.toFixed(1)} ct/kWh
             </p>
           )}
         </div>
@@ -247,10 +247,10 @@ function ScenarioTooltip({ active, payload }: {
     <div className="rounded-lg border bg-white px-3 py-2 shadow-lg dark:bg-slate-900">
       <p className="text-sm font-semibold">{data.name}</p>
       <div className="mt-1 space-y-0.5 text-xs">
-        <p>Marktpreis: {data.marketPrice.toFixed(2)} EUR</p>
-        <p>Netzentgelt: {data.gridFee.toFixed(2)} EUR</p>
-        <p>Steuern: {data.taxes.toFixed(2)} EUR</p>
-        <p className="border-t pt-0.5 font-bold">Gesamt: {data.totalCost.toFixed(2)} EUR</p>
+        <p>Market Price: {data.marketPrice.toFixed(2)} EUR</p>
+        <p>Grid Fee: {data.gridFee.toFixed(2)} EUR</p>
+        <p>Taxes: {data.taxes.toFixed(2)} EUR</p>
+        <p className="border-t pt-0.5 font-bold">Total: {data.totalCost.toFixed(2)} EUR</p>
       </div>
     </div>
   )

@@ -7,7 +7,6 @@ import { Badge } from '@/components/ui/badge'
 import { TrendingDown, TrendingUp, Activity, Calendar, ArrowRight } from 'lucide-react'
 import { PricePoint } from '@/lib/config'
 import { format, startOfMonth, endOfMonth, differenceInDays } from 'date-fns'
-import { de } from 'date-fns/locale'
 import {
   BarChart,
   Bar,
@@ -27,8 +26,8 @@ interface YearlyOverviewProps {
 }
 
 const MONTHS = [
-  'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
 ]
 
 export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelect }: YearlyOverviewProps) {
@@ -178,9 +177,9 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle>Jahresübersicht</CardTitle>
+          <CardTitle>Yearly Overview</CardTitle>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">Jahr:</span>
+            <span className="text-sm text-muted-foreground">Year:</span>
             <select
               value={selectedYear}
               onChange={(e) => onYearChange(parseInt(e.target.value))}
@@ -199,14 +198,14 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
           <div className="rounded-lg border bg-muted/20 p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
               <Activity className="h-4 w-4" />
-              <span className="text-xs">Ø Preis</span>
+              <span className="text-xs">Avg. Price</span>
             </div>
             <p className="text-2xl font-bold">{yearKPIs.avgPrice.toFixed(1)} ct</p>
           </div>
           <div className="rounded-lg border bg-green-50 dark:bg-green-950/20 p-4">
             <div className="flex items-center gap-2 text-green-600 dark:text-green-400 mb-1">
               <TrendingDown className="h-4 w-4" />
-              <span className="text-xs">Günstigster</span>
+              <span className="text-xs">Cheapest</span>
             </div>
             <p className="text-lg font-bold">{yearKPIs.minMonth?.name || '-'}</p>
             <p className="text-xs text-muted-foreground">{yearKPIs.minMonth?.avg.toFixed(1)} ct</p>
@@ -214,14 +213,14 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
           <div className="rounded-lg border bg-red-50 dark:bg-red-950/20 p-4">
             <div className="flex items-center gap-2 text-red-600 dark:text-red-400 mb-1">
               <TrendingUp className="h-4 w-4" />
-              <span className="text-xs">Teuerster</span>
+              <span className="text-xs">Most Expensive</span>
             </div>
             <p className="text-lg font-bold">{yearKPIs.maxMonth?.name || '-'}</p>
             <p className="text-xs text-muted-foreground">{yearKPIs.maxMonth?.avg.toFixed(1)} ct</p>
           </div>
           <div className="rounded-lg border bg-muted/20 p-4">
             <div className="flex items-center gap-2 text-muted-foreground mb-1">
-              <span className="text-xs">Volatilität</span>
+              <span className="text-xs">Volatility</span>
             </div>
             <p className="text-2xl font-bold">{yearKPIs.volatility.toFixed(0)} ct</p>
           </div>
@@ -229,7 +228,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
 
         {/* Monthly Bar Chart */}
         <div>
-          <h3 className="text-sm font-semibold mb-4">Monatliche Durchschnittspreise</h3>
+          <h3 className="text-sm font-semibold mb-4">Monthly Average Prices</h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={monthlyData} margin={{ top: 5, right: 0, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.3} />
@@ -254,7 +253,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
                       <p className="text-sm font-medium">{data.name}</p>
                       <p className="text-lg font-bold">{data.avg.toFixed(1)} ct/kWh</p>
                       <p className="text-xs text-muted-foreground">
-                        Spanne: {data.min.toFixed(1)} - {data.max.toFixed(1)} ct
+                        Range: {data.min.toFixed(1)} - {data.max.toFixed(1)} ct
                       </p>
                     </div>
                   )
@@ -275,7 +274,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
           <div>
             <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
               <Activity className="h-4 w-4" />
-              Volatilste Tage
+              Most Volatile Days
             </h3>
             <div className="space-y-2">
               {dailyVolatility.slice(0, 3).map((day, i) => (
@@ -288,10 +287,10 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
                     <div>
                       <p className="text-sm font-medium">
                         <Calendar className="inline h-3 w-3 mr-1" />
-                        {format(day.date, 'd. MMM yyyy', { locale: de })}
+                        {format(day.date, 'MMM d, yyyy')}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Spanne: {day.volatility.toFixed(0)} ct
+                        Range: {day.volatility.toFixed(0)} ct
                       </p>
                     </div>
                   </div>
@@ -312,7 +311,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
             <div>
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
                 <TrendingDown className="h-4 w-4 text-green-600" />
-                Negative Preistage
+                Negative Price Days
               </h3>
               <div className="space-y-2">
                 {negativePriceDays.map((day, i) => (
@@ -323,7 +322,7 @@ export function YearlyOverview({ prices, selectedYear, onYearChange, onDateSelec
                     <div>
                       <p className="text-sm font-medium">
                         <Calendar className="inline h-3 w-3 mr-1" />
-                        {format(day.date, 'd. MMM yyyy', { locale: de })}
+                        {format(day.date, 'MMM d, yyyy')}
                       </p>
                       <p className="text-xs text-green-600 font-medium">
                         Min: {day.min.toFixed(2)} ct/kWh

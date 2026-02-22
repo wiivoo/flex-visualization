@@ -1,11 +1,11 @@
 /**
  * aWATTar API Client
- * Quelle für deutsche Day-Ahead-Preise (EPEX Spot).
+ * Source for German day-ahead prices (EPEX Spot).
  *
- * API-Dokumentation: https://www.awattar.de/services/api
- * Rate Limit: 100 Abfragen/Tag - daher Next.js revalidate Cache nutzen.
+ * API documentation: https://www.awattar.de/services/api
+ * Rate limit: 100 requests/day - therefore use Next.js revalidate cache.
  *
- * Preise kommen in EUR/MWh, Umrechnung: EUR/MWh ÷ 10 = ct/kWh
+ * Prices come in EUR/MWh, conversion: EUR/MWh / 10 = ct/kWh
  */
 
 import type { PricePoint } from '@/lib/config'
@@ -25,8 +25,8 @@ interface AwattarResponse {
 }
 
 /**
- * Day-Ahead-Preise von aWATTar für einen einzelnen Tag laden.
- * Baut start/end als Unix-Millisekunden für den vollen Tag (00:00-23:59).
+ * Load day-ahead prices from aWATTar for a single day.
+ * Builds start/end as Unix milliseconds for the full day (00:00-23:59).
  */
 export async function fetchAwattarDayAhead(date: Date): Promise<PricePoint[]> {
   const startOfDay = new Date(date)
@@ -39,8 +39,8 @@ export async function fetchAwattarDayAhead(date: Date): Promise<PricePoint[]> {
 }
 
 /**
- * Day-Ahead-Preise von aWATTar für einen Zeitraum laden.
- * aWATTar unterstützt Zeiträume nativ in einer Abfrage.
+ * Load day-ahead prices from aWATTar for a date range.
+ * aWATTar supports date ranges natively in a single query.
  */
 export async function fetchAwattarRange(
   startDate: Date,
@@ -52,17 +52,17 @@ export async function fetchAwattarRange(
   const url = `${AWATTAR_BASE_URL}?start=${startMs}&end=${endMs}`
 
   const response = await fetch(url, {
-    next: { revalidate: 3600 } // 1 Stunde Cache
+    next: { revalidate: 3600 } // 1 hour cache
   })
 
   if (!response.ok) {
-    throw new Error(`aWATTar API-Anfrage fehlgeschlagen: ${response.status}`)
+    throw new Error(`aWATTar API request failed: ${response.status}`)
   }
 
   const data: AwattarResponse = await response.json()
 
   if (!data.data || !Array.isArray(data.data)) {
-    throw new Error('aWATTar API: Unerwartetes Antwortformat')
+    throw new Error('aWATTar API: Unexpected response format')
   }
 
   return data.data.map((point): PricePoint => ({

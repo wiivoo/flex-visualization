@@ -94,7 +94,7 @@ export function PriceHeatmap({ prices, basePrice = 35, margin = 5 }: PriceHeatma
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Einsparpotenzial nach Fahrzeug & Uhrzeit</CardTitle>
+        <CardTitle>Savings Potential by Vehicle & Hour</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-4">
@@ -134,11 +134,11 @@ export function PriceHeatmap({ prices, basePrice = 35, margin = 5 }: PriceHeatma
                           key={hour}
                           className="w-6 h-8 flex-shrink-0 relative group cursor-pointer"
                           style={{ backgroundColor: getColor(data.savings) }}
-                          title={`${vehicle.name} um ${hour.toString().padStart(2, '0')}:00\nPreis: ${data.price.toFixed(2)} ct/kWh\nErsparnis: €${data.savings.toFixed(2)}`}
+                          title={`${vehicle.name} at ${hour.toString().padStart(2, '0')}:00\nPrice: ${data.price.toFixed(2)} ct/kWh\nSavings: ${data.savings.toFixed(2)} EUR`}
                         >
                           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                             <span className="text-xs font-semibold">
-                              {data.savings > 0 ? '€' : '€'}
+                              {data.savings > 0 ? 'EUR' : 'EUR'}
                             </span>
                           </div>
                         </div>
@@ -154,7 +154,7 @@ export function PriceHeatmap({ prices, basePrice = 35, margin = 5 }: PriceHeatma
           <div className="flex items-center justify-center gap-4 text-sm pt-4 border-t">
             <div className="flex items-center gap-2">
               <div className="w-8 h-4 rounded" style={{ backgroundColor: 'rgba(239, 68, 68, 0.6)' }} />
-              <span className="text-muted-foreground">Geringe Ersparnis</span>
+              <span className="text-muted-foreground">Low Savings</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-8 h-4 rounded bg-gradient-to-r from-red-400/60 via-gray-300/40 to-green-500/80" />
@@ -162,7 +162,7 @@ export function PriceHeatmap({ prices, basePrice = 35, margin = 5 }: PriceHeatma
             </div>
             <div className="flex items-center gap-2">
               <div className="w-8 h-4 rounded" style={{ backgroundColor: 'rgba(34, 197, 94, 0.8)' }} />
-              <span className="text-muted-foreground">Hohe Ersparnis</span>
+              <span className="text-muted-foreground">High Savings</span>
             </div>
           </div>
         </div>

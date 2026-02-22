@@ -3,8 +3,8 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
-  title: "FlexMon Dashboard",
-  description: "E-Auto Ladesteuerungs-Optimierung Dashboard",
+  title: "B2C Flex Monetization",
+  description: "EV Charging Flexibility Monetization Dashboard",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="de" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
         {children}
         <Toaster />

@@ -6,7 +6,6 @@ import { Badge } from '@/components/ui/badge'
 import { Activity, TrendingUp, Calendar, Zap } from 'lucide-react'
 import { PricePoint } from '@/lib/config'
 import { format } from 'date-fns'
-import { de } from 'date-fns/locale'
 import {
   ComposedChart,
   Area,
@@ -58,7 +57,7 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
         const max = Math.max(...dayPrices)
         return {
           date,
-          dateLabel: format(date, 'd. MMM', { locale: de }),
+          dateLabel: format(date, 'MMM d'),
           min: Math.round(min * 10) / 10,
           max: Math.round(max * 10) / 10,
           avg: Math.round((dayPrices.reduce((s, p) => s + p, 0) / dayPrices.length) * 10) / 10,
@@ -99,14 +98,14 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <Activity className="h-5 w-5" />
-            Volatilitäts-Analyse
+            Volatility Analysis
           </CardTitle>
           <Badge variant="outline" className="text-xs">
-            {dailyData.length} Tage
+            {dailyData.length} days
           </Badge>
         </div>
         <p className="text-sm text-muted-foreground">
-          Tägliche Preisspanne (Spread) – je größer der Spread, desto höher das Arbitrage-Potenzial
+          Daily price spread — the larger the spread, the higher the arbitrage potential
         </p>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -115,7 +114,7 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
           <div className="rounded-lg border bg-gradient-to-br from-blue-50 to-indigo-50 p-3 dark:from-blue-950/20 dark:to-indigo-950/20">
             <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
               <Activity className="h-3.5 w-3.5" />
-              Ø Täglicher Spread
+              Avg. Daily Spread
             </div>
             <p className="mt-1 text-2xl font-bold">{kpis.avgSpread.toFixed(1)} ct</p>
           </div>
@@ -123,12 +122,12 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
           <div className="rounded-lg border bg-gradient-to-br from-green-50 to-emerald-50 p-3 dark:from-green-950/20 dark:to-emerald-950/20">
             <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
               <TrendingUp className="h-3.5 w-3.5" />
-              Max. Spread
+              Max Spread
             </div>
             <p className="mt-1 text-2xl font-bold">{kpis.maxSpread.toFixed(1)} ct</p>
             {kpis.bestDay && (
               <p className="text-xs text-muted-foreground">
-                {format(kpis.bestDay.date, 'd. MMM', { locale: de })}
+                {format(kpis.bestDay.date, 'MMM d')}
               </p>
             )}
           </div>
@@ -136,7 +135,7 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
           <div className="rounded-lg border bg-gradient-to-br from-amber-50 to-orange-50 p-3 dark:from-amber-950/20 dark:to-orange-950/20">
             <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
               <Zap className="h-3.5 w-3.5" />
-              Arbitrage-Tage
+              Arbitrage Days
             </div>
             <p className="mt-1 text-2xl font-bold">{kpis.arbitrageDays}</p>
             <p className="text-xs text-muted-foreground">
@@ -147,20 +146,20 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
           <div className="rounded-lg border bg-gradient-to-br from-purple-50 to-violet-50 p-3 dark:from-purple-950/20 dark:to-violet-950/20">
             <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
               <Calendar className="h-3.5 w-3.5" />
-              Analysierte Tage
+              Days Analyzed
             </div>
             <p className="mt-1 text-2xl font-bold">{dailyData.length}</p>
             <p className="text-xs text-muted-foreground">
               {kpis.arbitrageDays > 0
-                ? `${Math.round((kpis.arbitrageDays / dailyData.length) * 100)}% lohnend`
-                : 'Keine lohnenden Tage'}
+                ? `${Math.round((kpis.arbitrageDays / dailyData.length) * 100)}% profitable`
+                : 'No profitable days'}
             </p>
           </div>
         </div>
 
         {/* Spread Band Chart - Min/Max area with avg line */}
         <div>
-          <h3 className="mb-3 text-sm font-semibold">Preis-Bandbreite (Min ↔ Max pro Tag)</h3>
+          <h3 className="mb-3 text-sm font-semibold">Price Range (Min ↔ Max per Day)</h3>
           <ResponsiveContainer width="100%" height={250}>
             <ComposedChart data={dailyData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
               <defs>
@@ -191,17 +190,17 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
                   return (
                     <div className="rounded-lg border bg-white px-3 py-2 shadow-lg dark:bg-slate-900">
                       <p className="text-sm font-medium">
-                        {format(d.date, 'd. MMMM yyyy', { locale: de })}
+                        {format(d.date, 'MMMM d, yyyy')}
                       </p>
                       <div className="mt-1 space-y-0.5 text-xs">
-                        <p>Ø Preis: <span className="font-semibold">{d.avg.toFixed(1)} ct/kWh</span></p>
+                        <p>Avg. Price: <span className="font-semibold">{d.avg.toFixed(1)} ct/kWh</span></p>
                         <p className="text-green-600">Min: {d.min.toFixed(1)} ct/kWh</p>
                         <p className="text-red-600">Max: {d.max.toFixed(1)} ct/kWh</p>
                         <p className="mt-1 font-semibold">
                           Spread: {d.spread.toFixed(1)} ct
-                          {d.spread >= 20 && ' 🟢 Super'}
-                          {d.spread >= 10 && d.spread < 20 && ' 🟡 Gut'}
-                          {d.spread < 10 && ' ⚪ Gering'}
+                          {d.spread >= 20 && ' Great'}
+                          {d.spread >= 10 && d.spread < 20 && ' Good'}
+                          {d.spread < 10 && ' Low'}
                         </p>
                       </div>
                     </div>
@@ -255,7 +254,7 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
           <div className="mt-2 flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="h-0.5 w-6 bg-blue-500" />
-              <span>Ø Preis</span>
+              <span>Avg. Price</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-0.5 w-6 border-t border-dashed border-green-500" />
@@ -267,14 +266,14 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-6 rounded bg-blue-500/20" />
-              <span>Bandbreite</span>
+              <span>Range</span>
             </div>
           </div>
         </div>
 
         {/* Spread Bar Chart */}
         <div>
-          <h3 className="mb-3 text-sm font-semibold">Täglicher Spread (Arbitrage-Potenzial)</h3>
+          <h3 className="mb-3 text-sm font-semibold">Daily Spread (Arbitrage Potential)</h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={dailyData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.3} />
@@ -299,7 +298,7 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
                   return (
                     <div className="rounded-lg border bg-white px-3 py-2 shadow-lg dark:bg-slate-900">
                       <p className="text-sm font-medium">
-                        {format(d.date, 'd. MMMM yyyy', { locale: de })}
+                        {format(d.date, 'MMMM d, yyyy')}
                       </p>
                       <p className="mt-1 text-lg font-bold">{d.spread.toFixed(1)} ct Spread</p>
                       <p className="text-xs text-muted-foreground">
@@ -315,7 +314,7 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
                 strokeDasharray="5 5"
                 strokeWidth={1.5}
                 label={{
-                  value: `Ø ${kpis.avgSpread.toFixed(0)} ct`,
+                  value: `Avg ${kpis.avgSpread.toFixed(0)} ct`,
                   position: 'right',
                   fill: '#6b7280',
                   fontSize: 10
@@ -331,15 +330,15 @@ export function VolatilityAnalysis({ prices }: VolatilityAnalysisProps) {
           <div className="mt-2 flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-3 rounded-sm bg-[#22c55e]" />
-              <span>&gt; 20 ct (Super)</span>
+              <span>&gt; 20 ct (Great)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-3 rounded-sm bg-[#fbbf24]" />
-              <span>10–20 ct (Gut)</span>
+              <span>10-20 ct (Good)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-3 w-3 rounded-sm bg-[#94a3b8]" />
-              <span>&lt; 10 ct (Gering)</span>
+              <span>&lt; 10 ct (Low)</span>
             </div>
           </div>
         </div>

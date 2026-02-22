@@ -58,7 +58,7 @@ export function ChargingTimeline({ schedule, windowStart, windowEnd, isLoading }
     return (
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Ladeplan-Timeline</CardTitle>
+          <CardTitle className="text-base">Charging Timeline</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="h-12 animate-pulse rounded bg-muted" />
@@ -84,13 +84,13 @@ export function ChargingTimeline({ schedule, windowStart, windowEnd, isLoading }
     <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">Ladeplan</CardTitle>
+          <CardTitle className="text-base">Charging Plan</CardTitle>
           <div className="flex items-center gap-2">
             <Badge variant="secondary" className="text-xs">
               {totalKwh.toFixed(1)} kWh
             </Badge>
             <Badge variant="outline" className="text-xs">
-              {totalHours.toFixed(1)} Std.
+              {totalHours.toFixed(1)} hrs
             </Badge>
           </div>
         </div>
@@ -122,9 +122,9 @@ export function ChargingTimeline({ schedule, windowStart, windowEnd, isLoading }
                       ? 'bg-green-500/30 text-green-700 dark:bg-green-500/20 dark:text-green-400'
                       : 'bg-muted/30 text-muted-foreground'
                   }`}
-                  title={isActive ? `${h}:00 - Laden aktiv` : `${h}:00 - Kein Laden`}
+                  title={isActive ? `${h}:00 - Charging active` : `${h}:00 - Not charging`}
                 >
-                  {isActive ? 'L' : ''}
+                  {isActive ? 'C' : ''}
                 </div>
               )
             })}
@@ -134,11 +134,11 @@ export function ChargingTimeline({ schedule, windowStart, windowEnd, isLoading }
           <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1">
               <div className="h-3 w-3 rounded bg-green-500/30 dark:bg-green-500/20" />
-              <span>Laden aktiv</span>
+              <span>Charging active</span>
             </div>
             <div className="flex items-center gap-1">
               <div className="h-3 w-3 rounded bg-muted/30" />
-              <span>Kein Laden</span>
+              <span>Not charging</span>
             </div>
           </div>
         </div>

@@ -33,7 +33,7 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold">Schnellkonfiguration</h3>
+        <h3 className="font-semibold">Quick Configuration</h3>
         <Button variant="ghost" size="icon" onClick={onClose}>
           <X className="h-4 w-4" />
         </Button>
@@ -43,7 +43,7 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
       <div>
         <label className="mb-2 flex items-center gap-2 text-sm font-medium">
           <Car className="h-4 w-4" />
-          Fahrzeugtyp
+          Vehicle Type
         </label>
         <div className="grid grid-cols-3 gap-2">
           {(Object.keys(VEHICLE_PROFILES) as Array<keyof typeof VEHICLE_PROFILES>).map((type) => (
@@ -68,7 +68,7 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
       <div>
         <label className="mb-2 flex items-center gap-2 text-sm font-medium">
           <Battery className="h-4 w-4" />
-          Start-Batterielevel: {config.start_level_percent}%
+          Battery Start Level: {config.start_level_percent}%
         </label>
         <input
           type="range"
@@ -86,11 +86,11 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
         </div>
       </div>
 
-      {/* Ladefenster */}
+      {/* Charge Window */}
       <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-3">
         <div className="flex items-center gap-2 text-sm">
           <Clock className="h-4 w-4 text-muted-foreground" />
-          <span>Ladefenster</span>
+          <span>Charge Window</span>
         </div>
         <span className="font-medium">
           {config.window_start} - {config.window_end}
@@ -101,17 +101,17 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
       <div>
         <label className="mb-2 flex items-center gap-2 text-sm font-medium">
           <Zap className="h-4 w-4" />
-          Netzbetreiber (14a Modul 3)
+          Grid Operator (14a Module 3)
         </label>
         <Select
           value={config.dso || 'none'}
           onValueChange={updateDso}
         >
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Kein Modul 3" />
+            <SelectValue placeholder="No Module 3" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">Kein Modul 3</SelectItem>
+            <SelectItem value="none">No Module 3</SelectItem>
             {Object.values(DSO_PROFILES).map((dso) => (
               <SelectItem key={dso.id} value={dso.id}>
                 {dso.name}
@@ -152,7 +152,7 @@ export function QuickConfigPanel({ config, onConfigChange, onClose }: QuickConfi
             saveConfig(newConfig)
           }}
         >
-          Auf Standard zuruecksetzen
+          Reset to Default
         </Button>
       </div>
     </div>

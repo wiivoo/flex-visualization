@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     if (!rateLimit.allowed) {
       return NextResponse.json(
-        { error: 'Zu viele Versuche. Bitte später erneut probieren.' },
+        { error: 'Too many attempts. Please try again later.' },
         {
           status: 429,
           headers: {
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
 
     if (!password || typeof password !== 'string') {
       return NextResponse.json(
-        { error: 'Passwort erforderlich' },
+        { error: 'Password required' },
         { status: 400 }
       )
     }

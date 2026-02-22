@@ -1,4 +1,4 @@
-// Shared configuration types and defaults for FlexMon Dashboard
+// Shared configuration types and defaults for B2C Flex Monetization
 
 export interface VehicleProfile {
   id: 'klein' | 'medium' | 'suv'
@@ -12,7 +12,7 @@ export interface VehicleProfile {
 export const VEHICLE_PROFILES: Record<VehicleProfile['id'], VehicleProfile> = {
   klein: {
     id: 'klein',
-    name: 'Kleinwagen',
+    name: 'Compact',
     battery_kwh: 40,
     charge_power_kw: 11,
     range_km: 250,
@@ -20,7 +20,7 @@ export const VEHICLE_PROFILES: Record<VehicleProfile['id'], VehicleProfile> = {
   },
   medium: {
     id: 'medium',
-    name: 'Mittelklasse',
+    name: 'Mid-Range',
     battery_kwh: 60,
     charge_power_kw: 22,
     range_km: 350,
@@ -136,7 +136,7 @@ export interface OptimizationResult {
   avg_price_with_flex?: number
   energy_charged_kwh?: number
   target_level_reached?: boolean
-  // Baseline comparison (sofortiges Laden vs. optimiert)
+  // Baseline comparison (immediate charging vs. optimized)
   baseline_schedule?: ChargingBlock[]
   baseline_avg_price?: number
 }

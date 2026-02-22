@@ -21,13 +21,13 @@ export function PriceInputs({ config, onChange, errors }: PriceInputsProps) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <DollarSign className="h-4 w-4" />
-          Preise (ct/kWh)
+          Prices (ct/kWh)
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="base-price">Basispreis</Label>
+            <Label htmlFor="base-price">Base Price</Label>
             <Input
               id="base-price"
               type="number"
@@ -42,7 +42,7 @@ export function PriceInputs({ config, onChange, errors }: PriceInputsProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="margin">Marge</Label>
+            <Label htmlFor="margin">Margin</Label>
             <Input
               id="margin"
               type="number"
@@ -55,7 +55,7 @@ export function PriceInputs({ config, onChange, errors }: PriceInputsProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="discount">Rabatt</Label>
+            <Label htmlFor="discount">Discount</Label>
             <Input
               id="discount"
               type="number"
@@ -69,7 +69,7 @@ export function PriceInputs({ config, onChange, errors }: PriceInputsProps) {
 
         {config.margin_ct_kwh > config.base_price_ct_kwh && (
           <p className="text-xs text-amber-600">
-            Warnung: Marge höher als Basispreis
+            Warning: Margin exceeds base price
           </p>
         )}
 

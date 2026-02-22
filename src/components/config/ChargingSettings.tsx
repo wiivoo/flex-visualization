@@ -21,13 +21,13 @@ export function ChargingSettings({ config, onChange }: ChargingSettingsProps) {
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <Battery className="h-4 w-4" />
-          Lade-Einstellungen
+          Charging Settings
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="start-level">Start-Level</Label>
+            <Label htmlFor="start-level">Start Level</Label>
             <Select
               value={config.start_level_percent.toString()}
               onValueChange={(v) => onChange('start_level_percent', parseInt(v))}
@@ -46,7 +46,7 @@ export function ChargingSettings({ config, onChange }: ChargingSettingsProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="window-start">Zeitfenster Von</Label>
+            <Label htmlFor="window-start">Window From</Label>
             <Select
               value={config.window_start}
               onValueChange={(v) => onChange('window_start', v)}
@@ -65,7 +65,7 @@ export function ChargingSettings({ config, onChange }: ChargingSettingsProps) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="window-end">Zeitfenster Bis</Label>
+            <Label htmlFor="window-end">Window To</Label>
             <Select
               value={config.window_end}
               onValueChange={(v) => onChange('window_end', v)}
@@ -86,10 +86,10 @@ export function ChargingSettings({ config, onChange }: ChargingSettingsProps) {
 
         <div className="rounded-md bg-muted p-3">
           <p className="text-sm">
-            Das Fahrzeug wird zwischen{' '}
-            <span className="font-semibold">{config.window_start}</span> und{' '}
-            <span className="font-semibold">{config.window_end}</span> Uhr geladen.
-            Start-Level: <span className="font-semibold">{config.start_level_percent}%</span>
+            The vehicle charges between{' '}
+            <span className="font-semibold">{config.window_start}</span> and{' '}
+            <span className="font-semibold">{config.window_end}</span>.
+            Start level: <span className="font-semibold">{config.start_level_percent}%</span>
           </p>
         </div>
       </CardContent>

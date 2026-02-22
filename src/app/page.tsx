@@ -15,6 +15,7 @@ import { VolatilityAnalysis } from '@/components/dashboard/VolatilityAnalysis'
 import { ScenarioComparison } from '@/components/dashboard/ScenarioComparison'
 import { ChargingTimeline } from '@/components/dashboard/ChargingTimeline'
 import { LoadShiftingComparison } from '@/components/dashboard/LoadShiftingComparison'
+import { PriceSourceExplorer } from '@/components/dashboard/PriceSourceExplorer'
 import { QuickConfigPanel } from '@/components/config/QuickConfigPanel'
 import { ConfigState, PricePoint, OptimizationResult, loadConfig, saveConfig, VEHICLE_PROFILES } from '@/lib/config'
 import { format } from 'date-fns'
@@ -124,7 +125,7 @@ export default function DashboardPage() {
         setOptimization(null)
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Fehler beim Laden der Daten')
+      setError(err instanceof Error ? err.message : 'Error loading data')
       setPrices([])
       setOptimization(null)
     } finally {
@@ -170,18 +171,18 @@ export default function DashboardPage() {
     : '-'
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-slate-50/80 to-white dark:from-slate-950 dark:to-slate-900">
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 via-white to-white dark:from-neutral-950 dark:to-neutral-900">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b border-slate-200/60 bg-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.04)] backdrop-blur-md dark:border-slate-800/60 dark:bg-slate-950/85">
+      <header className="sticky top-0 z-50 border-b border-gray-200/60 bg-white/90 shadow-[0_1px_3px_rgba(0,0,0,0.04)] backdrop-blur-md dark:border-neutral-800/60 dark:bg-neutral-950/90">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-              <Zap className="h-5 w-5 text-primary" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#EA1B0A]">
+              <Zap className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight text-primary">FlexMon</h1>
+              <h1 className="text-xl font-bold tracking-tight text-foreground">B2C Flex</h1>
               <p className="text-xs font-medium tracking-wide text-muted-foreground">
-                Flexibilitäts-Monetarisierung
+                Monetization Dashboard
               </p>
             </div>
           </div>
@@ -198,12 +199,12 @@ export default function DashboardPage() {
               variant="outline"
               size="icon"
               onClick={() => setShowConfig(!showConfig)}
-              aria-label="Einstellungen"
+              aria-label="Settings"
             >
               <Settings2 className="h-4 w-4" />
             </Button>
 
-            <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="Abmelden">
+            <Button variant="ghost" size="icon" onClick={handleLogout} aria-label="Log out">
               <LogOut className="h-4 w-4" />
             </Button>
           </div>
@@ -215,7 +216,7 @@ export default function DashboardPage() {
         {/* Error */}
         {error && (
           <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-800 dark:border-red-900 dark:bg-red-950/20 dark:text-red-400">
-            <p className="font-medium">Fehler</p>
+            <p className="font-medium">Error</p>
             <p className="text-sm">{error}</p>
             <Button
               variant="outline"
@@ -223,7 +224,7 @@ export default function DashboardPage() {
               className="mt-2"
               onClick={() => fetchData(selectedDate, timeRange, config)}
             >
-              Erneut versuchen
+              Retry
             </Button>
           </div>
         )}
@@ -240,7 +241,7 @@ export default function DashboardPage() {
         )}
 
         {/* Hero KPI Section */}
-        <section className="mb-8" aria-label="Wichtige Kennzahlen">
+        <section className="mb-8" aria-label="Key metrics">
           {isOptimizationLoading || isPricesLoading ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {[1, 2, 3, 4].map((i) => (
@@ -250,66 +251,66 @@ export default function DashboardPage() {
           ) : optimization && timeRange === 'day' ? (
             /* Day view with optimization: Executive KPIs */
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {/* Ersparnis pro Ladung */}
+              {/* Savings per Charge */}
               <Card className="border-green-200/60 bg-gradient-to-br from-green-50 to-emerald-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-green-900/60 dark:from-green-950/30 dark:to-emerald-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-green-700 dark:text-green-400">Ersparnis pro Ladung</p>
+                    <p className="text-sm font-medium text-green-700 dark:text-green-400">Savings per Charge</p>
                     <PiggyBank className="h-5 w-5 text-green-600 dark:text-green-400" />
                   </div>
                   <p className="mt-2 text-3xl font-bold text-green-800 dark:text-green-300">
                     {optimization.savings_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-green-600 dark:text-green-500">
-                    Gegenüber Standardtarif
+                    vs. standard tariff
                   </p>
                 </CardContent>
               </Card>
 
-              {/* Marge pro Monat */}
+              {/* Margin per Month */}
               <Card className="border-blue-200/60 bg-gradient-to-br from-blue-50 to-indigo-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-blue-900/60 dark:from-blue-950/30 dark:to-indigo-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-blue-700 dark:text-blue-400">Marge pro Monat</p>
+                    <p className="text-sm font-medium text-blue-700 dark:text-blue-400">Margin per Month</p>
                     <TrendingUp className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                   </div>
                   <p className="mt-2 text-3xl font-bold text-blue-800 dark:text-blue-300">
                     {(optimization.our_margin_eur * 30).toFixed(0)} EUR
                   </p>
                   <p className="mt-1 text-xs text-blue-600 dark:text-blue-500">
-                    Hochrechnung (30 Tage)
+                    Projection (30 days)
                   </p>
                 </CardContent>
               </Card>
 
-              {/* Kunden-Vorteil */}
+              {/* Customer Benefit */}
               <Card className="border-purple-200/60 bg-gradient-to-br from-purple-50 to-violet-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-purple-900/60 dark:from-purple-950/30 dark:to-violet-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-purple-700 dark:text-purple-400">Kunden-Vorteil</p>
+                    <p className="text-sm font-medium text-purple-700 dark:text-purple-400">Customer Benefit</p>
                     <Users className="h-5 w-5 text-purple-600 dark:text-purple-400" />
                   </div>
                   <p className="mt-2 text-3xl font-bold text-purple-800 dark:text-purple-300">
                     {optimization.customer_benefit_eur.toFixed(2)} EUR
                   </p>
                   <p className="mt-1 text-xs text-purple-600 dark:text-purple-500">
-                    Win-Win für den Kunden
+                    Win-win for the customer
                   </p>
                 </CardContent>
               </Card>
 
-              {/* Beste Ladezeit */}
+              {/* Best Charging Time */}
               <Card className="border-amber-200/60 bg-gradient-to-br from-amber-50 to-orange-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-amber-900/60 dark:from-amber-950/30 dark:to-orange-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Beste Ladezeit</p>
+                    <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Best Charging Time</p>
                     <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                   </div>
                   <p className="mt-2 text-3xl font-bold text-amber-800 dark:text-amber-300">
                     {bestTimeLabel}
                   </p>
                   <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
-                    Günstigster Zeitraum
+                    Cheapest time window
                   </p>
                 </CardContent>
               </Card>
@@ -320,7 +321,7 @@ export default function DashboardPage() {
               <Card>
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-muted-foreground">Durchschnittspreis</p>
+                    <p className="text-sm font-medium text-muted-foreground">Average Price</p>
                     <BarChart3 className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="mt-2 text-3xl font-bold">
@@ -332,7 +333,7 @@ export default function DashboardPage() {
               <Card className="border-green-200/60 bg-green-50/50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-green-900/60 dark:bg-green-950/20">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-green-700 dark:text-green-400">Min. Preis</p>
+                    <p className="text-sm font-medium text-green-700 dark:text-green-400">Min Price</p>
                     <ArrowDown className="h-5 w-5 text-green-600" />
                   </div>
                   <p className="mt-2 text-3xl font-bold text-green-700 dark:text-green-400">
@@ -344,7 +345,7 @@ export default function DashboardPage() {
               <Card className="border-red-200/60 bg-red-50/50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-red-900/60 dark:bg-red-950/20">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-red-700 dark:text-red-400">Max. Preis</p>
+                    <p className="text-sm font-medium text-red-700 dark:text-red-400">Max Price</p>
                     <ArrowUp className="h-5 w-5 text-red-600" />
                   </div>
                   <p className="mt-2 text-3xl font-bold text-red-700 dark:text-red-400">
@@ -356,7 +357,7 @@ export default function DashboardPage() {
               <Card>
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-muted-foreground">Preisspanne</p>
+                    <p className="text-sm font-medium text-muted-foreground">Price Spread</p>
                     <Activity className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <p className="mt-2 text-3xl font-bold">
@@ -376,18 +377,18 @@ export default function DashboardPage() {
               <div className="rounded-xl border border-slate-200/60 bg-white p-6 shadow-[var(--shadow-sm)] dark:border-slate-800/60 dark:bg-slate-950">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-lg font-semibold tracking-tight">
-                    {timeRange === 'day' ? 'Day-Ahead Preiskurve' :
-                     timeRange === 'month' ? 'Monatsübersicht Preise' :
-                     timeRange === 'quarter' ? 'Quartalsübersicht Preise' :
-                     'Jahresübersicht Preise'}
+                    {timeRange === 'day' ? 'Day-Ahead Price Curve' :
+                     timeRange === 'month' ? 'Monthly Price Overview' :
+                     timeRange === 'quarter' ? 'Quarterly Price Overview' :
+                     'Yearly Price Overview'}
                   </h2>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">
-                      {prices.length} Datenpunkte
+                      {prices.length} Data points
                     </span>
                     {priceSource && (
                       <Badge variant="outline" className="text-xs">
-                        Quelle: {priceSource}
+                        Source: {priceSource}
                       </Badge>
                     )}
                   </div>
@@ -434,22 +435,22 @@ export default function DashboardPage() {
 
                   {/* Config edit button */}
                   <div className="rounded-xl border border-slate-200/60 bg-white p-4 shadow-[var(--shadow-sm)] dark:border-slate-800/60 dark:bg-slate-950">
-                    <h3 className="mb-3 text-sm font-semibold tracking-tight">Konfiguration</h3>
+                    <h3 className="mb-3 text-sm font-semibold tracking-tight">Configuration</h3>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Fahrzeug:</span>
+                        <span className="text-muted-foreground">Vehicle:</span>
                         <span className="font-medium">{VEHICLE_PROFILES[config.vehicle].name}</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Batterie:</span>
+                        <span className="text-muted-foreground">Battery:</span>
                         <span className="font-medium">{VEHICLE_PROFILES[config.vehicle].battery_kwh} kWh</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Start-Level:</span>
+                        <span className="text-muted-foreground">Start Level:</span>
                         <span className="font-medium">{config.start_level_percent}%</span>
                       </div>
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Ladefenster:</span>
+                        <span className="text-muted-foreground">Charge Window:</span>
                         <span className="font-medium">
                           {config.window_start} - {config.window_end}
                         </span>
@@ -468,40 +469,40 @@ export default function DashboardPage() {
                       onClick={() => setShowConfig(true)}
                     >
                       <Settings2 className="mr-2 h-4 w-4" />
-                      Konfiguration bearbeiten
+                      Edit Configuration
                     </Button>
                   </div>
                 </>
               ) : (
                 <div className="rounded-xl border border-slate-200/60 bg-white p-6 shadow-[var(--shadow-sm)] dark:border-slate-800/60 dark:bg-slate-950">
-                  <h3 className="mb-4 text-sm font-semibold tracking-tight">Zeitraum-Statistiken</h3>
+                  <h3 className="mb-4 text-sm font-semibold tracking-tight">Period Statistics</h3>
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Durchschnittspreis:</span>
+                      <span className="text-muted-foreground">Avg. Price:</span>
                       <span className="font-medium">
                         {hasData ? avgPrice.toFixed(2) : '-'} ct/kWh
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Min. Preis:</span>
+                      <span className="text-muted-foreground">Min Price:</span>
                       <span className="font-medium text-green-600">
                         {hasData ? minPrice.toFixed(2) : '-'} ct/kWh
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Max. Preis:</span>
+                      <span className="text-muted-foreground">Max Price:</span>
                       <span className="font-medium text-red-600">
                         {hasData ? maxPrice.toFixed(2) : '-'} ct/kWh
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Preisspanne:</span>
+                      <span className="text-muted-foreground">Price Spread:</span>
                       <span className="font-medium">
                         {hasData ? priceRange.toFixed(2) : '-'} ct/kWh
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Datenpunkte:</span>
+                      <span className="text-muted-foreground">Data Points:</span>
                       <span className="font-medium">{prices.length}</span>
                     </div>
                   </div>
@@ -513,7 +514,7 @@ export default function DashboardPage() {
                     onClick={() => setShowConfig(true)}
                   >
                     <Settings2 className="mr-2 h-4 w-4" />
-                    Konfiguration bearbeiten
+                    Edit Configuration
                   </Button>
                 </div>
               )}
@@ -532,6 +533,9 @@ export default function DashboardPage() {
             selectedDate={selectedDate}
             isLoading={isPricesLoading || isOptimizationLoading}
           />
+
+          {/* Price Sources Explorer - always visible */}
+          <PriceSourceExplorer initialDate={selectedDate} />
 
           {/* Volatility Analysis - visible when multi-day data */}
           {prices.length > 24 && (
