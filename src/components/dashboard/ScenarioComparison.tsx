@@ -139,7 +139,7 @@ export function ScenarioComparison({ optimization, config, prices, isLoading }: 
           <CardTitle className="text-base">Szenario-Vergleich</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-muted-foreground">Keine Optimierungsdaten verfuegbar.</p>
+          <p className="text-sm text-muted-foreground">Keine Optimierungsdaten verfügbar.</p>
         </CardContent>
       </Card>
     )

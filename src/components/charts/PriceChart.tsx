@@ -219,7 +219,7 @@ export function PriceChart({
   if (chartData.length === 0) {
     return (
       <div className="flex h-[400px] items-center justify-center rounded-lg border bg-muted/20">
-        <p className="text-muted-foreground">Keine Daten verfuegbar</p>
+        <p className="text-muted-foreground">Keine Daten verfügbar</p>
       </div>
     )
   }
@@ -228,7 +228,7 @@ export function PriceChart({
     <div className="w-full">
       {/* Comparison Header - only show for day view */}
       {timeRange === 'day' && avgPrice && optimizedAvgPrice && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border bg-gradient-to-r from-slate-50 to-blue-50 p-4 dark:from-slate-900 dark:to-blue-950">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-slate-200/60 bg-gradient-to-r from-slate-50 to-blue-50 p-4 dark:border-slate-800/60 dark:from-slate-900 dark:to-blue-950">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700">
@@ -264,7 +264,7 @@ export function PriceChart({
           {savingsPercent && (
             <div className="flex items-center gap-2 rounded-full bg-green-500 px-4 py-2 text-white">
               <TrendingDown className="h-4 w-4" />
-              <span className="font-semibold">{savingsPercent}% guenstiger</span>
+              <span className="font-semibold">{savingsPercent}% günstiger</span>
             </div>
           )}
         </div>
@@ -284,7 +284,7 @@ export function PriceChart({
           </div>
           <button
             onClick={() => setSelectedPoint(null)}
-            className="text-xs text-muted-foreground hover:text-foreground"
+            className="cursor-pointer rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-slate-100 hover:text-foreground dark:hover:bg-slate-800"
           >
             Schliessen
           </button>
@@ -530,13 +530,13 @@ function CustomTooltip({ active, payload, avgPrice, timeRange }: {
   const vsAverage = avgPrice ? ((price - avgPrice) / avgPrice * 100) : null
 
   return (
-    <div className="rounded-lg border bg-white px-4 py-3 shadow-lg dark:bg-slate-900">
-      <p className="text-sm font-medium text-muted-foreground">{data.time}</p>
-      <p className="text-2xl font-bold">
-        {price.toFixed(2)} ct/kWh
+    <div className="rounded-lg border border-slate-200/60 bg-white/95 px-4 py-3 shadow-[var(--shadow-lg)] backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/95">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{data.time}</p>
+      <p className="mt-0.5 text-2xl font-bold tracking-tight">
+        {price.toFixed(2)} <span className="text-sm font-normal text-muted-foreground">ct/kWh</span>
       </p>
       {data.minPrice !== undefined && data.maxPrice !== undefined && (
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1.5 text-xs text-muted-foreground">
           Spanne: {data.minPrice.toFixed(1)} - {data.maxPrice.toFixed(1)} ct/kWh
         </p>
       )}

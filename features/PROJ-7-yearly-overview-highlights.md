@@ -1,25 +1,25 @@
-# PROJ-7: Jahresansicht & Highlights
+# PROJ-7: Yearly Overview & Highlights
 
 ## Status: Planned
 **Created:** 2025-02-21
 **Last Updated:** 2025-02-21
 
 ## Dependencies
-- Requires: PROJ-1 (SMARD Datenintegration) - für historische Daten
+- Requires: PROJ-1 (SMARD Data Integration) - for historical data
 
 ## User Stories
-- Als CEO möchte ich den Jahresverlauf auf einen Blick sehen
-- Als Produkt-Manager möchte ich interessante Tage (Highlights) identifizieren
-- Als Decision Maker möchte ich monatliche Aggregation sehen
+- As a CEO, I want to see the annual trend at a glance
+- As a product manager, I want to identify interesting days (highlights)
+- As a decision maker, I want to see monthly aggregation
 
 ## Acceptance Criteria
-- [ ] Neue Seite `/yearly` oder Tab im Dashboard
-- [ ] Monats-Chart: Linien- oder Bar-Chart mit Durchschnittspreisen pro Monat
-- [ ] Highlight-Tage: Top 5 Tage mit höchster Volatilität (größte Preisspanne)
-- [ ] Highlight-Tage: Top 3 Tage mit negativen Preisen (wenn vorhanden)
-- [ ] Klick auf Highlight = Wechsel zu Tagesansicht mit diesem Datum
-- [ ] Jahres-KPIs: Durchschnittspreis, günstigster Monat, teuerster Monat
-- [ ] Jahr-Auswahl: Dropdown für verschiedene Jahre (2023, 2024, 2025)
+- [ ] New page `/yearly` or tab in dashboard
+- [ ] Monthly chart: Line or bar chart with average prices per month
+- [ ] Highlight days: Top 5 days with highest volatility (largest price spread)
+- [ ] Highlight days: Top 3 days with negative prices (if available)
+- [ ] Click on highlight = switch to day view with that date
+- [ ] Yearly KPIs: Average price, cheapest month, most expensive month
+- [ ] Year selection: Dropdown for different years (2023, 2024, 2025)
 
 ## UI Spec
 
@@ -56,28 +56,28 @@
 ```
 
 ## Data Requirements
-- **Aggregation:** Tagespreise → Monatsdurchschnitt
-- **Volatilität:** `max(preis) - min(preis)` pro Tag
-- **Highlights:** Sortiert nach Volatilität (Top 5)
-- **Negative Preise:** Extraktor für Tage mit `min(preis) < 0`
+- **Aggregation:** Daily prices → monthly average
+- **Volatility:** `max(price) - min(price)` per day
+- **Highlights:** Sorted by volatility (top 5)
+- **Negative Prices:** Extractor for days with `min(price) < 0`
 
 ## Edge Cases
-- **Was wenn kein Jahr gewählt?** → Aktuelles Jahr als Default
-- **Was bei fehlenden Daten für Monate?** → Lücke im Chart mit Tooltip "Keine Daten"
-- **Was wenn kein Tag mit negativen Preisen?** → Kategorie nicht anzeigen
-- **Was bei sehr flachen Jahresverlauf?** → Y-Achse auto-scale mit Padding
-- **Was wenn Jahr in der Zukunft?** → "Prognose" Label, nur verfügbare Daten
+- **What if no year selected?** → Current year as default
+- **What if data missing for months?** → Gap in chart with tooltip "Keine Daten"
+- **What if no day with negative prices?** → Don't show that category
+- **What if very flat annual trend?** → Y-axis auto-scale with padding
+- **What if year is in the future?** → "Prognose" label, only available data
 
 ## Technical Requirements
-- **Data Fetch:** Alle Daten eines Jahres auf einmal (oder lazy loading)
-- **Performance:** Monats-Chart < 500ms, Highlights < 200ms
-- **State Management:** Ausgewähltes Jahr im URL Query Param `?year=2024`
-- **Linking:** Highlight-Klick navigiert zu `/?date=2024-10-15`
+- **Data Fetch:** All data for a year at once (or lazy loading)
+- **Performance:** Monthly chart < 500ms, highlights < 200ms
+- **State Management:** Selected year in URL query param `?year=2024`
+- **Linking:** Highlight click navigates to `/?date=2024-10-15`
 
 ## Visual Design
-- **Monats-Chart:** Bar-Chart (Balken) oder Line-Chart
-- **Highlights:** Karten-Layout mit Icon, Datum, Metrik, Button
-- **Farben:** Gleiche Palette wie Tagesansicht (Konsistenz)
+- **Monthly Chart:** Bar chart or line chart
+- **Highlights:** Card layout with icon, date, metric, button
+- **Colors:** Same palette as day view (consistency)
 
 ---
 <!-- Sections below are added by subsequent skills -->

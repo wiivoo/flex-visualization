@@ -387,7 +387,7 @@ export function LoadShiftingComparison({
 
           {/* Shift indicator */}
           {shiftLabel && (
-            <div className="flex items-center justify-center gap-2 rounded-lg border bg-blue-50 px-4 py-2 text-sm dark:bg-blue-950/20">
+            <div className="flex items-center justify-center gap-2 rounded-lg border border-blue-200/60 bg-blue-50 px-4 py-2 text-sm dark:border-blue-900/60 dark:bg-blue-950/20">
               <ArrowRight className="h-4 w-4 text-blue-600" />
               <span className="text-muted-foreground">Laden verschoben:</span>
               <span className="font-semibold text-blue-700 dark:text-blue-400">{shiftLabel}</span>
@@ -468,7 +468,7 @@ export function LoadShiftingComparison({
         <CardContent className="space-y-5">
           {/* KPI Cards */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div className="rounded-lg border bg-gradient-to-br from-green-50 to-emerald-50 p-3 dark:from-green-950/20 dark:to-emerald-950/20">
+            <div className="rounded-lg border border-green-200/60 bg-gradient-to-br from-green-50 to-emerald-50 p-3 transition-all duration-200 hover:shadow-md dark:border-green-900/60 dark:from-green-950/20 dark:to-emerald-950/20">
               <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
                 <PiggyBank className="h-3.5 w-3.5" />
                 Gesamt gespart
@@ -478,7 +478,7 @@ export function LoadShiftingComparison({
               </p>
             </div>
 
-            <div className="rounded-lg border bg-gradient-to-br from-blue-50 to-indigo-50 p-3 dark:from-blue-950/20 dark:to-indigo-950/20">
+            <div className="rounded-lg border border-blue-200/60 bg-gradient-to-br from-blue-50 to-indigo-50 p-3 transition-all duration-200 hover:shadow-md dark:border-blue-900/60 dark:from-blue-950/20 dark:to-indigo-950/20">
               <div className="flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
                 <TrendingUp className="h-3.5 w-3.5" />
                 Ø Ersparnis/Tag
@@ -488,7 +488,7 @@ export function LoadShiftingComparison({
               </p>
             </div>
 
-            <div className="rounded-lg border bg-gradient-to-br from-slate-50 to-gray-50 p-3 dark:from-slate-950/20 dark:to-gray-950/20">
+            <div className="rounded-lg border border-slate-200/60 bg-gradient-to-br from-slate-50 to-gray-50 p-3 transition-all duration-200 hover:shadow-md dark:border-slate-800/60 dark:from-slate-950/20 dark:to-gray-950/20">
               <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
                 <Calendar className="h-3.5 w-3.5" />
                 Tage analysiert
@@ -496,7 +496,7 @@ export function LoadShiftingComparison({
               <p className="mt-1 text-2xl font-bold">{totals.days_analyzed}</p>
             </div>
 
-            <div className="rounded-lg border bg-gradient-to-br from-purple-50 to-violet-50 p-3 dark:from-purple-950/20 dark:to-violet-950/20">
+            <div className="rounded-lg border border-purple-200/60 bg-gradient-to-br from-purple-50 to-violet-50 p-3 transition-all duration-200 hover:shadow-md dark:border-purple-900/60 dark:from-purple-950/20 dark:to-violet-950/20">
               <div className="flex items-center gap-1.5 text-xs text-purple-600 dark:text-purple-400">
                 <Zap className="h-3.5 w-3.5" />
                 Gesamt verschoben
@@ -609,9 +609,9 @@ function DayTooltip({ active, payload }: {
   const data = payload[0].payload
 
   return (
-    <div className="rounded-lg border bg-white px-3 py-2 shadow-lg dark:bg-slate-900">
-      <p className="text-sm font-medium">{data.time} Uhr</p>
-      <p className="text-xs text-blue-600">Preis: {data.price.toFixed(2)} ct/kWh</p>
+    <div className="rounded-lg border border-slate-200/60 bg-white/95 px-3 py-2.5 shadow-[var(--shadow-lg)] backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/95">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{data.time} Uhr</p>
+      <p className="mt-0.5 text-sm font-semibold text-blue-600">Preis: {data.price.toFixed(2)} ct/kWh</p>
       {data.baseline !== null && (
         <p className="text-xs text-red-600">Baseline: {data.baseline.toFixed(1)} kWh</p>
       )}
@@ -639,14 +639,14 @@ function MultiDayTooltip({ active, payload }: {
   const data = payload[0].payload
 
   return (
-    <div className="rounded-lg border bg-white px-3 py-2 shadow-lg dark:bg-slate-900">
-      <p className="text-sm font-medium">
+    <div className="rounded-lg border border-slate-200/60 bg-white/95 px-3 py-2.5 shadow-[var(--shadow-lg)] backdrop-blur-sm dark:border-slate-700/60 dark:bg-slate-900/95">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         {format(new Date(data.date), 'dd.MM.yyyy', { locale: de })}
       </p>
-      <div className="mt-1 space-y-0.5 text-xs">
+      <div className="mt-1.5 space-y-0.5 text-xs">
         <p className="text-red-600">Baseline: {data.baseline.toFixed(2)} EUR</p>
         <p className="text-green-600">Optimiert: {data.optimized.toFixed(2)} EUR</p>
-        <p className="border-t pt-0.5 font-semibold text-blue-600">
+        <p className="border-t border-slate-200/60 pt-1 font-semibold text-blue-600 dark:border-slate-700/60">
           Ersparnis: {data.savings.toFixed(2)} EUR
         </p>
       </div>

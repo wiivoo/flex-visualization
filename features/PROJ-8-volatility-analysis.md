@@ -1,32 +1,32 @@
-# PROJ-8: Volatilitäts-Analyse & Spread-Dashboard
+# PROJ-8: Volatility Analysis & Spread Dashboard
 
 ## Status: In Review
 **Created:** 2026-02-22
 **Last Updated:** 2026-02-22
 
 ## Dependencies
-- Requires: PROJ-1 (SMARD Datenintegration) - für Preisdaten
+- Requires: PROJ-1 (SMARD Data Integration) - for price data
 
 ## User Stories
-- Als CEO möchte ich auf einen Blick sehen, wie groß das tägliche Arbitrage-Potenzial ist
-- Als Analyst möchte ich Tage mit hoher Volatilität identifizieren für Kundenpräsentationen
-- Als Decision Maker möchte ich verstehen, wie oft sich flexibles Laden wirklich lohnt
+- As a CEO, I want to see at a glance how large the daily arbitrage potential is
+- As an analyst, I want to identify days with high volatility for customer presentations
+- As a decision maker, I want to understand how often flexible charging actually pays off
 
 ## Acceptance Criteria
-- [x] Volatilitäts-Analyse Section im Dashboard sichtbar (bei Multi-Tag-Daten)
-- [x] KPIs: Ø Täglicher Spread, Max. Spread, Arbitrage-Tage, Analysierte Tage
-- [x] Spread-Bandbreiten-Chart: Min-Max-Band pro Tag mit Durchschnittslinie
-- [x] Spread-Barometer: Tägliche Spreads als farbcodierte Balken
-- [x] Farbcodierung: Grün (>20ct), Gelb (10-20ct), Grau (<10ct)
-- [x] Deutsche Beschriftung und Locale
-- [x] Tooltips mit Details (Datum, Min, Max, Spread, Bewertung)
-- [x] Legende erklärt Farbskala
+- [x] Volatility analysis section visible in dashboard (for multi-day data)
+- [x] KPIs: Avg. daily spread, max spread, arbitrage days, analyzed days
+- [x] Spread bandwidth chart: Min-max band per day with average line
+- [x] Spread barometer: Daily spreads as color-coded bars
+- [x] Color coding: Green (>20ct), Yellow (10-20ct), Gray (<10ct)
+- [x] German labels and locale
+- [x] Tooltips with details (date, min, max, spread, rating)
+- [x] Legend explains color scale
 
 ## Technical Requirements
-- **Performance:** Chart render < 200ms (useMemo für Aggregation)
-- **Data:** Nutzt bestehende PricePoint[] Daten, keine zusätzlichen API-Calls
-- **Responsive:** Charts mit ResponsiveContainer
+- **Performance:** Chart render < 200ms (useMemo for aggregation)
+- **Data:** Uses existing PricePoint[] data, no additional API calls
+- **Responsive:** Charts with ResponsiveContainer
 
 ## Files
-- `src/components/dashboard/VolatilityAnalysis.tsx` - Hauptkomponente
-- `src/app/page.tsx` - Integration (Import + Rendering)
+- `src/components/dashboard/VolatilityAnalysis.tsx` - Main component
+- `src/app/page.tsx` - Integration (import + rendering)

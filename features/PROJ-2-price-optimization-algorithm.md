@@ -1,25 +1,25 @@
-# PROJ-2: Preis-Optimierungsalgorithmus
+# PROJ-2: Price Optimization Algorithm
 
 ## Status: Planned
 **Created:** 2025-02-21
 **Last Updated:** 2025-02-21
 
 ## Dependencies
-- Requires: PROJ-1 (SMARD Datenintegration) - für Preisdaten
+- Requires: PROJ-1 (SMARD Data Integration) - for price data
 
 ## User Stories
-- Als Dashboard-Nutzer möchte ich sehen, WANN ich am besten laden sollte, um Kosten zu minimieren
-- Als Analyst möchte ich verstehen, wie viel ich durch Flexibilität sparen kann
-- Als Geschäftsführer möchte ich sehen, wie die Marge berechnet wird
+- As a dashboard user, I want to see WHEN I should best charge to minimize costs
+- As an analyst, I want to understand how much I can save through flexibility
+- As a CEO, I want to see how the margin is calculated
 
 ## Acceptance Criteria
-- [ ] API Route `/api/optimize` erhält Preisdaten + Fahrzeugparameter
-- [ ] Algorithmus findet günstigste Ladezeiten im Zeitfenster (22:00-06:00)
-- [ ] Berücksichtigt: Batteriegröße, Start-Level, Ladeleistung, Ziel-Level (100%)
-- [ ] Output: Optimale Ladezeiten (Start/Ende für jedes 15min-Intervall)
-- [ ] Berechnung: Kosten ohne Flex vs. Kosten mit Flex = Ersparnis
-- [ ] Marge: Fixer ct/kWh Betrag auf Ersparnis (einstellbar, Default 5 ct/kWh)
-- [ ] Kunden-Vergünstigung: Einstellbarer Anteil der Ersparnis (Default 50% oder 12 ct/kWh)
+- [ ] API Route `/api/optimize` receives price data + vehicle parameters
+- [ ] Algorithm finds cheapest charging times within the time window (22:00-06:00)
+- [ ] Considers: Battery size, start level, charge power, target level (100%)
+- [ ] Output: Optimal charging times (start/end for each 15min interval)
+- [ ] Calculation: Cost without flex vs. cost with flex = savings
+- [ ] Margin: Fixed ct/kWh amount on savings (configurable, default 5 ct/kWh)
+- [ ] Customer discount: Configurable share of savings (default 50% or 12 ct/kWh)
 
 ## Input Parameters
 ```json
@@ -56,36 +56,36 @@
 }
 ```
 
-## Algorithmus
-1. **Berechne benötigte Energie:** `battery_kwh * (target - start) / 100`
-2. **Berechne Ladezeit:** `energy / charge_power` Stunden
-3. **Finde günstigstes Zeitfenster:** Sortiere 15min-Intervalle nach Preis
-4. **Berücksichtige Ladeleistung:** Maximal X Intervalle gleichzeitig laden
-5. **Erstelle Schedule:** Zusammenhängende Blöcke zu günstigsten Zeiten
+## Algorithm
+1. **Calculate required energy:** `battery_kwh * (target - start) / 100`
+2. **Calculate charging duration:** `energy / charge_power` hours
+3. **Find cheapest time window:** Sort 15min intervals by price
+4. **Consider charge power:** Maximum X intervals charging simultaneously
+5. **Create schedule:** Consecutive blocks at cheapest times
 
 ## Edge Cases
-- **Was wenn Zeitfenster zu klein für volles Laden?** → Maximal möglich laden, Hinweis "Unvollständig"
-- **Was wenn alle Preise gleich?** → Frühestmöglicher Start, Hinweis "Keine Optimierung möglich"
-- **Was bei negativen Preisen?** → Voll laden! (Kunde wird sogar bezahlt)
-- **Was wenn battery_kwh = 0?** → 400 Bad Request
-- **Was bei sehr kleiner Ladeleistung?** → Lange Ladezeit, evtl. außerhalb Fenster
+- **What if the time window is too small for full charging?** → Charge as much as possible, notice "Incomplete"
+- **What if all prices are equal?** → Earliest possible start, notice "No optimization possible"
+- **What about negative prices?** → Charge fully! (Customer even gets paid)
+- **What if battery_kwh = 0?** → 400 Bad Request
+- **What about very low charge power?** → Long charging duration, possibly outside the window
 
 ## Technical Requirements
-- **Performance:** < 100ms für Optimierung ( greedy algorithm reicht)
-- **Precision:** 15-Minuten-Intervalle (96 Werte/Tag)
-- **Validation:** Alle Input-Parameter validieren (Zahlenbereiche)
+- **Performance:** < 100ms for optimization (greedy algorithm is sufficient)
+- **Precision:** 15-minute intervals (96 values/day)
+- **Validation:** Validate all input parameters (number ranges)
 
 ## Business Logic
-**Preise umrechnen:**
+**Price conversion:**
 - SMARD: EUR/MWh
-- Verbraucher: ct/kWh
-- Formel: `ct_kwh = EUR_MWh / 10`
+- Consumer: ct/kWh
+- Formula: `ct_kwh = EUR_MWh / 10`
 
-**Marge-Modell:**
+**Margin model:**
 ```
-Ersparnis = Preis_Normal - Preis_Flex
-Kunde bekommt = max(customer_discount_ct_kwh, Ersparnis * 50%)
-Unsere Marge = (Ersparnis - Kunde) * kWh
+Savings = Price_Normal - Price_Flex
+Customer receives = max(customer_discount_ct_kwh, Savings * 50%)
+Our margin = (Savings - Customer) * kWh
 ```
 
 ---
@@ -146,14 +146,14 @@ VEHICLES = {
 
 ### Files to Create
 - `src/app/api/optimize/route.ts` - API Endpoint
-- `src/lib/optimizer.ts` - Algorithmus
-- `src/lib/config.ts` - Fahrzeug-Profiles (shared)
+- `src/lib/optimizer.ts` - Algorithm
+- `src/lib/config.ts` - Vehicle Profiles (shared)
 
 ### Validation Rules
-- `energy_kwh > 0`: Nicht leer laden
-- `0 <= start_level < target_level <= 100`: Logik check
-- `22:00 <= window_start und window_end <= 06:00`: Nacht-Fenster
-- `base_price > margin`: Sonst negative Marge möglich
+- `energy_kwh > 0`: Don't charge empty
+- `0 <= start_level < target_level <= 100`: Logic check
+- `22:00 <= window_start and window_end <= 06:00`: Night window
+- `base_price > margin`: Otherwise negative margin possible
 
 ## QA Test Results
 
@@ -163,70 +163,70 @@ VEHICLES = {
 
 ### Acceptance Criteria Status
 
-#### AC-1: API Route `/api/optimize` erhalt Preisdaten + Fahrzeugparameter
+#### AC-1: API Route `/api/optimize` receives price data + vehicle parameters
 - [x] API endpoint exists at `/api/optimize`
 - [x] Accepts prices, vehicle, and config in request body
 - [x] Returns proper optimization result
 
-#### AC-2: Algorithmus findet gunstigste Ladezeiten im Zeitfenster (22:00-06:00)
+#### AC-2: Algorithm finds cheapest charging times in the time window (22:00-06:00)
 - [x] Correctly filters prices to time window
 - [x] Sorts by price (ascending)
 - [x] Selects cheapest intervals for charging
 
-#### AC-3: Berucksichtigt: BatteriegroBe, Start-Level, Ladeleistung, Ziel-Level (100%)
+#### AC-3: Considers: Battery size, start level, charge power, target level (100%)
 - [x] All vehicle parameters processed correctly
 - [x] Energy calculation: `battery_kwh * (target - start) / 100`
 - [x] Duration calculation: `energy / charge_power`
 
-#### AC-4: Output: Optimale Ladezeiten (Start/Ende fur jedes 15min-Intervall)
+#### AC-4: Output: Optimal charging times (start/end for each 15min interval)
 - [x] Returns charging_schedule array with start/end times
 - [x] Merges consecutive intervals into blocks
 
-#### AC-5: Berechnung: Kosten ohne Flex vs. Kosten mit Flex = Ersparnis
+#### AC-5: Calculation: Cost without flex vs. cost with flex = savings
 - [x] `cost_without_flex_eur` calculated correctly
 - [x] `cost_with_flex_eur` calculated correctly
 - [x] `savings_eur` is the difference
 
-#### AC-6: Marge: Fixer ct/kWh Betrag auf Ersparnis (einstellbar, Default 5 ct/kWh)
+#### AC-6: Margin: Fixed ct/kWh amount on savings (configurable, default 5 ct/kWh)
 - [x] Margin calculation included in result
 - [x] Configurable via `margin_ct_kwh` parameter
 
-#### AC-7: Kunden-Vergunstigung: Einstellbarer Anteil der Ersparnis (Default 50% oder 12 ct/kWh)
+#### AC-7: Customer discount: Configurable share of savings (default 50% or 12 ct/kWh)
 - [x] Customer benefit calculated correctly
 - [x] Uses min of (discount_ct_kwh * kWh) or (savings * 50%)
 
 ### Edge Cases Status
 
-#### EC-1: Zeitfenster zu klein fur volles Laden
+#### EC-1: Time window too small for full charging
 - [x] Returns partial charging schedule
 - [x] Sets `target_level_reached: false`
 - [x] Energy amount reflects actual charging possible
 
-#### EC-2: Alle Preise gleich
+#### EC-2: All prices equal
 - [x] Still produces valid schedule (earliest intervals)
 - [x] Calculations work with uniform prices
 
-#### EC-3: Negative Preise
+#### EC-3: Negative prices
 - [x] Algorithm handles negative prices correctly
 - [x] Would select negative prices for maximum savings
 
 #### EC-4: battery_kwh = 0
 - [x] Returns 400 error with clear message "Too small: expected number to be >0"
 
-#### EC-5: Sehr kleine Ladeleistung
+#### EC-5: Very low charge power
 - [x] Handles 0.1 kW charge power
 - [x] Returns schedule with minimal energy per interval
 
 ### Additional Edge Cases Tested
 
-#### EC-6: Bereits voll geladen (start_level = target_level)
+#### EC-6: Already fully charged (start_level = target_level)
 - [x] Returns empty schedule with zero costs
 
-#### EC-7: Preise auBerhalb Zeitfensters
+#### EC-7: Prices outside time window
 - [x] Returns error "No prices available in time window"
 - [x] Costs calculated but no charging schedule
 
-#### EC-8: Ubernacht-Fenster (z.B. 22:00 - 06:00)
+#### EC-8: Overnight window (e.g. 22:00 - 06:00)
 - [x] Correctly handles overnight window crossing midnight
 
 ### Security Audit Results

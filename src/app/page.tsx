@@ -170,17 +170,17 @@ export default function DashboardPage() {
     : '-'
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-slate-50/80 to-white dark:from-slate-950 dark:to-slate-900">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-white/80 backdrop-blur-sm dark:bg-slate-950/80">
+      <header className="sticky top-0 z-50 border-b border-slate-200/60 bg-white/85 shadow-[0_1px_3px_rgba(0,0,0,0.04)] backdrop-blur-md dark:border-slate-800/60 dark:bg-slate-950/85">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
               <Zap className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-bold tracking-tight">FlexMon</h1>
-              <p className="text-xs text-muted-foreground">
+              <h1 className="text-xl font-bold tracking-tight text-primary">FlexMon</h1>
+              <p className="text-xs font-medium tracking-wide text-muted-foreground">
                 Flexibilitäts-Monetarisierung
               </p>
             </div>
@@ -230,7 +230,7 @@ export default function DashboardPage() {
 
         {/* Quick Config Panel */}
         {showConfig && (
-          <div className="mb-6 rounded-lg border bg-white p-4 shadow-sm dark:bg-slate-950">
+          <div className="mb-6 rounded-xl border border-slate-200/60 bg-white p-4 shadow-[var(--shadow-md)] dark:border-slate-800/60 dark:bg-slate-950">
             <QuickConfigPanel
               config={config}
               onConfigChange={handleConfigChange}
@@ -251,7 +251,7 @@ export default function DashboardPage() {
             /* Day view with optimization: Executive KPIs */
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {/* Ersparnis pro Ladung */}
-              <Card className="border-green-200 bg-gradient-to-br from-green-50 to-emerald-50 dark:border-green-900 dark:from-green-950/30 dark:to-emerald-950/30">
+              <Card className="border-green-200/60 bg-gradient-to-br from-green-50 to-emerald-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-green-900/60 dark:from-green-950/30 dark:to-emerald-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-green-700 dark:text-green-400">Ersparnis pro Ladung</p>
@@ -267,7 +267,7 @@ export default function DashboardPage() {
               </Card>
 
               {/* Marge pro Monat */}
-              <Card className="border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 dark:border-blue-900 dark:from-blue-950/30 dark:to-indigo-950/30">
+              <Card className="border-blue-200/60 bg-gradient-to-br from-blue-50 to-indigo-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-blue-900/60 dark:from-blue-950/30 dark:to-indigo-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-blue-700 dark:text-blue-400">Marge pro Monat</p>
@@ -283,7 +283,7 @@ export default function DashboardPage() {
               </Card>
 
               {/* Kunden-Vorteil */}
-              <Card className="border-purple-200 bg-gradient-to-br from-purple-50 to-violet-50 dark:border-purple-900 dark:from-purple-950/30 dark:to-violet-950/30">
+              <Card className="border-purple-200/60 bg-gradient-to-br from-purple-50 to-violet-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-purple-900/60 dark:from-purple-950/30 dark:to-violet-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-purple-700 dark:text-purple-400">Kunden-Vorteil</p>
@@ -299,7 +299,7 @@ export default function DashboardPage() {
               </Card>
 
               {/* Beste Ladezeit */}
-              <Card className="border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:border-amber-900 dark:from-amber-950/30 dark:to-orange-950/30">
+              <Card className="border-amber-200/60 bg-gradient-to-br from-amber-50 to-orange-50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-amber-900/60 dark:from-amber-950/30 dark:to-orange-950/30">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-amber-700 dark:text-amber-400">Beste Ladezeit</p>
@@ -329,7 +329,7 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20">
+              <Card className="border-green-200/60 bg-green-50/50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-green-900/60 dark:bg-green-950/20">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-green-700 dark:text-green-400">Min. Preis</p>
@@ -341,7 +341,7 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-red-200 bg-red-50/50 dark:border-red-900 dark:bg-red-950/20">
+              <Card className="border-red-200/60 bg-red-50/50 transition-all duration-200 hover:shadow-md hover:scale-[1.01] dark:border-red-900/60 dark:bg-red-950/20">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between">
                     <p className="text-sm font-medium text-red-700 dark:text-red-400">Max. Preis</p>
@@ -373,9 +373,9 @@ export default function DashboardPage() {
           <div className="grid gap-6 lg:grid-cols-3">
             {/* Price Chart - takes 2 columns */}
             <div className="lg:col-span-2">
-              <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-slate-950">
+              <div className="rounded-xl border border-slate-200/60 bg-white p-6 shadow-[var(--shadow-sm)] dark:border-slate-800/60 dark:bg-slate-950">
                 <div className="mb-4 flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">
+                  <h2 className="text-lg font-semibold tracking-tight">
                     {timeRange === 'day' ? 'Day-Ahead Preiskurve' :
                      timeRange === 'month' ? 'Monatsübersicht Preise' :
                      timeRange === 'quarter' ? 'Quartalsübersicht Preise' :
@@ -433,8 +433,8 @@ export default function DashboardPage() {
                   <OptimizationSummary optimization={optimization} isLoading={isOptimizationLoading} />
 
                   {/* Config edit button */}
-                  <div className="rounded-xl border bg-white p-4 shadow-sm dark:bg-slate-950">
-                    <h3 className="mb-3 text-sm font-semibold">Konfiguration</h3>
+                  <div className="rounded-xl border border-slate-200/60 bg-white p-4 shadow-[var(--shadow-sm)] dark:border-slate-800/60 dark:bg-slate-950">
+                    <h3 className="mb-3 text-sm font-semibold tracking-tight">Konfiguration</h3>
                     <div className="space-y-2 text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Fahrzeug:</span>
@@ -473,8 +473,8 @@ export default function DashboardPage() {
                   </div>
                 </>
               ) : (
-                <div className="rounded-xl border bg-white p-6 shadow-sm dark:bg-slate-950">
-                  <h3 className="mb-4 text-sm font-semibold">Zeitraum-Statistiken</h3>
+                <div className="rounded-xl border border-slate-200/60 bg-white p-6 shadow-[var(--shadow-sm)] dark:border-slate-800/60 dark:bg-slate-950">
+                  <h3 className="mb-4 text-sm font-semibold tracking-tight">Zeitraum-Statistiken</h3>
                   <div className="space-y-3 text-sm">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Durchschnittspreis:</span>

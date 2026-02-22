@@ -1,25 +1,25 @@
-# PROJ-6: Passwortschutz
+# PROJ-6: Password Protection
 
 ## Status: Planned
 **Created:** 2025-02-21
 **Last Updated:** 2025-02-21
 
 ## Dependencies
-- None (gesamte App ist geschützt)
+- None (entire app is protected)
 
 ## User Stories
-- Als Admin möchte ich das Dashboard mit einem einfachen Passwort schützen
-- Als Nutzer möchte ich einmalig das Passwort eingeben und dann Zugriff haben
-- Als Entscheidungsträger möchte ich das Dashboard schnell ohne komplexe Anmeldung nutzen
+- As an admin, I want to protect the dashboard with a simple password
+- As a user, I want to enter the password once and then have access
+- As a decision maker, I want to use the dashboard quickly without a complex login process
 
 ## Acceptance Criteria
-- [ ] Middleware prüft Passwort auf allen Seiten
-- [ ] Login-Seite: Einfaches Eingabefeld für Passwort
-- [ ] Passwort wird mit Environment Variable `DASHBOARD_PASSWORD` verglichen
-- [ ] Bei korrektem Passwort: HTTP-Only Cookie gesetzt, Redirect zu Dashboard
-- [ ] Bei falschem Passwort: Fehlermeldung "Passwort falsch"
-- [ ] Session gilt für 24 Stunden (Cookie expire)
-- [ ] Logout-Button im Dashboard (optional)
+- [ ] Middleware checks password on all pages
+- [ ] Login page: Simple input field for password
+- [ ] Password is compared against environment variable `DASHBOARD_PASSWORD`
+- [ ] On correct password: HTTP-Only cookie set, redirect to dashboard
+- [ ] On wrong password: Error message "Passwort falsch"
+- [ ] Session valid for 24 hours (cookie expiry)
+- [ ] Logout button in dashboard (optional)
 
 ## UI Spec
 
@@ -43,21 +43,21 @@
 ## Technical Requirements
 - **Middleware:** Next.js Middleware (`middleware.ts`)
 - **Cookie:** HttpOnly, Secure, SameSite=Strict
-- **Session:** JWT oder einfacher Hash im Cookie
+- **Session:** JWT or simple hash in cookie
 - **Environment:** `DASHBOARD_PASSWORD` (in .env.local)
-- **Hashing:** Passwort wird gehasht verglichen (bcrypt oder einfach SHA-256 für interne Nutzung)
+- **Hashing:** Password compared using hash (bcrypt or simple SHA-256 for internal use)
 
 ## Security Considerations
-- **Kein User Management:** Nur ein Passwort für alle
-- **Keine Rate Limiting:** Für interne Nutzung akzeptabel
-- **HTTPS:** In Production zwingend (Vercel default)
-- **Password Strength:** Min 12 Zeichen
+- **No User Management:** Only one password for everyone
+- **No Rate Limiting:** Acceptable for internal use
+- **HTTPS:** Mandatory in production (Vercel default)
+- **Password Strength:** Min 12 characters
 
 ## Edge Cases
-- **Was wenn Passwort nicht gesetzt?** → Entweder kein Schutz (Dev) oder Fehler (Prod)
-- **Was wenn Cookie abläuft?** → Redirect zu Login
-- **Was bei mehreren Tabs?** → Cookie wird geteilt, nur einmal einloggen
-- **Was wenn Browser Cookies blockiert?** → Hinweis "Cookies erforderlich"
+- **What if password is not set?** → Either no protection (dev) or error (prod)
+- **What if cookie expires?** → Redirect to login
+- **What about multiple tabs?** → Cookie is shared, only need to log in once
+- **What if browser blocks cookies?** → Show notice "Cookies erforderlich"
 
 ## Implementation Notes
 ```typescript
@@ -117,12 +117,12 @@ middleware.ts
 - `src/lib/auth.ts` - Hash/Verify Helper
 
 ### Tech Decisions
-| Entscheidung | Warum |
-|--------------|-------|
-| Middleware | Erstes Filter bevor Page geladen wird |
-| HTTP-Only Cookie | XSS-Sicher, keine Exposition im JS |
-| SHA-256 Hash | Schnell, ausreichend für interne Nutzung (bcrypt overkill) |
-| Keine User DB | Ein Passwort für alle = Simple |
+| Decision | Reason |
+|----------|--------|
+| Middleware | First filter before page loads |
+| HTTP-Only Cookie | XSS-safe, no exposure in JS |
+| SHA-256 Hash | Fast, sufficient for internal use (bcrypt overkill) |
+| No User DB | One password for all = simple |
 
 ## QA Test Results
 
@@ -132,55 +132,55 @@ middleware.ts
 
 ### Acceptance Criteria Status
 
-#### AC-1: Middleware pruft Passwort auf allen Seiten
+#### AC-1: Middleware checks password on all pages
 - [x] Middleware.ts implements route protection
 - [x] All routes except `/login`, `/api/auth`, `/api/prices`, `/api/optimize` require auth
 - [x] Unauthenticated users redirected to login
 
-#### AC-2: Login-Seite: Einfaches Eingabefeld fur Passwort
+#### AC-2: Login page with simple password input field
 - [x] Login page at `/login`
 - [x] Single password input field
 - [x] Clean, centered card layout
 - [x] FlexMon Dashboard branding
 
-#### AC-3: Passwort wird mit Environment Variable `DASHBOARD_PASSWORD` verglichen
+#### AC-3: Password compared against environment variable `DASHBOARD_PASSWORD`
 - [x] Uses `DASHBOARD_PASSWORD` from environment
 - [x] Comparison in `/src/lib/auth.ts`
 - [x] Returns error on mismatch
 
-#### AC-4: Bei korrektem Passwort: HTTP-Only Cookie gesetzt, Redirect zu Dashboard
+#### AC-4: On correct password: HTTP-Only cookie set, redirect to dashboard
 - [x] JWT token created on successful login
 - [x] Cookie: `flexmon-session` with HttpOnly, Secure, SameSite=strict
 - [x] 24-hour expiration
 - [x] Redirects to `/` on success
 
-#### AC-5: Bei falschem Passwort: Fehlermeldung "Passwort falsch"
+#### AC-5: On wrong password: Error message "Passwort falsch"
 - [x] Returns "Invalid password" error
 - [x] Error displayed in Alert component on login page
 
-#### AC-6: Session gilt fur 24 Stunden (Cookie expire)
+#### AC-6: Session valid for 24 hours (cookie expiry)
 - [x] `maxAge: 24 * 60 * 60` (86400 seconds)
 - [x] JWT expiration set to 24h
 
-#### AC-7: Logout-Button im Dashboard (optional)
+#### AC-7: Logout button in dashboard (optional)
 - [x] Logout button in header
 - [x] Calls DELETE `/api/auth`
 - [x] Clears cookie and redirects to login
 
 ### Edge Cases Status
 
-#### EC-1: Passwort nicht gesetzt
+#### EC-1: Password not set
 - [x] Returns "DASHBOARD_PASSWORD not configured" error
 - [x] System unusable without password (good for security)
 
-#### EC-2: Cookie ablauft
+#### EC-2: Cookie expires
 - [x] Middleware redirects to login when cookie invalid/expired
 
-#### EC-3: Mehrere Tabs
+#### EC-3: Multiple tabs
 - [x] Cookie shared across tabs
 - [x] Single login works for all tabs
 
-#### EC-4: Browser Cookies blockiert
+#### EC-4: Browser blocks cookies
 - [x] Not explicitly tested, but would fail gracefully (loop to login)
 
 ### Security Audit Results
@@ -205,64 +205,60 @@ middleware.ts
 - [x] All protected routes require valid session
 - [x] Public API routes accessible without auth (acceptable for read-only data)
 
-#### Security Headers (Partial Implementation)
-- [ ] X-Frame-Options: Not explicitly set
-- [ ] X-Content-Type-Options: Not explicitly set
-- [ ] Referrer-Policy: Not explicitly set
-- [ ] Strict-Transport-Security: Not explicitly set
+#### Security Headers (Re-tested 2026-02-22)
+- [x] X-Frame-Options: DENY -- FIXED (verified via curl)
+- [x] X-Content-Type-Options: nosniff -- FIXED (verified via curl)
+- [x] Referrer-Policy: origin-when-cross-origin -- FIXED (verified via curl)
+- [x] Strict-Transport-Security: max-age=31536000; includeSubDomains -- FIXED (verified via curl)
+- [x] X-XSS-Protection: 1; mode=block -- BONUS (added in next.config.ts)
+- [x] X-DNS-Prefetch-Control: on -- BONUS
 
-### Bugs Found
+### Bugs Found (Re-tested 2026-02-22)
 
-#### BUG-1: Security Headers Not Configured
-- **Severity:** Medium
-- **Description:** Security headers not set in Next.js config
-- **Impact:** Vulnerable to clickjacking, MIME sniffing
-- **Recommendation:** Add security headers in next.config.ts:
-  ```typescript
-  headers: async () => [{
-    source: '/(.*)',
-    headers: [
-      { key: 'X-Frame-Options', value: 'DENY' },
-      { key: 'X-Content-Type-Options', value: 'nosniff' },
-      { key: 'Referrer-Policy', value: 'origin-when-cross-origin' },
-    ]
-  }]
-  ```
-- **Priority:** Fix before production deployment
+#### BUG-1: Security Headers Not Configured -- FIXED
+- **Status:** RESOLVED
+- **Verified:** All 6 security headers now present in `next.config.ts` and confirmed in HTTP response
 
-#### BUG-2: No Rate Limiting on Login
-- **Severity:** Medium
-- **Description:** `/api/auth` endpoint has no rate limiting
-- **Impact:** Vulnerable to brute force password attacks
-- **Recommendation:** Add rate limiting (e.g., 5 attempts per minute per IP)
-- **Priority:** Fix before production deployment
+#### BUG-2: No Rate Limiting on Login -- FIXED
+- **Status:** RESOLVED
+- **Verified:** Rate limiting implemented in `src/app/api/auth/route.ts` (5 attempts/minute per IP)
+- **Test:** 8 rapid login attempts -> first 5 returned 401, attempts 6-8 returned 429 with Retry-After header
 
 #### BUG-3: Weak Default Secret Warning
 - **Severity:** Low
+- **Status:** OPEN
 - **Description:** Falls back to "fallback-secret-key-change-in-production" if AUTH_SECRET not set
 - **Impact:** Weak JWT signing if environment not properly configured
 - **Recommendation:** Throw error instead of using fallback, or require AUTH_SECRET
 - **Priority:** Fix before production deployment
 
-#### BUG-4: Empty Password Accepted
+#### BUG-4: Empty Password Handling
 - **Severity:** Low
-- **Description:** API returns "Passwort erforderlich" for empty password
-- **Impact:** Minor UX issue (error message is correct but in German while UI is mixed)
-- **Priority:** Nice to have
+- **Status:** OPEN (acceptable)
+- **Description:** Empty password returns "Passwort erforderlich" (400) -- correct behavior
+- **Impact:** None, this is proper validation
 
-#### BUG-5: Typos in Login Page Text
-- **Severity:** Low
-- **Description:** "Die Session gilt fur 24 Stunden" missing umlaut
-- **Impact:** Minor cosmetic issue
-- **Priority:** Nice to have
+#### BUG-5: Typos in Login Page Text -- FIXED
+- **Status:** RESOLVED
+- **Verified:** Login page now reads "Die Session gilt fur 24 Stunden" correctly with proper umlauts
 
-### Summary
+#### BUG-6 (NEW): Middleware Uses startsWith for PUBLIC_PATHS
+- **Severity:** High
+- **Status:** OPEN
+- **Description:** PUBLIC_PATHS includes `/api/optimize` which also matches `/api/optimize/batch` via `pathname.startsWith(path)`. This makes the batch optimization endpoint unauthenticated.
+- **Location:** `src/middleware.ts` line 4 and 10
+- **Impact:** Anyone can trigger expensive batch optimizations without login
+- **Recommendation:** Use exact path matching or list all public paths explicitly
+- **Priority:** HIGH -- Fix before production
+
+### Summary (Re-tested 2026-02-22)
 - **Acceptance Criteria:** 7/7 passed (100%)
 - **Edge Cases:** 4/4 handled
-- **Bugs Found:** 5 total (0 critical, 2 medium, 0 high, 3 low)
-- **Security:** 2 medium-priority issues for production
-- **Production Ready:** NO - Address security headers and rate limiting first
-- **Recommendation:** Fix medium bugs before deployment
+- **Previously Open Bugs Fixed:** 3 (security headers, rate limiting, umlaut)
+- **Remaining Bugs:** 2 (1 high: middleware prefix matching, 1 low: weak default secret)
+- **Security:** Rate limiting and headers now solid; middleware path matching is a new HIGH issue
+- **Production Ready:** NO -- Fix BUG-6 (middleware path matching) first
+- **Recommendation:** Change middleware to use exact path matching
 
 ## Deployment
 _To be added by /deploy_
