@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifySession, getSessionCookieName } from '@/lib/auth'
 
 // Exact public paths (no prefix matching to prevent auth bypass on sub-routes)
-const PUBLIC_PATHS = new Set(['/login', '/api/auth', '/api/prices', '/api/prices/batch', '/api/optimize', '/api/prices/bulk'])
+const PUBLIC_PATHS = new Set(['/login', '/api/auth', '/api/prices', '/api/prices/batch', '/api/optimize', '/api/prices/bulk', '/api/generation'])
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl

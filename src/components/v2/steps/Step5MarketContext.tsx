@@ -4,11 +4,10 @@ import { useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { COMPETITOR_BENCHMARKS } from '@/lib/v2-config'
 import type { DailySummary, MonthlyStats, HourlyPrice } from '@/lib/v2-config'
 import {
   ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer
+  ResponsiveContainer, ReferenceLine
 } from 'recharts'
 
 interface Props {
@@ -20,21 +19,24 @@ interface Props {
 }
 
 const TIMELINE = [
-  { year: '2024 Jan', event: '§14a EnWG takes effect', desc: 'Controllable consumption devices get grid fee reduction' },
+  { year: '2024 Jan', event: '\u00a714a EnWG takes effect', desc: 'Controllable consumption devices get grid fee reduction' },
   { year: '2025 Jan', event: 'Dynamic tariffs mandatory', desc: 'All energy suppliers must offer hourly price tariffs' },
-  { year: '2025 Oct', event: '15-min day-ahead products', desc: 'Quarter-hourly granularity on EPEX Spot — more optimization potential' },
+  { year: '2025 Oct', event: '15-min day-ahead products', desc: 'Quarter-hourly granularity on EPEX Spot \u2014 more optimization potential' },
   { year: '2026+', event: 'Smart meter rollout', desc: 'Accelerated iMSys deployment enables real-time optimization at scale' },
 ]
 
 export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }: Props) {
-  // Yearly summaries
+  // Yearly summaries with night spread
   const yearlyStats = useMemo(() => {
-    const years = new Map<string, { spreads: number[]; negHours: number; prices: number[] }>()
+    const years = new Map<string, { spreads: number[]; negHours: number; prices: number[]; nightSpreads: number[] }>()
     for (const d of daily) {
       const year = d.date.slice(0, 4)
-      const entry = years.get(year) || { spreads: [], negHours: 0, prices: [] }
+      const entry = years.get(year) || { spreads: [], negHours: 0, prices: [], nightSpreads: [] }
       entry.spreads.push(d.spread)
       entry.negHours += d.negativeHours
+      if (d.dayNightSpread !== undefined) {
+        entry.nightSpreads.push(d.dayNightSpread)
+      }
       years.set(year, entry)
     }
     for (const p of hourly) {
@@ -49,25 +51,36 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
       maxPrice: data.prices.length ? Math.round(data.prices.reduce((m, v) => v > m ? v : m, data.prices[0])) : 0,
       minPrice: data.prices.length ? Math.round(data.prices.reduce((m, v) => v < m ? v : m, data.prices[0])) : 0,
       avgPrice: data.prices.length ? Math.round(data.prices.reduce((s, v) => s + v, 0) / data.prices.length * 10) / 10 : 0,
+      avgNightSpread: data.nightSpreads.length
+        ? Math.round(data.nightSpreads.reduce((s, v) => s + v, 0) / data.nightSpreads.length * 10) / 10
+        : 0,
     })).sort((a, b) => a.year.localeCompare(b.year))
   }, [daily, hourly])
 
-  // Monthly trend chart
+  // Night spread insight: compute average from monthly data
+  const avgNightSpreadOverall = useMemo(() => {
+    const spreads = monthly.filter(m => m.avgNightSpread > 0).map(m => m.avgNightSpread)
+    if (spreads.length === 0) return 0
+    return Math.round(spreads.reduce((s, v) => s + v, 0) / spreads.length * 10) / 10
+  }, [monthly])
+
+  // Monthly trend chart with night spread
   const trendData = useMemo(() =>
     monthly.map(m => ({
       month: new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
       avgSpread: m.avgSpread,
       negativeHours: m.negativeHours,
       avgPrice: m.avgPrice,
+      nightSpread: m.avgNightSpread || 0,
     })),
     [monthly]
   )
 
-  // Seasonal heatmap: avg price by month-of-year × hour
+  // Seasonal heatmap: avg price by month-of-year x hour
   const heatmapData = useMemo(() => {
     const grid = new Map<string, { sum: number; count: number }>()
     for (const p of hourly) {
-      const month = new Date(p.timestamp).getMonth() // 0-11
+      const month = new Date(p.timestamp).getMonth()
       const key = `${month}-${p.hour}`
       const entry = grid.get(key) || { sum: 0, count: 0 }
       entry.sum += p.priceEurMwh
@@ -93,6 +106,11 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
     return 'bg-red-400'
   }
 
+  // Night window indicator (22-06)
+  function isNightHour(h: number): boolean {
+    return h >= 22 || h < 6
+  }
+
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
   return (
@@ -107,7 +125,7 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
       </div>
 
       {/* Year-over-year comparison */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {yearlyStats.map(year => (
           <Card key={year.year}>
             <CardContent className="pt-4 pb-3">
@@ -128,19 +146,43 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
                   <span className="text-gray-500">Average price</span>
                   <span className="font-semibold">{year.avgPrice} EUR/MWh</span>
                 </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Avg. night spread</span>
+                  <span className="font-semibold text-[#115BA7]">{year.avgNightSpread} EUR/MWh</span>
+                </div>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
 
-      {/* Volatility Trend */}
+      {/* Night Charging Insight */}
+      <Card className="border-[#115BA7]/20 bg-[#115BA7]/[0.03]">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex items-start gap-3">
+            <div className="w-8 h-8 rounded-full bg-[#115BA7] flex items-center justify-center text-white text-sm font-bold shrink-0">
+              N
+            </div>
+            <div>
+              <p className="font-semibold text-[#313131] mb-1">Night Charging Window (22:00-06:00)</p>
+              <p className="text-sm text-gray-700 leading-relaxed">
+                The average spread between the mean night price and the cheapest night hour is{' '}
+                <span className="font-bold text-[#115BA7]">{avgNightSpreadOverall} EUR/MWh</span>.
+                This is the core optimization potential for overnight EV charging. By shifting load
+                to the cheapest 2-3 hours within the night window, we capture this spread as value.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Volatility Trend with Night Spread */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Volatility Trend — Average Daily Spread Over Time</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-[250px]">
+          <div className="h-[280px]">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={trendData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
@@ -148,9 +190,21 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
                 <YAxis tick={{ fontSize: 11 }} stroke="#9CA3AF" />
                 <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
                 <Area type="monotone" dataKey="avgSpread" fill="#EA1C0A" stroke="#EA1C0A" fillOpacity={0.15} strokeWidth={2} name="Avg. Daily Spread (EUR/MWh)" />
-                <Bar dataKey="negativeHours" fill="#115BA7" opacity={0.4} name="Negative Price Hours" />
+                <Line type="monotone" dataKey="nightSpread" stroke="#115BA7" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Night Spread (EUR/MWh)" />
+                <Bar dataKey="negativeHours" fill="#115BA7" opacity={0.25} name="Negative Price Hours" />
               </ComposedChart>
             </ResponsiveContainer>
+          </div>
+          <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-4 h-0.5 bg-[#EA1C0A] inline-block" /> Daily Spread
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-4 h-0.5 bg-[#115BA7] inline-block border-dashed" style={{ borderBottom: '2px dashed #115BA7', height: 0 }} /> Night Spread (22:00-06:00)
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-3 h-3 bg-[#115BA7] opacity-25 inline-block rounded-sm" /> Negative Hours
+            </span>
           </div>
           <p className="text-sm text-gray-500 mt-3">
             The upward trend in volatility is structural: more solar and wind capacity means larger price swings — and more value for flexibility providers.
@@ -158,7 +212,7 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
         </CardContent>
       </Card>
 
-      {/* Seasonal Heatmap */}
+      {/* Seasonal Heatmap with Night Window Highlighting */}
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Seasonal Price Patterns — When Is the Opportunity?</CardTitle>
@@ -170,7 +224,26 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
               <div className="flex items-center gap-0.5 mb-1">
                 <div className="w-10 shrink-0" />
                 {Array.from({ length: 24 }, (_, h) => (
-                  <div key={h} className="flex-1 text-center text-[9px] text-gray-400">{h}</div>
+                  <div
+                    key={h}
+                    className={`flex-1 text-center text-[9px] ${
+                      isNightHour(h) ? 'text-[#115BA7] font-bold' : 'text-gray-400'
+                    }`}
+                  >
+                    {h}
+                  </div>
+                ))}
+              </div>
+              {/* Night window indicator bar */}
+              <div className="flex items-center gap-0.5 mb-0.5">
+                <div className="w-10 shrink-0" />
+                {Array.from({ length: 24 }, (_, h) => (
+                  <div
+                    key={h}
+                    className={`flex-1 h-1 rounded-full ${
+                      isNightHour(h) ? 'bg-[#115BA7]' : 'bg-transparent'
+                    }`}
+                  />
                 ))}
               </div>
               {/* Rows: months */}
@@ -180,11 +253,12 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
                   {Array.from({ length: 24 }, (_, h) => {
                     const cell = heatmapData.find(c => c.month === m && c.hour === h)
                     const price = cell?.avgPrice ?? 50
+                    const nightBorder = (h === 22 || h === 6) ? 'border-l-2 border-[#115BA7]/40' : ''
                     return (
                       <div
                         key={h}
-                        className={`flex-1 h-5 rounded-sm ${priceColor(price)} transition-colors`}
-                        title={`${label} ${h}:00 — Avg: ${price.toFixed(0)} EUR/MWh`}
+                        className={`flex-1 h-5 rounded-sm ${priceColor(price)} ${nightBorder} transition-colors`}
+                        title={`${label} ${h}:00 — Avg: ${price.toFixed(0)} EUR/MWh${isNightHour(h) ? ' (Night window)' : ''}`}
                       />
                     )
                   })}
@@ -199,6 +273,9 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
                 <span className="flex items-center gap-1"><span className="w-3 h-3 bg-orange-300 rounded-sm" />90-120</span>
                 <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-400 rounded-sm" />&gt;120</span>
                 <span className="ml-2">EUR/MWh</span>
+                <span className="ml-3 flex items-center gap-1">
+                  <span className="w-4 h-1 bg-[#115BA7] rounded-full" /> Night window (22-06)
+                </span>
               </div>
             </div>
           </div>
@@ -258,7 +335,7 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
 
       {/* Navigation */}
       <div className="flex justify-between items-center pt-4">
-        <Button variant="outline" onClick={onBack}>&larr; Back: Portfolio Scale</Button>
+        <Button variant="outline" onClick={onBack}>&larr; Back: Value Waterfall</Button>
         <Button variant="outline" onClick={onRestart}>Restart from Step 1</Button>
       </div>
     </div>
