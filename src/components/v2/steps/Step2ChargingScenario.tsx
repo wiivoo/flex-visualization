@@ -44,6 +44,7 @@ function SliderInput({ label, value, min, max, step, unit, onChange }: {
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        aria-label={`${label}: ${value}${unit}`}
         className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#EA1C0A]"
       />
       <div className="flex justify-between text-[10px] text-gray-400">

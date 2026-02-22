@@ -4,7 +4,7 @@
  */
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { HourlyPrice, DailySummary, MonthlyStats } from '@/lib/v2-config'
 
 interface PriceData {
@@ -71,8 +71,8 @@ function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): Month
       month,
       avgSpread: Math.round(avg(data.spreads) * 10) / 10,
       avgPrice: Math.round(avg(data.prices) * 10) / 10,
-      minPrice: Math.round(Math.min(...data.prices) * 10) / 10,
-      maxPrice: Math.round(Math.max(...data.prices) * 10) / 10,
+      minPrice: data.prices.length ? Math.round(data.prices.reduce((m, v) => v < m ? v : m, data.prices[0]) * 10) / 10 : 0,
+      maxPrice: data.prices.length ? Math.round(data.prices.reduce((m, v) => v > m ? v : m, data.prices[0]) * 10) / 10 : 0,
       negativeHours: data.negHours,
       totalHours: data.totalHours,
     })

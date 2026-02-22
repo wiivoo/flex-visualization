@@ -100,6 +100,7 @@ export function Step4PortfolioScale({ annualDayAhead, valueEstimates, onNext, on
             max={100}
             value={evsToSlider(numEVs)}
             onChange={(e) => setNumEVs(Math.max(1, sliderToEvs(Number(e.target.value))))}
+            aria-label={`Number of EVs: ${numEVs}`}
             className="w-full h-3 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-[#EA1C0A]"
           />
           <div className="flex justify-between mt-2">

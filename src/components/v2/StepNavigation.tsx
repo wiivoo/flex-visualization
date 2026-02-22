@@ -21,6 +21,8 @@ export function StepNavigation({ steps, currentStep, onStepClick }: StepNavigati
         <div key={step.id} className="flex items-center">
           <button
             onClick={() => onStepClick(step.id)}
+            aria-label={`Step ${step.id}: ${step.title} — ${step.subtitle}`}
+            aria-current={currentStep === step.id ? 'step' : undefined}
             className={cn(
               'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all',
               currentStep === step.id
