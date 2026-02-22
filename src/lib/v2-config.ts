@@ -12,8 +12,8 @@ export interface VehiclePreset {
 
 export const VEHICLE_PRESETS: VehiclePreset[] = [
   { id: 'compact', label: 'Compact', battery_kwh: 40, charge_power_kw: 11, examples: 'Zoe, ID.3, Mini E' },
-  { id: 'mid', label: 'Mid-Range', battery_kwh: 60, charge_power_kw: 22, examples: 'Model 3, Model Y, Ioniq 6' },
-  { id: 'suv', label: 'SUV', battery_kwh: 100, charge_power_kw: 22, examples: 'e-tron, EQS, Model X' },
+  { id: 'mid', label: 'Mid-Range', battery_kwh: 60, charge_power_kw: 11, examples: 'Model 3, Model Y, Ioniq 6' },
+  { id: 'suv', label: 'SUV', battery_kwh: 100, charge_power_kw: 11, examples: 'e-tron, EQS, Model X' },
 ]
 
 export interface ChargingScenario {
@@ -22,6 +22,8 @@ export interface ChargingScenario {
   departureTime: number // hour 4-10
   startLevel: number    // percent 10-80
   targetLevel: number   // percent 50-100
+  yearlyMileageKm: number  // 5000-40000
+  weeklyPlugIns: number    // 2-7
 }
 
 export const DEFAULT_SCENARIO: ChargingScenario = {
@@ -30,6 +32,24 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
   departureTime: 7,
   startLevel: 20,
   targetLevel: 80,
+  yearlyMileageKm: 15000,
+  weeklyPlugIns: 4,
+}
+
+/** Average EV consumption in kWh per 100 km */
+export const AVG_CONSUMPTION_KWH_PER_100KM = 18
+
+/** Default wallbox power in kW */
+export const DEFAULT_CHARGE_POWER_KW = 11
+
+/** Default battery capacity */
+export const DEFAULT_BATTERY_KWH = 60
+
+/** Derive energy per session from mileage + frequency */
+export function deriveEnergyPerSession(yearlyMileageKm: number, weeklyPlugIns: number): number {
+  const sessionsPerYear = weeklyPlugIns * 52
+  const kmPerSession = yearlyMileageKm / sessionsPerYear
+  return Math.round((kmPerSession / 100) * AVG_CONSUMPTION_KWH_PER_100KM * 10) / 10
 }
 
 /** Value layer estimates (EUR/year per EV) */
@@ -45,13 +65,6 @@ export const DEFAULT_VALUE_ESTIMATES: ValueEstimates = {
   intradayOptimization: 25,
   portfolioEffect: 40,
   gridFeeReduction: 165,
-}
-
-export const VALUE_RANGES = {
-  forwardPurchasing: { min: 30, max: 80, label: 'Forward Purchasing' },
-  intradayOptimization: { min: 10, max: 50, label: 'Intraday Re-Optimization' },
-  portfolioEffect: { min: 20, max: 60, label: 'Portfolio Effect' },
-  gridFeeReduction: { min: 110, max: 190, label: 'Grid Fee Reduction (§14a)' },
 }
 
 /** Competitor benchmarks for comparison */
@@ -79,6 +92,9 @@ export interface DailySummary {
   maxPrice: number
   spread: number      // max - min in EUR/MWh
   negativeHours: number
+  dayAvgPrice: number  // EUR/MWh avg 6:00-22:00
+  nightAvgPrice: number // EUR/MWh avg 22:00-6:00
+  dayNightSpread: number // dayAvg - nightAvg
 }
 
 /** Monthly stats for volatility analysis */
@@ -90,4 +106,16 @@ export interface MonthlyStats {
   maxPrice: number
   negativeHours: number
   totalHours: number
+  avgNightSpread: number  // avg cheapest night hour spread
+}
+
+/** Hourly generation data point */
+export interface GenerationData {
+  timestamp: number
+  hour: number
+  solarMw: number
+  windMw: number
+  loadMw: number
+  renewableMw: number
+  renewableShare: number  // percentage
 }

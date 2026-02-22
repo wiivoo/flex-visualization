@@ -7,9 +7,9 @@ import { Badge } from '@/components/ui/badge'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ResponsiveContainer, Bar
+  ReferenceLine, ReferenceArea, ResponsiveContainer, Bar
 } from 'recharts'
-import type { HourlyPrice, DailySummary, MonthlyStats } from '@/lib/v2-config'
+import type { HourlyPrice, DailySummary, MonthlyStats, GenerationData } from '@/lib/v2-config'
 
 interface PriceData {
   hourly: HourlyPrice[]
@@ -21,6 +21,8 @@ interface PriceData {
   setSelectedDate: (date: string) => void
   selectedDayPrices: HourlyPrice[]
   yearRange: { start: string; end: string }
+  generation: GenerationData[]
+  generationLoading: boolean
 }
 
 interface Props {
@@ -33,8 +35,19 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
   selectedDate: string
   onSelect: (date: string) => void
 }) {
+  // Compute the data range from daily array
+  const dataRange = useMemo(() => {
+    if (daily.length === 0) return { firstMonth: '', lastMonth: '' }
+    const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
+    return {
+      firstMonth: sorted[0].date.slice(0, 7),
+      lastMonth: sorted[sorted.length - 1].date.slice(0, 7),
+    }
+  }, [daily])
+
   const [viewMonth, setViewMonth] = useState(() => {
     if (selectedDate) return selectedDate.slice(0, 7)
+    if (dataRange.lastMonth) return dataRange.lastMonth
     return new Date().toISOString().slice(0, 7)
   })
 
@@ -57,10 +70,17 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
 
   const monthLabel = new Date(viewMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 
+  const canGoBack = dataRange.firstMonth && viewMonth > dataRange.firstMonth
+  const canGoForward = dataRange.lastMonth && viewMonth < dataRange.lastMonth
+
   function shiftMonth(delta: number) {
     const [y, m] = viewMonth.split('-').map(Number)
     const d = new Date(y, m - 1 + delta, 1)
-    setViewMonth(d.toISOString().slice(0, 7))
+    const newMonth = d.toISOString().slice(0, 7)
+    // Constrain to data range
+    if (dataRange.firstMonth && newMonth < dataRange.firstMonth) return
+    if (dataRange.lastMonth && newMonth > dataRange.lastMonth) return
+    setViewMonth(newMonth)
   }
 
   // Color scale based on spread
@@ -75,9 +95,23 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-3">
-        <button onClick={() => shiftMonth(-1)} aria-label="Previous month" className="px-2 py-1 text-sm hover:bg-gray-100 rounded">&larr;</button>
+        <button
+          onClick={() => shiftMonth(-1)}
+          disabled={!canGoBack}
+          aria-label="Previous month"
+          className={`px-2 py-1 text-sm rounded ${canGoBack ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
+        >
+          &larr;
+        </button>
         <span className="font-semibold text-[#313131]">{monthLabel}</span>
-        <button onClick={() => shiftMonth(1)} aria-label="Next month" className="px-2 py-1 text-sm hover:bg-gray-100 rounded">&rarr;</button>
+        <button
+          onClick={() => shiftMonth(1)}
+          disabled={!canGoForward}
+          aria-label="Next month"
+          className={`px-2 py-1 text-sm rounded ${canGoForward ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
+        >
+          &rarr;
+        </button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-xs">
         {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => (
@@ -113,47 +147,56 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
 }
 
 export function Step1PriceExplorer({ prices, onNext }: Props) {
-  const { daily, selectedDate, setSelectedDate, selectedDayPrices, loading, error, monthly } = prices
+  const { daily, selectedDate, setSelectedDate, selectedDayPrices, loading, error, monthly, generation, generationLoading } = prices
 
   const dayStats = useMemo(() => {
     if (selectedDayPrices.length === 0) return null
     let min = selectedDayPrices[0].priceEurMwh, max = min
     let minHour = selectedDayPrices[0], maxHour = selectedDayPrices[0]
-    let sum = 0, negHours = 0
+    let sum = 0, daySum = 0, nightSum = 0, dayCount = 0, nightCount = 0
     for (const p of selectedDayPrices) {
       if (p.priceEurMwh < min) { min = p.priceEurMwh; minHour = p }
       if (p.priceEurMwh > max) { max = p.priceEurMwh; maxHour = p }
       sum += p.priceEurMwh
-      if (p.priceEurMwh < 0) negHours++
+      // Day: 6-22h, Night: 22-6h
+      if (p.hour >= 6 && p.hour < 22) {
+        daySum += p.priceEurMwh
+        dayCount++
+      } else {
+        nightSum += p.priceEurMwh
+        nightCount++
+      }
     }
     const avg = sum / selectedDayPrices.length
-    return { min, max, spread: max - min, avg, minHour, maxHour, negHours }
+    const dayAvg = dayCount > 0 ? daySum / dayCount : 0
+    const nightAvg = nightCount > 0 ? nightSum / nightCount : 0
+    const dayNightSpread = dayAvg - nightAvg
+    return { min, max, spread: max - min, avg, minHour, maxHour, dayAvg, nightAvg, dayNightSpread }
   }, [selectedDayPrices])
 
-  // Year-level negative hours
-  const yearNegHours = useMemo(() => {
-    const currentYear = new Date().getFullYear()
-    return daily
-      .filter(d => d.date.startsWith(String(currentYear)))
-      .reduce((sum, d) => sum + d.negativeHours, 0)
-  }, [daily])
+  // Build chart data with generation overlay
+  const chartData = useMemo(() => {
+    const genMap = new Map(generation.map(g => [g.hour, g]))
+    return selectedDayPrices.map(p => {
+      const gen = genMap.get(p.hour)
+      return {
+        hour: `${String(p.hour).padStart(2, '0')}:00`,
+        hourNum: p.hour,
+        price: Math.round(p.priceEurMwh * 10) / 10,
+        priceCtKwh: p.priceCtKwh,
+        isNeg: p.priceEurMwh < 0,
+        renewableShare: gen ? Math.round(gen.renewableShare) : null,
+        isDaytime: p.hour >= 6 && p.hour < 22,
+      }
+    })
+  }, [selectedDayPrices, generation])
 
-  const chartData = useMemo(() =>
-    selectedDayPrices.map(p => ({
-      hour: `${String(p.hour).padStart(2, '0')}:00`,
-      price: Math.round(p.priceEurMwh * 10) / 10,
-      priceCtKwh: p.priceCtKwh,
-      isNeg: p.priceEurMwh < 0,
-    })),
-    [selectedDayPrices]
-  )
-
-  // Monthly volatility for seasonality view
+  // Monthly volatility with day-night spread
   const monthlyChartData = useMemo(() =>
     monthly.map(m => ({
       month: new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-      avgSpread: m.avgSpread,
-      negativeHours: m.negativeHours,
+      avgSpread: Math.round(m.avgSpread),
+      dayNightSpread: Math.round(m.avgNightSpread),
       avgPrice: m.avgPrice,
     })),
     [monthly]
@@ -193,7 +236,7 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
 
       {/* KPIs */}
       {dayStats && (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-4 pb-3 text-center">
               <p className="text-xs text-gray-500 uppercase tracking-wide">Daily Spread</p>
@@ -208,70 +251,168 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
           </Card>
           <Card>
             <CardContent className="pt-4 pb-3 text-center">
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Cheapest Hour</p>
-              <p className="text-2xl font-bold text-green-600">{String(dayStats.minHour.hour).padStart(2, '0')}:00</p>
-              <p className="text-xs text-gray-400">{dayStats.min.toFixed(1)} EUR/MWh</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wide flex items-center justify-center gap-1">
+                <span>Day Avg</span>
+                <span className="text-sm">&#9728;&#65039;</span>
+                <span className="text-gray-300 mx-1">/</span>
+                <span>Night Avg</span>
+                <span className="text-sm">&#127769;</span>
+              </p>
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-lg font-bold text-amber-600">{(dayStats.dayAvg / 10).toFixed(1)}</span>
+                <span className="text-gray-300">/</span>
+                <span className="text-lg font-bold text-indigo-600">{(dayStats.nightAvg / 10).toFixed(1)}</span>
+                <span className="text-xs text-gray-400">ct/kWh</span>
+              </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className={dayStats.dayNightSpread > 0 ? 'border-green-200 bg-green-50/30' : ''}>
             <CardContent className="pt-4 pb-3 text-center">
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Negative Hours ({new Date().getFullYear()})</p>
-              <AnimatedNumber value={yearNegHours} suffix="h" className="text-2xl font-bold text-[#115BA7]" />
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Day-Night Spread</p>
+              <AnimatedNumber value={dayStats.dayNightSpread} decimals={0} suffix=" EUR/MWh" className="text-2xl font-bold text-green-600" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Night charging opportunity</p>
             </CardContent>
           </Card>
         </div>
       )}
 
       {/* Main content: Chart + Calendar */}
-      <div className="grid grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Price Chart */}
-        <Card className="col-span-2">
+        <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <CardTitle className="text-lg">
                 Day-Ahead Prices — {selectedDate ? new Date(selectedDate).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : '...'}
               </CardTitle>
-              <Badge variant="outline" className="text-xs">EPEX Spot DE-LU</Badge>
+              <div className="flex gap-2 items-center">
+                {generation.length > 0 && !generationLoading && (
+                  <Badge variant="outline" className="text-xs text-green-600 border-green-200">Renewables overlay</Badge>
+                )}
+                <Badge variant="outline" className="text-xs">EPEX Spot DE-LU</Badge>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[350px]">
+            <div className="h-[380px]">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 10, right: 50, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="priceGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#EA1C0A" stopOpacity={0.15} />
                       <stop offset="100%" stopColor="#EA1C0A" stopOpacity={0} />
                     </linearGradient>
+                    <linearGradient id="renewableGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22C55E" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#22C55E" stopOpacity={0.02} />
+                    </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                  <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="#9CA3AF" />
-                  <YAxis tick={{ fontSize: 11 }} stroke="#9CA3AF" label={{ value: 'EUR/MWh', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9CA3AF' } }} />
+                  {/* Day/Night background shading */}
+                  <ReferenceArea x1="00:00" x2="06:00" fill="#DBEAFE" fillOpacity={0.3} />
+                  <ReferenceArea x1="06:00" x2="22:00" fill="#FEF9C3" fillOpacity={0.25} />
+                  <ReferenceArea x1="22:00" x2="23:00" fill="#DBEAFE" fillOpacity={0.3} />
+                  <XAxis
+                    dataKey="hour"
+                    tick={{ fontSize: 11 }}
+                    stroke="#9CA3AF"
+                    tickFormatter={(val) => {
+                      const h = parseInt(val)
+                      if (h === 3) return '🌙'
+                      if (h === 12) return '☀️'
+                      if (h === 23) return '🌙'
+                      return val
+                    }}
+                  />
+                  <YAxis
+                    yAxisId="price"
+                    tick={{ fontSize: 11 }}
+                    stroke="#9CA3AF"
+                    label={{ value: 'EUR/MWh', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9CA3AF' } }}
+                  />
+                  {generation.length > 0 && (
+                    <YAxis
+                      yAxisId="renewable"
+                      orientation="right"
+                      tick={{ fontSize: 10 }}
+                      stroke="#22C55E"
+                      domain={[0, 100]}
+                      label={{ value: 'Renewable %', angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#22C55E' } }}
+                    />
+                  )}
                   <Tooltip
                     contentStyle={{ borderRadius: 8, border: '1px solid #E5E7EB', fontSize: 13 }}
-                    formatter={(val) => val != null ? [`${Number(val).toFixed(1)} EUR/MWh (${(Number(val) / 10).toFixed(2)} ct/kWh)`, 'Price'] : ['-', 'Price']}
+                    formatter={(val, name) => {
+                      if (val == null) return ['-', String(name)]
+                      if (name === 'renewableShare') return [`${val}%`, 'Renewable Share']
+                      return [`${Number(val).toFixed(1)} EUR/MWh (${(Number(val) / 10).toFixed(2)} ct/kWh)`, 'Price']
+                    }}
+                    labelFormatter={(label) => {
+                      const h = parseInt(label)
+                      const icon = (h >= 6 && h < 22) ? '☀️' : '🌙'
+                      return `${icon} ${label}`
+                    }}
                   />
-                  <Area type="monotone" dataKey="price" fill="url(#priceGradient)" stroke="none" />
-                  <Line type="monotone" dataKey="price" stroke="#EA1C0A" strokeWidth={2.5} dot={false} />
-                  {dayStats && (
-                    <ReferenceLine
-                      y={dayStats.avg}
-                      stroke="#9CA3AF"
-                      strokeDasharray="5 5"
-                      label={{ value: `Avg: ${dayStats.avg.toFixed(0)}`, position: 'right', fontSize: 10, fill: '#9CA3AF' }}
+                  {/* Renewable share area (behind price) */}
+                  {generation.length > 0 && (
+                    <Area
+                      type="monotone"
+                      dataKey="renewableShare"
+                      yAxisId="renewable"
+                      fill="url(#renewableGradient)"
+                      stroke="#22C55E"
+                      strokeWidth={1}
+                      strokeOpacity={0.4}
+                      dot={false}
                     />
+                  )}
+                  <Area type="monotone" dataKey="price" yAxisId="price" fill="url(#priceGradient)" stroke="none" />
+                  <Line type="monotone" dataKey="price" yAxisId="price" stroke="#EA1C0A" strokeWidth={2.5} dot={false} />
+                  {dayStats && (
+                    <>
+                      <ReferenceLine
+                        yAxisId="price"
+                        y={dayStats.avg}
+                        stroke="#9CA3AF"
+                        strokeDasharray="5 5"
+                        label={{ value: `Avg: ${dayStats.avg.toFixed(0)}`, position: 'right', fontSize: 10, fill: '#9CA3AF' }}
+                      />
+                      <ReferenceLine
+                        yAxisId="price"
+                        y={dayStats.dayAvg}
+                        stroke="#D97706"
+                        strokeDasharray="3 3"
+                        label={{ value: `Day: ${dayStats.dayAvg.toFixed(0)}`, position: 'right', fontSize: 9, fill: '#D97706' }}
+                      />
+                      <ReferenceLine
+                        yAxisId="price"
+                        y={dayStats.nightAvg}
+                        stroke="#4F46E5"
+                        strokeDasharray="3 3"
+                        label={{ value: `Night: ${dayStats.nightAvg.toFixed(0)}`, position: 'right', fontSize: 9, fill: '#4F46E5' }}
+                      />
+                    </>
                   )}
                 </ComposedChart>
               </ResponsiveContainer>
+            </div>
+            {/* Annotations */}
+            <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-[#FEF9C3]" />Daytime (6-22h)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-[#DBEAFE]" />Nighttime (22-6h)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-[#EA1C0A]" />Spot Price</span>
+              {generation.length > 0 && (
+                <span className="flex items-center gap-1"><span className="w-3 h-2 rounded bg-green-100 border border-green-300" />Renewable %</span>
+              )}
             </div>
             {dayStats && dayStats.spread > 100 && (
               <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm">
                 <strong>On this day, the price swing was {dayStats.spread.toFixed(0)} EUR/MWh</strong> — that&apos;s the difference between the cheapest and most expensive hour. This volatility is the raw material for flexibility monetization.
               </div>
             )}
-            {dayStats && dayStats.negHours > 0 && (
-              <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-                <strong>{dayStats.negHours} hours with negative prices</strong> — during these hours, consumers get paid to consume electricity. Perfect for opportunistic EV charging.
+            {dayStats && dayStats.dayNightSpread > 20 && (
+              <div className="mt-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-sm">
+                <strong>Day-Night spread: {dayStats.dayNightSpread.toFixed(0)} EUR/MWh.</strong> Night electricity is significantly cheaper — shifting EV charging to nighttime hours saves money without any inconvenience.
               </div>
             )}
           </CardContent>
@@ -296,23 +437,33 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
       {monthlyChartData.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Volatility by Month — When Is the Opportunity Biggest?</CardTitle>
+            <CardTitle className="text-lg">Monthly Volatility — When Is the Opportunity Biggest?</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="h-[200px]">
+            <div className="h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={monthlyChartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                <ComposedChart data={monthlyChartData} margin={{ top: 10, right: 30, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                   <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#9CA3AF" interval={2} />
                   <YAxis tick={{ fontSize: 11 }} stroke="#9CA3AF" label={{ value: 'EUR/MWh', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9CA3AF' } }} />
-                  <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
-                  <Bar dataKey="avgSpread" fill="#EA1C0A" opacity={0.7} name="Avg. Daily Spread" radius={[2, 2, 0, 0]} />
-                  <Line type="monotone" dataKey="negativeHours" stroke="#115BA7" strokeWidth={2} name="Negative Price Hours" yAxisId={0} dot={false} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                    formatter={(val, name) => {
+                      if (name === 'dayNightSpread') return [`${val} EUR/MWh`, 'Day-Night Spread']
+                      return [`${val} EUR/MWh`, 'Avg. Daily Spread']
+                    }}
+                  />
+                  <Bar dataKey="avgSpread" fill="#EA1C0A" opacity={0.6} name="avgSpread" radius={[2, 2, 0, 0]} />
+                  <Line type="monotone" dataKey="dayNightSpread" stroke="#4F46E5" strokeWidth={2.5} name="dayNightSpread" dot={{ r: 3, fill: '#4F46E5' }} />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
+            <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#EA1C0A] opacity-60" />Avg. Daily Spread</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-[#4F46E5]" />Day-Night Spread</span>
+            </div>
             <p className="text-sm text-gray-500 mt-3">
-              Winter months (Oct–Mar) typically show the highest volatility — these are the months with the biggest optimization opportunity. Summer months offer frequent negative prices during midday solar surplus.
+              Winter months (Oct-Mar) typically show the highest volatility — these are the months with the biggest optimization opportunity. The day-night spread shows how much cheaper nighttime electricity is on average, which directly translates to EV charging savings.
             </p>
           </CardContent>
         </Card>
