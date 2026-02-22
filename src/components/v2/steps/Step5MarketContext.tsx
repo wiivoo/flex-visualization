@@ -46,9 +46,9 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
       year,
       avgSpread: Math.round(data.spreads.reduce((s, v) => s + v, 0) / data.spreads.length),
       negativeHours: data.negHours,
-      maxPrice: Math.round(Math.max(...data.prices)),
-      minPrice: Math.round(Math.min(...data.prices)),
-      avgPrice: Math.round(data.prices.reduce((s, v) => s + v, 0) / data.prices.length * 10) / 10,
+      maxPrice: data.prices.length ? Math.round(data.prices.reduce((m, v) => v > m ? v : m, data.prices[0])) : 0,
+      minPrice: data.prices.length ? Math.round(data.prices.reduce((m, v) => v < m ? v : m, data.prices[0])) : 0,
+      avgPrice: data.prices.length ? Math.round(data.prices.reduce((s, v) => s + v, 0) / data.prices.length * 10) / 10 : 0,
     })).sort((a, b) => a.year.localeCompare(b.year))
   }, [daily, hourly])
 
@@ -249,8 +249,8 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
             <Button variant="outline" className="border-white text-white hover:bg-white/10" onClick={onRestart}>
               Restart from Step 1
             </Button>
-            <Button className="bg-[#EA1C0A] hover:bg-[#C51608] text-white px-8">
-              Get Started
+            <Button className="bg-[#EA1C0A] hover:bg-[#C51608] text-white px-8" onClick={onRestart}>
+              Explore Again
             </Button>
           </div>
         </CardContent>

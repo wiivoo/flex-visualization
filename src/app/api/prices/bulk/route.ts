@@ -26,12 +26,28 @@ export async function GET(request: NextRequest) {
     )
   }
 
+  // Validate date format
+  const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+  if (!dateRegex.test(startDate) || !dateRegex.test(endDate)) {
+    return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD.' }, { status: 400 })
+  }
+
   try {
     const startMs = new Date(startDate + 'T00:00:00Z').getTime()
     const endMs = new Date(endDate + 'T23:59:59Z').getTime()
 
     if (isNaN(startMs) || isNaN(endMs)) {
       return NextResponse.json({ error: 'Invalid date format' }, { status: 400 })
+    }
+
+    // Cap range to 5 years max
+    const maxRangeMs = 5 * 365.25 * 24 * 60 * 60 * 1000
+    if (endMs - startMs > maxRangeMs) {
+      return NextResponse.json({ error: 'Date range exceeds maximum of 5 years' }, { status: 400 })
+    }
+
+    if (startMs > endMs) {
+      return NextResponse.json({ error: 'Start date must be before end date' }, { status: 400 })
     }
 
     // aWATTar supports up to ~90 days in a single request reliably
@@ -92,7 +108,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Bulk price fetch error:', error)
     return NextResponse.json(
-      { error: 'Failed to fetch prices', details: String(error) },
+      { error: 'Failed to fetch prices' },
       { status: 500 }
     )
   }

@@ -75,9 +75,9 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-3">
-        <button onClick={() => shiftMonth(-1)} className="px-2 py-1 text-sm hover:bg-gray-100 rounded">&larr;</button>
+        <button onClick={() => shiftMonth(-1)} aria-label="Previous month" className="px-2 py-1 text-sm hover:bg-gray-100 rounded">&larr;</button>
         <span className="font-semibold text-[#313131]">{monthLabel}</span>
-        <button onClick={() => shiftMonth(1)} className="px-2 py-1 text-sm hover:bg-gray-100 rounded">&rarr;</button>
+        <button onClick={() => shiftMonth(1)} aria-label="Next month" className="px-2 py-1 text-sm hover:bg-gray-100 rounded">&rarr;</button>
       </div>
       <div className="grid grid-cols-7 gap-1 text-xs">
         {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => (
@@ -117,13 +117,16 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
 
   const dayStats = useMemo(() => {
     if (selectedDayPrices.length === 0) return null
-    const eurPrices = selectedDayPrices.map(p => p.priceEurMwh)
-    const min = Math.min(...eurPrices)
-    const max = Math.max(...eurPrices)
-    const avg = eurPrices.reduce((s, v) => s + v, 0) / eurPrices.length
-    const minHour = selectedDayPrices.find(p => p.priceEurMwh === min)!
-    const maxHour = selectedDayPrices.find(p => p.priceEurMwh === max)!
-    const negHours = selectedDayPrices.filter(p => p.priceEurMwh < 0).length
+    let min = selectedDayPrices[0].priceEurMwh, max = min
+    let minHour = selectedDayPrices[0], maxHour = selectedDayPrices[0]
+    let sum = 0, negHours = 0
+    for (const p of selectedDayPrices) {
+      if (p.priceEurMwh < min) { min = p.priceEurMwh; minHour = p }
+      if (p.priceEurMwh > max) { max = p.priceEurMwh; maxHour = p }
+      sum += p.priceEurMwh
+      if (p.priceEurMwh < 0) negHours++
+    }
+    const avg = sum / selectedDayPrices.length
     return { min, max, spread: max - min, avg, minHour, maxHour, negHours }
   }, [selectedDayPrices])
 
