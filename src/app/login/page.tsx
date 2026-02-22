@@ -40,14 +40,14 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 p-4">
-      <Card className="w-full max-w-md shadow-lg">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 via-slate-50/80 to-white dark:from-slate-950 dark:to-slate-900 p-4">
+      <Card className="w-full max-w-md border-slate-200/60 shadow-[var(--shadow-lg)] dark:border-slate-800/60">
         <CardHeader className="space-y-2 text-center">
           <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <Lock className="h-6 w-6 text-primary" />
           </div>
-          <CardTitle className="text-2xl font-bold">FlexMon Dashboard</CardTitle>
-          <CardDescription>
+          <CardTitle className="text-2xl font-bold tracking-tight text-primary">FlexMon Dashboard</CardTitle>
+          <CardDescription className="text-sm">
             Bitte Passwort eingeben, um auf das Dashboard zuzugreifen
           </CardDescription>
         </CardHeader>
@@ -76,7 +76,7 @@ export default function LoginPage() {
 
             <Button
               type="submit"
-              className="w-full"
+              className="w-full cursor-pointer font-semibold transition-all duration-200 hover:shadow-md"
               size="lg"
               disabled={isLoading || !password.trim()}
             >

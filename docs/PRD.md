@@ -1,41 +1,41 @@
 # Product Requirements Document - FlexMon Dashboard
 
 ## Vision
-FlexMon Dashboard ist ein Visualisierungs-Tool für das Top-Management, das demonstriert, wie E-Auto-Ladesteuerung (Flexibilität) im deutschen Strommarkt monetarisiert werden kann. Das Dashboard zeigt anhand echter Marktpreise, wie Kunden durch flexible Ladezeiten sparen und gleichzeitig Arbitrage-Gewinne entstehen - ein Win-Win-Szenario für beide Seiten.
+FlexMon Dashboard is a visualization tool for top management that demonstrates how EV charging control (flexibility) can be monetized in the German electricity market. The dashboard uses real market prices to show how customers save through flexible charging times while simultaneously generating arbitrage profits - a win-win scenario for both sides.
 
 ## Target Users
-- **Primary:** CEO/CFO Level (nicht-technisch)
-  - Need: Visuelle, leicht verständliche Darstellung des Business Case
-  - Pain Point: Komplexe Energy-Trade-Konzepte sind schwer zu greifen
+- **Primary:** CEO/CFO Level (non-technical)
+  - Need: Visual, easy-to-understand presentation of the business case
+  - Pain Point: Complex energy trading concepts are hard to grasp
 - **Secondary:** Product Manager, Sales Teams
-  - Need: Zahlen und Material für Kundenpräsentationen
+  - Need: Numbers and materials for customer presentations
 
 ## Core Features (Roadmap)
 
 | Priority | Feature | Status |
 |----------|---------|--------|
-| P0 (MVP) | SMARD Datenintegration | Planned |
-| P0 (MVP) | Preis-Optimierungsalgorithmus | Planned |
-| P0 (MVP) | Dashboard Visualisierungen | Planned |
-| P0 (MVP) | Szenario-Konfigurator | Planned |
-| P0 (MVP) | Passwortschutz | Planned |
+| P0 (MVP) | SMARD Data Integration | Deployed |
+| P0 (MVP) | Price Optimization Algorithm | Deployed |
+| P0 (MVP) | Dashboard Visualizations | Deployed |
+| P0 (MVP) | Scenario Configurator | Deployed |
+| P0 (MVP) | Password Protection | Deployed |
 | P1 | Export (PDF/Excel) | Planned |
-| P1 | Historische Daten-Archive | Planned |
-| P2 | Multi-Portfolio-Vergleich | Planned |
+| P1 | Historical Data Archives | Planned |
+| P2 | Multi-Portfolio Comparison | Planned |
 
 ## Success Metrics
-- Management versteht das Flexibilitäts-Konzept innerhalb von 5 Minuten
-- Dashboard kann für Kundenpräsentationen verwendet werden
-- Zahlen basieren auf echten Marktdaten (nicht erfunden)
+- Management understands the flexibility concept within 5 minutes
+- Dashboard can be used for customer presentations
+- Numbers are based on real market data (not fabricated)
 
 ## Constraints
-- **Timeline:** MVP in < 1 Woche
-- **Complexity:** Einfach genug für nicht-technische Entscheidungsträger
-- **Data:** Echte deutsche Strommarktpreise (SMARD.de)
-- **Language:** Deutsch
+- **Timeline:** MVP in < 1 week
+- **Complexity:** Simple enough for non-technical decision-makers
+- **Data:** Real German electricity market prices (SMARD.de)
+- **Language:** German (UI)
 
 ## Non-Goals
-- Keine Benutzer-Auth mit individuellen Accounts (nur Passwortschutz)
-- Keine Live-Preisprognosen (historische + aktuelle Daten reichen)
-- Keine Integration in echte Ladeinfrastruktur (nur Simulation)
-- Keine automatischen Trades/Orders (nur Visualisierung)
+- No user auth with individual accounts (password protection only)
+- No live price forecasts (historical + current data suffice)
+- No integration with real charging infrastructure (simulation only)
+- No automatic trades/orders (visualization only)

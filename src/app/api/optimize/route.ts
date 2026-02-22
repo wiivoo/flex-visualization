@@ -8,7 +8,7 @@ const optimizeSchema = z.object({
   prices: z.array(z.object({
     timestamp: z.string(),
     price_ct_kwh: z.number()
-  })),
+  })).max(500, 'Maximum 500 price points allowed'),
   vehicle: z.object({
     battery_kwh: z.number().positive(),
     charge_power_kw: z.number().positive(),

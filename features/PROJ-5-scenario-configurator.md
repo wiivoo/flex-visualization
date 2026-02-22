@@ -1,59 +1,59 @@
-# PROJ-5: Szenario-Konfigurator
+# PROJ-5: Scenario Configurator
 
 ## Status: Planned
 **Created:** 2025-02-21
 **Last Updated:** 2025-02-21
 
 ## Dependencies
-- None (ständig verfügbar, beeinflusst PROJ-2, PROJ-3, PROJ-4)
+- None (always available, influences PROJ-2, PROJ-3, PROJ-4)
 
 ## User Stories
-- Als Analyst möchte ich verschiedene Autotypen testen um das Potenzial zu verstehen
-- Als Decision Maker möchte ich die Preise anpassen um Szenarien zu simulieren
-- Als Produkt-Manager möchte ich neue Fahrzeugkategorien hinzufügen
+- As an analyst, I want to test different car types to understand the potential
+- As a decision maker, I want to adjust prices to simulate scenarios
+- As a product manager, I want to add new vehicle categories
 
 ## Acceptance Criteria
-- [ ] Seitliche Leiste oder Modal für Konfiguration
-- [ ] Fahrzeug-Auswahl: Kleinwagen, Mittelklasse, SUV (mit Icons)
-- [ ] Fahrzeug-Details werden angezeigt: Batteriegröße, Ladeleistung, Beispiel-Fahrzeuge
-- [ ] Preis-Einstellungen: Basispreis (ct/kWh), Marge (ct/kWh), Kunden-Rabatt (ct/kWh)
-- [ ] Lade-Einstellungen: Start-Level (%), Zeitfenster (Start/Ende Uhrzeit)
-- [ ] "Apply" Button aktualisiert alle Charts und KPIs
-- [ ] "Reset" Button setzt auf Default-Werte zurück
-- [ ] Konfiguration wird im LocalStorage gespeichert (nicht auf Server)
+- [ ] Sidebar or modal for configuration
+- [ ] Vehicle selection: Compact, Mid-range, SUV (with icons)
+- [ ] Vehicle details are displayed: Battery size, charge power, example vehicles
+- [ ] Price settings: Base price (ct/kWh), margin (ct/kWh), customer discount (ct/kWh)
+- [ ] Charging settings: Start level (%), time window (start/end time)
+- [ ] "Apply" button updates all charts and KPIs
+- [ ] "Reset" button restores default values
+- [ ] Configuration is saved in LocalStorage (not on server)
 
 ## UI Spec
 
-**Layout (Sidebar rechts):**
+**Layout (Sidebar right):**
 ```
 ┌──────────────────────────────────┐
-│  ⚙️ Konfiguration               │
+│  ⚙️ Configuration                │
 ├──────────────────────────────────┤
 │                                  │
-│  🚗 Fahrzeugtyp                  │
-│  ○ Kleinwagen (40 kWh)          │
-│  ● Mittelklasse (60 kWh)         │
+│  🚗 Vehicle Type                 │
+│  ○ Compact (40 kWh)             │
+│  ● Mid-range (60 kWh)           │
 │  ○ SUV (100 kWh)                 │
 │                                  │
-│  💰 Preise (ct/kWh)              │
-│  Basispreis:    [35  ]          │
-│  Marge:         [5   ]          │
-│  Kundenrabatt:  [12  ]          │
+│  💰 Prices (ct/kWh)              │
+│  Base price:      [35  ]        │
+│  Margin:          [5   ]        │
+│  Customer disc.:  [12  ]        │
 │                                  │
-│  🔋 Lade-Einstellungen           │
-│  Start-Level:   [20%] ▼         │
-│  Zeitfenster:   [22] - [06]     │
+│  🔋 Charging Settings            │
+│  Start level:     [20%] ▼       │
+│  Time window:     [22] - [06]   │
 │                                  │
 │  [Reset]        [Apply →]       │
 └──────────────────────────────────┘
 ```
 
-## Fahrzeug-Profile
+## Vehicle Profiles
 
-| Typ | Batterie | Leistung | Reichweite | Beispiele |
-|-----|----------|----------|------------|-----------|
-| Kleinwagen | 40 kWh | 11 kW | 250 km | Zoe, ID.3, Mini E |
-| Mittelklasse | 60 kWh | 22 kW | 350 km | Model 3, Y, Ioniq 6 |
+| Type | Battery | Power | Range | Examples |
+|------|---------|-------|-------|----------|
+| Compact | 40 kWh | 11 kW | 250 km | Zoe, ID.3, Mini E |
+| Mid-range | 60 kWh | 22 kW | 350 km | Model 3, Y, Ioniq 6 |
 | SUV | 100 kWh | 22 kW | 450 km | e-tron, EQS, Model X |
 
 ## Default Values
@@ -70,24 +70,24 @@
 ```
 
 ## Edge Cases
-- **Was bei ungültigen Werten?** → Input validation, roter Rahmen, Fehler-Tooltip
-- **Was bei Start > End (z.B. 06-22)?** → "Nacht-Laden" impliziert Übernachtung, behandeln als 22:00-06:00+1
-- **Was wenn LocalStorage voll?** → Fallback zu Defaults
-- **Was bei negativen Preisen?** → Nicht zulassen, min 0 ct/kWh
-- **Was bei Marge > Basispreis?** → Warnung "Marge höher als Basispreis"
+- **What about invalid values?** → Input validation, red border, error tooltip
+- **What if start > end (e.g. 06-22)?** → "Night charging" implies overnight, treat as 22:00-06:00+1
+- **What if LocalStorage is full?** → Fallback to defaults
+- **What about negative prices?** → Not allowed, min 0 ct/kWh
+- **What if margin > base price?** → Warning "Margin higher than base price"
 
 ## Technical Requirements
-- **Persistence:** LocalStorage (Browser)
-- **Reactivity:** KPIs aktualisieren sich sofort nach "Apply"
-- **Validation:** Client-seitig, Clear Error Messages
-- **Responsive:** Auf Mobile ist Konfigurator ein Tab (nicht Sidebar)
+- **Persistence:** LocalStorage (browser)
+- **Reactivity:** KPIs update immediately after "Apply"
+- **Validation:** Client-side, clear error messages
+- **Responsive:** On mobile, configurator is a tab (not sidebar)
 
 ## Input Validation
-- Basispreis: 10-100 ct/kWh
-- Marge: 0-20 ct/kWh
-- Kundenrabatt: 0-50 ct/kWh
-- Start-Level: 0-90%
-- Zeitfenster: 00-23 Stunden
+- Base price: 10-100 ct/kWh
+- Margin: 0-20 ct/kWh
+- Customer discount: 0-50 ct/kWh
+- Start level: 0-90%
+- Time window: 00-23 hours
 
 ---
 <!-- Sections below are added by subsequent skills -->
@@ -134,10 +134,10 @@ const CONFIG_KEY = 'flexmon-config'
 ```
 
 ### Files to Create
-- `src/components/config/ConfigPanel.tsx` - Haupt-Panel
-- `src/components/config/VehicleSelector.tsx` - Fahrzeug-Auswahl
-- `src/components/config/PriceInputs.tsx` - Preis-Eingaben
-- `src/components/config/ChargingSettings.tsx` - Lade-Einstellungen
+- `src/components/config/ConfigPanel.tsx` - Main panel
+- `src/components/config/VehicleSelector.tsx` - Vehicle selection
+- `src/components/config/PriceInputs.tsx` - Price inputs
+- `src/components/config/ChargingSettings.tsx` - Charging settings
 - `src/lib/config.ts` - Shared Config + Defaults
 
 ### React Pattern
@@ -176,67 +176,67 @@ const validate = (config: ConfigState): string[] => {
 
 ### Acceptance Criteria Status
 
-#### AC-1: Seitliche Leiste oder Modal fur Konfiguration
+#### AC-1: Sidebar or modal for configuration
 - [x] ConfigPanel component using Sheet (sidebar)
 - [x] QuickConfigPanel for fast changes
 - [x] Settings button in header to open
 
-#### AC-2: Fahrzeug-Auswahl: Kleinwagen, Mittelklasse, SUV (mit Icons)
+#### AC-2: Vehicle selection: Compact, Mid-range, SUV (with icons)
 - [x] VehicleSelector component with radio selection
 - [x] Three vehicle types: klein, medium, suv
 - [x] Icons (Car/Van) for each type
 - [x] Battery, power, and range displayed
 
-#### AC-3: Fahrzeug-Details werden angezeigt: BatteriegroBe, Ladeleistung, Beispiel-Fahrzeuge
+#### AC-3: Vehicle details displayed: Battery size, charge power, example vehicles
 - [x] Shows battery capacity (kWh)
 - [x] Shows charge power (kW)
 - [x] Shows range (km)
 - [x] Shows example vehicles
 
-#### AC-4: Preis-Einstellungen: Basispreis (ct/kWh), Marge (ct/kWh), Kunden-Rabatt (ct/kWh)
+#### AC-4: Price settings: Base price (ct/kWh), margin (ct/kWh), customer discount (ct/kWh)
 - [x] PriceInputs component with three fields
 - [x] Base price, margin, and customer discount inputs
 - [x] Number inputs with validation
 
-#### AC-5: Lade-Einstellungen: Start-Level (%), Zeitfenster (Start/Ende Uhrzeit)
+#### AC-5: Charging settings: Start level (%), time window (start/end time)
 - [x] ChargingSettings component
 - [x] Start level dropdown (0-90%)
 - [x] Time window start/end hour selectors
 
-#### AC-6: "Apply" Button aktualisiert alle Charts und KPIs
+#### AC-6: "Apply" button updates all charts and KPIs
 - [x] Apply button saves config and triggers re-render
 - [x] Dashboard updates with new configuration
 
-#### AC-7: "Reset" Button setzt auf Default-Werte zuruck
+#### AC-7: "Reset" button restores default values
 - [x] Reset button in ConfigPanel
 - [x] Reset button in QuickConfigPanel
 - [x] Both restore DEFAULT_CONFIG values
 
-#### AC-8: Konfiguration wird im LocalStorage gespeichert (nicht auf Server)
+#### AC-8: Configuration saved in LocalStorage (not on server)
 - [x] `saveConfig()` writes to localStorage
 - [x] `loadConfig()` reads from localStorage on mount
 - [x] Persists across browser sessions
 
 ### Edge Cases Status
 
-#### EC-1: Ungultige Werte
+#### EC-1: Invalid values
 - [x] Client-side validation with error messages
 - [x] Red border on invalid fields
 - [x] Apply button shows validation errors
 
-#### EC-2: Start > End (z.B. 06-22)
+#### EC-2: Start > End (e.g. 06-22)
 - [x] Algorithm in optimize API handles overnight windows correctly
 - [x] UI shows the configured times as-is
 
-#### EC-3: LocalStorage voll
+#### EC-3: LocalStorage full
 - [x] Try-catch in save/load handles errors gracefully
 - [x] Falls back to defaults on error
 
-#### EC-4: Negative Preise
+#### EC-4: Negative prices
 - [x] Min attributes prevent negative values in HTML5 inputs
 - [x] Validation checks for >= 0
 
-#### EC-5: Marge > Basispreis
+#### EC-5: Margin > base price
 - [x] Warning shown: "Marge hoher als Basispreis"
 - [x] Amber border on margin field
 - [x] Still allows submission (business decision)

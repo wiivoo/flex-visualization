@@ -1,4 +1,4 @@
-# PROJ-1: Strompreise Datenintegration (SMARD + CSV)
+# PROJ-1: Electricity Price Data Integration (SMARD + CSV)
 
 ## Status: In Progress
 **Created:** 2025-02-21
@@ -8,33 +8,33 @@
 - None
 
 ## User Stories
-- Als Dashboard-Nutzer möchte ich echte deutsche Strommarktpreise (Day-Ahead, Intraday) sehen
-- Als Analyst möchte ich historische Daten analysieren
-- Als System möchte ich einen Fallback haben wenn die API nicht erreichbar ist
+- As a dashboard user, I want to see real German electricity market prices (Day-Ahead, Intraday)
+- As an analyst, I want to analyze historical data
+- As a system, I want to have a fallback when the API is unreachable
 
 ## Acceptance Criteria
-- [x] SMARD API wird integriert (Primary) für Day-Ahead Preise
-- [x] CSV Files als Fallback (/csvs/*.csv)
+- [x] SMARD API is integrated (Primary) for Day-Ahead prices
+- [x] CSV files as fallback (/csvs/*.csv)
 - [x] API Route `/api/prices?type=day-ahead|intraday&date=YYYY-MM-DD`
-- [x] Day-Ahead: 96 Werte pro Tag (quarterhour)
-- [x] Intraday: 96 Werte pro Tag (aus CSV)
-- [x] Fallback: Bei API-Fehler → CSV → Demo-Daten
-- [x] Format: Array von `{ timestamp: string, price_ct_kwh: number }`
+- [x] Day-Ahead: 96 values per day (quarterhour)
+- [x] Intraday: 96 values per day (from CSV)
+- [x] Fallback: On API error → CSV → Demo data
+- [x] Format: Array of `{ timestamp: string, price_ct_kwh: number }`
 - [x] Caching: 24h in Supabase
 
 ## Edge Cases
-- **Was passiert wenn SMARD API nicht erreichbar ist?** → Fallback zu CSV (/csvs/*.csv)
-- **CSV nicht vorhanden?** → Demo-Daten mit realistischer Preisverteilung
-- **Was passiert bei ungültigem Datum?** → 400 Bad Request mit klarer Fehlermeldung
-- **Was passiert bei Datum in der Zukunft?** → Letzte verfügbare Daten + Hinweis "Prognose"
-- **Wie handle ich Sommer/Winterzeit?** → UTC Konvertierung mit korrektem Offset
-- **Was wenn Daten unvollständig?** → Interpolation oder Fallback zu Demo-Daten
+- **What happens when the SMARD API is unreachable?** → Fallback to CSV (/csvs/*.csv)
+- **CSV not available?** → Demo data with realistic price distribution
+- **What happens with an invalid date?** → 400 Bad Request with clear error message
+- **What happens with a future date?** → Last available data + "Forecast" notice
+- **How do I handle summer/winter time?** → UTC conversion with correct offset
+- **What if data is incomplete?** → Interpolation or fallback to demo data
 
 ## Technical Requirements
-- **Performance:** API Response < 500ms (mit Cache)
-- **Reliability:** 99% Uptime durch Multi-Level Fallback
-- **Data Format:** EUR/MWh → Umrechnung zu ct/kWh (1 EUR/MWh = 0.1 ct/kWh)
-- **CORS:** API Route als Proxy (beide Quellen unterstützen CORS)
+- **Performance:** API Response < 500ms (with cache)
+- **Reliability:** 99% uptime through multi-level fallback
+- **Data Format:** EUR/MWh → Conversion to ct/kWh (1 EUR/MWh = 0.1 ct/kWh)
+- **CORS:** API Route as proxy (both sources support CORS)
 
 ## Data Source Details
 
@@ -42,23 +42,23 @@
 
 ### Primary: SMARD API ✅
 
-| Filter | Name | Auflösung |
+| Filter | Name | Resolution |
 |--------|------|------------|
-| **4169** | Marktpreis: Deutschland/Luxemburg | quarterhour, hour |
-| 5078 | Marktpreis: Anrainer DE/LU | - |
-| 4170 | Marktpreis: Österreich | - |
+| **4169** | Market Price: Germany/Luxembourg | quarterhour, hour |
+| 5078 | Market Price: Neighboring Countries DE/LU | - |
+| 4170 | Market Price: Austria | - |
 
 - Base URL: `https://www.smard.de/app/chart_data`
-- Filter: `4169` = Marktpreis DE/LU
+- Filter: `4169` = Market Price DE/LU
 - Region: `DE`
 - Format: JSON
-- Kein API Key nötig
+- No API key required
 
 ### Fallback: CSV Files ✅
 
 **Location:** `/csvs/`
 
-| File | Type | Jahre |
+| File | Type | Years |
 |------|------|-------|
 | spot_price_YYYY.csv | Day-Ahead | 2023-2030 |
 | intraday_price_YYYY.csv | Intraday | 2023-2030 |
@@ -73,15 +73,15 @@ timestamp,price (€/MWh)
 
 ### Demo Fallback ⚠️
 
-Realistische Preisverteilung wenn beide APIs fehlschlagen.
+Realistic price distribution when both APIs fail.
 
-## Demo-Daten Fallback
-Realistische Preisverteilung für 24h:
+## Demo Data Fallback
+Realistic price distribution for 24h:
 ```json
 [
   { "hour": "00:00", "price": 80 },
-  { "hour": "04:00", "price": 50 },  // Tiefstpunkt
-  { "hour": "18:00", "price": 250 }, // Höchstpunkt
+  { "hour": "04:00", "price": 50 },  // Lowest point
+  { "hour": "18:00", "price": 250 }, // Highest point
   // ...
 ]
 ```
@@ -96,12 +96,12 @@ Realistische Preisverteilung für 24h:
 Table: price_cache
 ├── date (Date, PK)        - "2025-02-21"
 ├── type (Text)            - "day-ahead" | "intraday" | "forward"
-├── cached_at (Timestamptz) - Wann gespeichert
+├── cached_at (Timestamptz) - When cached
 ├── source (Text)           - "entsoe" | "awattar" | "demo"
 └── prices_json (JSONB)     - [{time, price_ct_kwh}, ...]
 
 Primary Key: (date, type)
-Index: cached_at für Cache-Expiration Check
+Index: cached_at for cache expiration check
 ```
 
 ### API Structure
@@ -139,7 +139,7 @@ export interface SmardPricePoint {
 
 // Filter
 export const FILTER = {
-  PRICE_DE_LU: 4169  // Marktpreis Deutschland/Luxemburg
+  PRICE_DE_LU: 4169  // Market Price Germany/Luxembourg
 } as const
 
 // Resolution
@@ -169,16 +169,16 @@ export async function fetchCsvPrices(
 
 ### Fallback Demo Data Pattern
 ```
-Nachts (00-06):  5-15 ct/kWh   (Günstig)
-Morgens (06-12): 15-30 ct/kWh
-Mittags (12-18): 20-40 ct/kWh
-Abends (18-24): 30-80 ct/kWh   (Teuer, Spitze)
+Night (00-06):    5-15 ct/kWh   (Cheap)
+Morning (06-12):  15-30 ct/kWh
+Midday (12-18):   20-40 ct/kWh
+Evening (18-24):  30-80 ct/kWh  (Expensive, Peak)
 ```
 
 ### Cache Strategy
-- TTL: 24 Stunden (Preise ändern sich nicht retroaktiv)
-- Cleanup: Cron Job oder on-the-fly bei Zugriff
-- Demo-Daten werden nicht gecached (immer frisch generieren)
+- TTL: 24 hours (prices don't change retroactively)
+- Cleanup: Cron job or on-the-fly on access
+- Demo data is not cached (always freshly generated)
 
 ## QA Test Results
 
@@ -188,13 +188,13 @@ Abends (18-24): 30-80 ct/kWh   (Teuer, Spitze)
 
 ### Acceptance Criteria Status
 
-#### AC-1: SMARD API wird integriert (Primary) fur Day-Ahead Preise
+#### AC-1: SMARD API is integrated (Primary) for Day-Ahead prices
 - [x] API Route `/api/prices` exists and works
 - [x] SMARD API client implemented in `/src/lib/smard.ts`
 - [x] Fetches from SMARD when available (tested with live data)
 - [x] Falls back to demo data when SMARD fails
 
-#### AC-2: CSV Files als Fallback
+#### AC-2: CSV files as fallback
 - [x] CSV parser implemented in `/src/lib/csv-prices.ts`
 - [x] Correctly parses timestamp and price columns
 - [x] Converts EUR/MWh to ct/kWh correctly
@@ -205,21 +205,21 @@ Abends (18-24): 30-80 ct/kWh   (Teuer, Spitze)
 - [x] Type validation works (day-ahead, intraday, forward)
 - [x] Date validation works (YYYY-MM-DD format)
 
-#### AC-4: Day-Ahead: 96 Werte pro Tag (quarterhour)
+#### AC-4: Day-Ahead: 96 values per day (quarterhour)
 - [x] Returns hourly data (24 values per day) - actual implementation uses hourly resolution
 - [x] Data structure matches expected format
 
-#### AC-5: Intraday: 96 Werte pro Tag (aus CSV)
+#### AC-5: Intraday: 96 values per day (from CSV)
 - [x] Type parameter accepted
 - [x] Falls back to demo data when CSV unavailable
 
-#### AC-6: Fallback: Bei API-Fehler -> CSV -> Demo-Daten
+#### AC-6: Fallback: On API error -> CSV -> Demo data
 - [x] Multi-level fallback chain works correctly
 - [x] SMARD errors handled gracefully
 - [x] CSV errors handled gracefully
 - [x] Demo data generated as final fallback
 
-#### AC-7: Format: Array von `{ timestamp: string, price_ct_kwh: number }`
+#### AC-7: Format: Array of `{ timestamp: string, price_ct_kwh: number }`
 - [x] Output format matches specification
 
 #### AC-8: Caching: 24h in Supabase
@@ -230,22 +230,22 @@ Abends (18-24): 30-80 ct/kWh   (Teuer, Spitze)
 
 ### Edge Cases Status
 
-#### EC-1: SMARD API nicht erreichbar
+#### EC-1: SMARD API unreachable
 - [x] Handled correctly - falls back to CSV then demo data
 
-#### EC-2: CSV nicht vorhanden
+#### EC-2: CSV not available
 - [x] Handled correctly - falls back to demo data
 
-#### EC-3: Ungultiges Datum
+#### EC-3: Invalid date
 - [x] Returns 400 with clear error message "Invalid date format. Use YYYY-MM-DD"
 
-#### EC-4: Datum in der Zukunft
+#### EC-4: Future date
 - [x] Returns demo data (acceptable for prototype)
 
-#### EC-5: Sommer/Winterzeit
+#### EC-5: Summer/winter time
 - [x] Uses ISO timestamps, handles timezone correctly
 
-#### EC-6: Daten unvollstandig
+#### EC-6: Incomplete data
 - [x] Demo data provides realistic fallback
 
 ### Security Audit Results

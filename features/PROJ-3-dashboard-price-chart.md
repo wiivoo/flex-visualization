@@ -1,29 +1,29 @@
-# PROJ-3: Dashboard UI - Preis-Chart
+# PROJ-3: Dashboard UI - Price Chart
 
 ## Status: Planned
 **Created:** 2025-02-21
 **Last Updated:** 2025-02-21
 
 ## Dependencies
-- Requires: PROJ-1 (SMARD Datenintegration) - für Preisdaten
-- Requires: PROJ-2 (Preis-Optimierungsalgorithmus) - für Ladezeiten
+- Requires: PROJ-1 (SMARD Data Integration) - for price data
+- Requires: PROJ-2 (Price Optimization Algorithm) - for charging times
 
 ## User Stories
-- Als CEO möchte ich auf einen Blick sehen, wie sich die Strompreise über den Tag entwickeln
-- Als Nutzer möchte ich erkennen, WANN am besten geladen wird (farblich markiert)
-- Als Decision Maker möchte ich die Preis-Schwankungen verstehen (volatile vs. flache Tage)
+- As a CEO, I want to see at a glance how electricity prices develop throughout the day
+- As a user, I want to recognize WHEN is the best time to charge (color-coded)
+- As a decision maker, I want to understand price fluctuations (volatile vs. flat days)
 
 ## Acceptance Criteria
-- [ ] Haupt-Chart: 24h Preisverlauf (Linien-Chart) auf `/`
-- [ ] X-Achse: Uhrzeit (00:00 - 24:00), 15min oder stündlich
-- [ ] Y-Achse: Preis in ct/kWh (nicht EUR/MWh - verständlicher für Laien)
-- [ ] Optimale Ladezeiten farblich markiert (z.B. grüner Bereich)
-- [ ] Teure Zeiten markiert (roter Bereich)
-- [ ] Tooltip beim Hover: Uhrzeit + Preis + "Günstig laden!" Hinweis
-- [ ] Datums-Auswahl: Kalender-Icon oder "Vorheriger Tag / Nächster Tag" Buttons
-- [ ] Responsive: Auf Desktop breit, auf Mobile scrollbar
-- [ ] Loading State: Skeleton während Daten laden
-- [ ] Empty State: Hinweis wenn keine Daten verfügbar
+- [ ] Main chart: 24h price curve (line chart) on `/`
+- [ ] X-axis: Time (00:00 - 24:00), 15min or hourly
+- [ ] Y-axis: Price in ct/kWh (not EUR/MWh - more understandable for non-experts)
+- [ ] Optimal charging times highlighted in color (e.g. green area)
+- [ ] Expensive times highlighted (red area)
+- [ ] Tooltip on hover: Time + price + "Charge now!" hint
+- [ ] Date selection: Calendar icon or "Previous day / Next day" buttons
+- [ ] Responsive: Wide on desktop, scrollable on mobile
+- [ ] Loading state: Skeleton while data is loading
+- [ ] Empty state: Notice when no data is available
 
 ## UI Spec
 **Layout:**
@@ -34,43 +34,43 @@
 │                                                               │
 │  250 ct ┤                                                    │
 │         │        ╱╲                                          │
-│  200 ct ┤      ╱  ╲         📊 PREIS-CHART                  │
+│  200 ct ┤      ╱  ╲         📊 PRICE CHART                  │
 │         │    ╱      ╲                                       │
-│  150 ct �│  ╱          ╲     ███ Optimal Laden               │
+│  150 ct ┤  ╱          ╲     ███ Optimal Charging             │
 │         │╱              ╲   ███ (02:00-05:30)                │
 │  100 ct ┤                ╲ ███                              │
 │         │                  ███                               │
 │   50 ct ┤           ████████████                             │
 │         │_________________╲___________________________________│
 │         00:00    06:00    12:00    18:00    24:00           │
-│                   🌙 günstig                        💰 teuer  │
+│                   🌙 cheap                          💰 expensive│
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ## Chart Library
-- **Recharts** (empfohlen) - React-native, einfach, responsive
+- **Recharts** (recommended) - React-native, simple, responsive
 - Alternatives: Chart.js, Victory
 
 ## Edge Cases
-- **Was bei fehlenden Daten?** → "Keine Daten für dieses Datum" mit Retry-Button
-- **Was bei extremen Preisspitzen?** → Y-Achse auto-scale, aber max 500 ct/kWh
-- **Was bei negativen Preisen?** → Y-Achse zeigt auch negative Bereich, grün markiert
-- **Was wenn Zeitfenster leer?** → "Keine optimale Ladezeit gefunden" (alle Preise zu hoch)
-- **Mobile Darstellung?** → Chart ist horizontal scrollbar, Zoom-Pins
+- **What if data is missing?** → "No data for this date" with retry button
+- **What about extreme price spikes?** → Y-axis auto-scale, but max 500 ct/kWh
+- **What about negative prices?** → Y-axis also shows negative range, highlighted in green
+- **What if the time window is empty?** → "No optimal charging time found" (all prices too high)
+- **Mobile display?** → Chart is horizontally scrollable, zoom pins
 
 ## Technical Requirements
 - **Performance:** Chart render < 200ms
-- **Accessibility:** ARIA Labels, Keyboard Navigation für Datum-Auswahl
-- **Browser:** Chrome, Firefox, Safari, Edge (letzte 2 Versionen)
+- **Accessibility:** ARIA labels, keyboard navigation for date selection
+- **Browser:** Chrome, Firefox, Safari, Edge (last 2 versions)
 
 ## Visual Design
-- **Farben:**
-  - Linie: Blau `#3b82f6`
-  - Optimale Zone: Grün `#22c55e` mit 30% Transparenz
-  - Teure Zone: Rot `#ef4444` mit 30% Transparenz
-  - Grid: Grau `#e5e7eb`
-- **Typography:** Inter, 14px für Achsen, 16px für Labels
-- **Tooltips:** Schatten, abgerundet, dunkler Hintergrund
+- **Colors:**
+  - Line: Blue `#3b82f6`
+  - Optimal zone: Green `#22c55e` with 30% transparency
+  - Expensive zone: Red `#ef4444` with 30% transparency
+  - Grid: Gray `#e5e7eb`
+- **Typography:** Inter, 14px for axes, 16px for labels
+- **Tooltips:** Shadow, rounded, dark background
 
 ---
 <!-- Sections below are added by subsequent skills -->
@@ -87,24 +87,24 @@
     │       ├── PrevButton
     │       ├── CurrentDateLabel
     │       └── NextButton
-    ├── KPIGrid (siehe PROJ-4)
+    ├── KPIGrid (see PROJ-4)
     ├── PriceChartSection
     │   ├── ChartContainer
     │   ├── PriceChart (Recharts)
-    │   │   ├── XAxis (Uhrzeit)
+    │   │   ├── XAxis (Time)
     │   │   ├── YAxis (ct/kWh)
-    │   │   ├── LineSeries (Preisverlauf)
-    │   │   ├── Area (Optimal Zone - grün)
-    │   │   └── Area (Expensive Zone - rot)
+    │   │   ├── LineSeries (Price curve)
+    │   │   ├── Area (Optimal Zone - green)
+    │   │   └── Area (Expensive Zone - red)
     │   └── Tooltip (Custom)
-    └── ConfigSidebar (siehe PROJ-5)
+    └── ConfigSidebar (see PROJ-5)
 ```
 
 ### Data Flow
 ```
 DashboardPage mounts
   ↓
-1. LocalStorage Config lesen
+1. Read LocalStorage Config
   ↓
 2. API Call: /api/smard/prices?date=selectedDate
   ↓
@@ -114,9 +114,9 @@ DashboardPage mounts
    - prices: PricePoint[]
    - optimization: OptimizationResult
   ↓
-5. Recharts render mit:
+5. Recharts render with:
    - Line prices
-   - Area für optimal_schedule (Overlay)
+   - Area for optimal_schedule (Overlay)
 ```
 
 ### Recharts Specifics
@@ -132,7 +132,7 @@ DashboardPage mounts
 
 ### State Management
 ```typescript
-// Server Component Props (von API)
+// Server Component Props (from API)
 interface DashboardProps {
   searchParams: { date?: string }
 }
@@ -145,10 +145,10 @@ const [optimization, setOptimization] = useState(null)
 ```
 
 ### Files to Create
-- `src/app/page.tsx` - Haupt-Dashboard (Client Component)
+- `src/app/page.tsx` - Main Dashboard (Client Component)
 - `src/components/charts/PriceChart.tsx` - Recharts Wrapper
 - `src/components/charts/ChartTooltip.tsx` - Custom Tooltip
-- `src/components/charts/DateSelector.tsx` - Datum Navigation
+- `src/components/charts/DateSelector.tsx` - Date Navigation
 
 ## QA Test Results
 
@@ -158,71 +158,71 @@ const [optimization, setOptimization] = useState(null)
 
 ### Acceptance Criteria Status
 
-#### AC-1: Haupt-Chart: 24h Preisverlauf (Linien-Chart) auf `/`
+#### AC-1: Main chart: 24h price curve (line chart) on `/`
 - [x] PriceChart component renders on dashboard
 - [x] Uses Recharts LineChart for visualization
 - [x] Shows hourly price data points
 
-#### AC-2: X-Achse: Uhrzeit (00:00 - 24:00), 15min oder stundlich
+#### AC-2: X-axis: Time (00:00 - 24:00), 15min or hourly
 - [x] X-axis shows time labels
 - [x] Dynamic interval based on data density
 - [x] Proper formatting (HH:MM)
 
-#### AC-3: Y-Achse: Preis in ct/kWh (nicht EUR/MWh)
+#### AC-3: Y-axis: Price in ct/kWh (not EUR/MWh)
 - [x] Y-axis labeled "ct/kWh"
 - [x] Prices displayed in ct/kWh format
 - [x] Auto-scales based on data range
 
-#### AC-4: Optimale Ladezeiten farblich markiert (z.B. gruner Bereich)
+#### AC-4: Optimal charging times highlighted in color (e.g. green area)
 - [x] ReferenceArea with green fill highlights optimal window
 - [x] Only shown in day view with optimization data
 
-#### AC-5: Teure Zeiten markiert (roter Bereich)
+#### AC-5: Expensive times highlighted (red area)
 - [x] Not implemented as separate red zone (design decision)
 - [x] Color gradient and tooltips indicate expensive times
 - [x] Comparison shows expensive vs optimal
 
-#### AC-6: Tooltip beim Hover: Uhrzeit + Preis + "Günstig laden!" Hinweis
+#### AC-6: Tooltip on hover: Time + price + "Charge now!" hint
 - [x] CustomTooltip shows time and price
 - [x] Shows "Cheap - Good time to charge!" for prices < 15 ct/kWh
 - [x] Shows "Expensive!" for prices > 30 ct/kWh
 - [x] Shows percentage vs average
 
-#### AC-7: Datums-Auswahl: Kalender-Icon oder "Vorheriger Tag / Nächster Tag" Buttons
+#### AC-7: Date selection: Calendar icon or "Previous day / Next day" buttons
 - [x] TimeRangeSelector component with day/month/quarter/year views
 - [x] Previous/Next buttons for navigation
 - [x] "Current" button to return to today
 
-#### AC-8: Responsive: Auf Desktop breit, auf Mobile scrollbar
+#### AC-8: Responsive: Wide on desktop, scrollable on mobile
 - [x] ResponsiveContainer used for chart
 - [x] Adapts to screen width
 - [x] Interval density adjusts for different ranges
 
-#### AC-9: Loading State: Skeleton wahrend Daten laden
+#### AC-9: Loading state: Skeleton while data is loading
 - [x] Loading spinner shown while fetching
 - [x] "Loading price data..." message displayed
 
-#### AC-10: Empty State: Hinweis wenn keine Daten verfugbar
+#### AC-10: Empty state: Notice when no data is available
 - [x] "No data available" message when prices array is empty
 
 ### Edge Cases Status
 
-#### EC-1: Fehlende Daten
+#### EC-1: Missing data
 - [x] Shows "No data available" message
 
-#### EC-2: Extreme Preisspitzen
+#### EC-2: Extreme price spikes
 - [x] Y-axis auto-scales to max price
 - [x] Handles high values gracefully
 
-#### EC-3: Negative Preise
+#### EC-3: Negative prices
 - [x] Y-axis can show negative values
 - [x] Chart renders correctly with negative domain
 
-#### EC-4: Zeitfenster leer
+#### EC-4: Empty time window
 - [x] No green zone shown when no optimal times
 - [x] Chart still renders with price line
 
-#### EC-5: Mobile Darstellung
+#### EC-5: Mobile display
 - [x] Responsive layout works
 - [x] Chart adjusts to mobile viewport
 

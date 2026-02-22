@@ -5,81 +5,81 @@
 **Last Updated:** 2026-02-22
 
 ## Dependencies
-- Requires: PROJ-1 (SMARD Datenintegration) - für Preisdaten
-- Requires: PROJ-2 (Preis-Optimierungsalgorithmus) - für Optimierungsergebnisse
+- Requires: PROJ-1 (SMARD Data Integration) - for price data
+- Requires: PROJ-2 (Price Optimization Algorithm) - for optimization results
 
 ## User Stories
-- Als Produkt-Manager möchte ich verschiedene Autotypen vergleichen können
-- Als CEO möchte ich KPIs auf einen Blick sehen (Gewinn, Ersparnis)
-- Als Sales-Mitarbeiter möchte ich Heatmaps für Kundenpräsentationen nutzen
+- As a product manager, I want to compare different car types
+- As a CEO, I want to see KPIs at a glance (profit, savings)
+- As a sales representative, I want to use heatmaps for customer presentations
 
 ## Acceptance Criteria
 
-### KPI-Karten (oben)
-- [ ] 3-4 große KPI-Karten über dem Chart
-- [ ] KPI 1: **Ersparnis pro Ladung** (z.B. "€ 18,40")
-- [ ] KPI 2: **Unsere Marge pro Monat** (z.B. "€ 552 / Auto")
-- [ ] KPI 3: **Kunden-Vorteil** (z.B. "€ 8,40 / Ladung")
-- [ ] KPI 4: **Beste Zeit zum Laden** (z.B. "02:00 - 05:30 Uhr")
-- [ ] Jede KPI hat Icon, Label, Wert, und kleiner delta-Hinweis
+### KPI Cards (top)
+- [ ] 3-4 large KPI cards above the chart
+- [ ] KPI 1: **Savings per charge** (e.g. "EUR 18.40")
+- [ ] KPI 2: **Our margin per month** (e.g. "EUR 552 / car")
+- [ ] KPI 3: **Customer benefit** (e.g. "EUR 8.40 / charge")
+- [ ] KPI 4: **Best time to charge** (e.g. "02:00 - 05:30")
+- [ ] Each KPI has icon, label, value, and a small delta hint
 
-### Heatmap (unten)
-- [ ] Heatmap: Y-Achse = Autotypen, X-Achse = Uhrzeit (00:00-24:00)
-- [ ] Farben = Gewinnpotential (Grün = günstig, Rot = teuer)
-- [ ] 3 Autotypen: Kleinwagen (40kWh), Mittelklasse (60kWh), SUV (100kWh)
-- [ ] Tooltip auf Hover: Autotyp + Uhrzeit + Gewinn
-- [ ] Legende erklärt Farbskala
+### Heatmap (bottom)
+- [ ] Heatmap: Y-axis = car types, X-axis = time (00:00-24:00)
+- [ ] Colors = profit potential (green = cheap, red = expensive)
+- [ ] 3 car types: Compact (40kWh), Mid-range (60kWh), SUV (100kWh)
+- [ ] Tooltip on hover: Car type + time + profit
+- [ ] Legend explains color scale
 
-### Vorher-Nachher Vergleich
-- [ ] Side-by-side KPI oder Toggle
-- [ ] Links: "Ohne Flex" - teurer Laden (z.B. € 21,00)
-- [ ] Rechts: "Mit Flex" - günstigeres Laden (z.B. € 2,64)
-- [ ] Differenz hervorgehoben (z.B. "-€ 18,36" in Grün)
+### Before-After Comparison
+- [ ] Side-by-side KPI or toggle
+- [ ] Left: "Without Flex" - expensive charging (e.g. EUR 21.00)
+- [ ] Right: "With Flex" - cheaper charging (e.g. EUR 2.64)
+- [ ] Difference highlighted (e.g. "-EUR 18.36" in green)
 
 ## UI Spec
 
 **KPI Layout:**
 ```
 ┌─────────────┬─────────────┬─────────────┬─────────────┐
-│  💰 Ersparnis│  📈 Marge/M │  🎁 Kunde   │  ⏰ Beste Zt│
+│  💰 Savings  │  📈 Margin/M │  🎁 Customer │  ⏰ Best Time│
 │     € 18.40 │     € 552   │     € 8.40  │  02:00-05:30│
-│    pro Ladung│    pro Auto│   pro Ladung│             │
+│   per charge │   per car   │  per charge │             │
 └─────────────┴─────────────┴─────────────┴─────────────┘
 ```
 
 **Heatmap Layout:**
 ```
 ┌─────────────────────────────────────────────────────┐
-│           Gewinnpotenzial nach Autotyp               │
+│           Profit Potential by Car Type               │
 │                                                     │
 │  SUV (100kWh)  ░░▒▒▒▒███░░░░░░░░░░░░░▒▒▒▒▒░░░░░░░░  │
-│  Mittel (60kWh)░░▒▒▒███░░░░░░░░░░░░░░▒▒▒▒░░░░░░░░░  │
-│  Klein (40kWh) ░░▒▒███░░░░░░░░░░░░░░▒▒▒░░░░░░░░░░  │
+│  Mid (60kWh)   ░░▒▒▒███░░░░░░░░░░░░░░▒▒▒▒░░░░░░░░░  │
+│  Compact (40kWh)░░▒▒███░░░░░░░░░░░░░░▒▒▒░░░░░░░░░░  │
 │                ────────────────────────────────     │
 │               00  06  12  18  24                    │
 │                                                     │
-│  ░░ Negativ   ▒▒ Gering    ███ Hoch                │
+│  ░░ Negative   ▒▒ Low       ███ High                │
 └─────────────────────────────────────────────────────┘
 ```
 
 ## Edge Cases
-- **Was bei negativem Gewinn?** → Rote KPI mit "(-) " Präfix
-- **Was wenn kein Autotyp gewählt?** → Zeige Mittelklasse als Default
-- **Was bei sehr kleinen Werten?** → "€ 0,50" nicht "€ 0,5" (2 Dezimalen)
-- **Was wenn alle Werte gleich?** → Heatmap zeigt einfarbig, Hinweis "Keine Varianz"
+- **What about negative profit?** → Red KPI with "(-) " prefix
+- **What if no car type is selected?** → Show mid-range as default
+- **What about very small values?** → "EUR 0.50" not "EUR 0.5" (2 decimals)
+- **What if all values are equal?** → Heatmap shows solid color, notice "No variance"
 
 ## Technical Requirements
 - **Performance:** KPIs < 50ms render, Heatmap < 100ms
-- **Color Scale:** Kontinuierlich von Rot (-€) über Gelb (0€) zu Grün (+€)
-- **Export:** KPIs können als Text kopiert werden
+- **Color Scale:** Continuous from red (-EUR) through yellow (0 EUR) to green (+EUR)
+- **Export:** KPIs can be copied as text
 
 ## Visual Design
-- **KPI Karten:** Weißer Hintergrund, subtiler Schatten, abgerundet
-- **Zahlen:** Bold, 32px für Hauptwert, 14px für Label
-- **Farben:**
-  - Positiv: Grün `#22c55e`
-  - Negativ: Rot `#ef4444`
-  - Neutral: Grau `#6b7280`
+- **KPI Cards:** White background, subtle shadow, rounded
+- **Numbers:** Bold, 32px for main value, 14px for label
+- **Colors:**
+  - Positive: Green `#22c55e`
+  - Negative: Red `#ef4444`
+  - Neutral: Gray `#6b7280`
 
 ---
 <!-- Sections below are added by subsequent skills -->
@@ -95,86 +95,86 @@ _To be added by /architecture_
 
 ### Acceptance Criteria Status
 
-#### AC-1: 3-4 grosse KPI-Karten ueber dem Chart
+#### AC-1: 3-4 large KPI cards above the chart
 - [x] 4 KPI cards rendered via KPIGrid component and inline in page.tsx (day view)
 - [x] Cards use shadcn Card component with color-coded themes
 - [x] Responsive grid: 1 col mobile, 2 col tablet, 4 col desktop
 
-#### AC-2: KPI 1 - Ersparnis pro Ladung
+#### AC-2: KPI 1 - Savings per charge
 - [x] Shows savings_eur from optimization result
 - [x] German EUR formatting with comma decimal separator
 - [x] Green theme with PiggyBank icon
 
-#### AC-3: KPI 2 - Unsere Marge pro Monat
+#### AC-3: KPI 2 - Our margin per month
 - [x] Shows our_margin_eur * 30 (monthly projection)
 - [x] Blue theme with TrendingUp icon
 - [x] Shows "/ Auto" unit suffix
 
-#### AC-4: KPI 3 - Kunden-Vorteil
+#### AC-4: KPI 3 - Customer benefit
 - [x] Shows customer_benefit_eur
 - [x] Purple theme with Gift icon
 - [x] Shows "/ Ladung" unit suffix
 
-#### AC-5: KPI 4 - Beste Ladezeit
+#### AC-5: KPI 4 - Best charging time
 - [x] Shows earliest start to latest end of charging schedule
 - [x] Amber theme with Clock icon
 - [x] Formats as "HH:MM - HH:MM Uhr"
 
-#### AC-6: Jede KPI hat Icon, Label, Wert, und delta-Hinweis
+#### AC-6: Each KPI has icon, label, value, and delta hint
 - [x] Icons rendered via Lucide React
 - [x] Title label above value
 - [x] Large bold value (3xl/4xl font)
 - [x] Description text below with trend indicator
 
-#### AC-7: Heatmap: Y-Achse = Autotypen, X-Achse = Uhrzeit
+#### AC-7: Heatmap: Y-axis = car types, X-axis = time
 - [x] PriceHeatmap component renders grid with hours 0-23 on X axis
 - [x] Vehicle types on Y axis (klein, medium, suv)
 - [x] CSS grid-based heatmap cells
 
-#### AC-8: Farben = Gewinnpotential (Gruen = guenstig, Rot = teuer)
+#### AC-8: Colors = profit potential (green = cheap, red = expensive)
 - [x] Green RGBA scale for positive savings
 - [x] Red RGBA scale for negative savings
 - [x] Continuous color gradient
 
-#### AC-9: 3 Autotypen: Kleinwagen (40kWh), Mittelklasse (60kWh), SUV (100kWh)
+#### AC-9: 3 car types: Compact (40kWh), Mid-range (60kWh), SUV (100kWh)
 - [x] All three vehicle types shown
 - [x] Battery sizes match spec (via VEHICLE_PROFILES)
 - [x] Vehicle names and emoji icons displayed
 
-#### AC-10: Tooltip auf Hover: Autotyp + Uhrzeit + Gewinn
+#### AC-10: Tooltip on hover: Car type + time + profit
 - [x] HTML title attribute on each cell
 - [x] Shows vehicle name, hour, price (ct/kWh), and savings (EUR)
 
-#### AC-11: Legende erklaert Farbskala
+#### AC-11: Legend explains color scale
 - [x] Legend shown below heatmap
 - [x] Shows red (low savings) to green (high savings) gradient
 - [x] Labels: "Geringe Ersparnis" and "Hohe Ersparnis"
 
-#### AC-12: Vorher-Nachher Vergleich (Side-by-side)
+#### AC-12: Before-after comparison (side-by-side)
 - [x] OptimizationSummary shows comparison card
 - [x] "Fenster-Durchschnitt" (before) vs "Optimiert" (after)
 - [x] Green savings badge with percentage
 - [x] Also shown in PriceChart comparison header
 
-#### AC-13: Differenz hervorgehoben in Gruen
+#### AC-13: Difference highlighted in green
 - [x] Green badge shows "X% guenstiger"
 - [x] Green colored optimized price value
 
 ### Edge Cases Status
 
-#### EC-1: Negativer Gewinn
+#### EC-1: Negative profit
 - [x] formatEUR handles negative amounts with "- EUR" prefix
 - [x] KPICard trend indicator shows red for negative
 
-#### EC-2: Kein Autotyp gewaehlt
+#### EC-2: No car type selected
 - [x] Default vehicle (medium) used when no selection
 - [x] All three always shown in heatmap
 
-#### EC-3: Sehr kleine Werte
+#### EC-3: Very small values
 - [x] toFixed(2) ensures "EUR 0,50" format
 - [x] Consistent 2-decimal display
 
-#### EC-4: Alle Werte gleich
+#### EC-4: All values equal
 - [x] Heatmap renders single color (division by range handled with || 1 fallback)
 - [x] No "Keine Varianz" hint shown (minor gap)
 
@@ -212,7 +212,7 @@ _To be added by /architecture_
 - **Recommendation:** Use a Recharts-style or shadcn Tooltip component
 - **Priority:** Nice to have
 
-#### BUG-4: No "Keine Varianz" Hint When All Prices Are Equal
+#### BUG-4: No "No Variance" Hint When All Prices Are Equal
 - **Severity:** Low
 - **Description:** Spec says to show "Keine Varianz" when all heatmap values are equal. Not implemented.
 - **Impact:** Minor -- unlikely scenario with real market data
