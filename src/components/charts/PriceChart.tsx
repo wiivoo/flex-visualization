@@ -19,7 +19,6 @@ import {
 import { PricePoint, ChargingBlock } from '@/lib/config'
 import { TrendingDown } from 'lucide-react'
 import { format, startOfDay } from 'date-fns'
-import { de } from 'date-fns/locale'
 import type { TimeRange } from './TimeRangeSelector'
 
 interface PriceChartProps {
@@ -112,7 +111,7 @@ export function PriceChart({
 
     prices.forEach(point => {
       const date = new Date(point.timestamp)
-      const dayKey = format(date, 'd. MMM', { locale: de })
+      const dayKey = format(date, 'd. MMM')
       const dayStart = startOfDay(date)
 
       if (!dailyPrices.has(dayKey)) {
@@ -210,7 +209,7 @@ export function PriceChart({
       <div className="flex h-[400px] items-center justify-center rounded-lg border bg-muted/20">
         <div className="text-center">
           <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="mt-2 text-sm text-muted-foreground">Preisdaten werden geladen...</p>
+          <p className="mt-2 text-sm text-muted-foreground">Loading price data...</p>
         </div>
       </div>
     )
@@ -219,7 +218,7 @@ export function PriceChart({
   if (chartData.length === 0) {
     return (
       <div className="flex h-[400px] items-center justify-center rounded-lg border bg-muted/20">
-        <p className="text-muted-foreground">Keine Daten verfügbar</p>
+        <p className="text-muted-foreground">No data available</p>
       </div>
     )
   }
@@ -235,7 +234,7 @@ export function PriceChart({
                 <span className="text-lg font-bold text-slate-600 dark:text-slate-400">O/</span>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Fenster-Durchschnitt</p>
+                <p className="text-xs text-muted-foreground">Window Average</p>
                 <p className="text-lg font-semibold text-slate-600 dark:text-slate-400">
                   {avgPrice.toFixed(2)} ct/kWh
                 </p>
@@ -253,7 +252,7 @@ export function PriceChart({
                 <TrendingDown className="h-5 w-5 text-green-600 dark:text-green-400" />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Optimales Laden</p>
+                <p className="text-xs text-muted-foreground">Optimized Charging</p>
                 <p className="text-lg font-semibold text-green-600 dark:text-green-400">
                   {optimizedAvgPrice.toFixed(2)} ct/kWh
                 </p>
@@ -264,7 +263,7 @@ export function PriceChart({
           {savingsPercent && (
             <div className="flex items-center gap-2 rounded-full bg-green-500 px-4 py-2 text-white">
               <TrendingDown className="h-4 w-4" />
-              <span className="font-semibold">{savingsPercent}% günstiger</span>
+              <span className="font-semibold">{savingsPercent}% cheaper</span>
             </div>
           )}
         </div>
@@ -274,11 +273,11 @@ export function PriceChart({
       {selectedPoint && timeRange === 'day' && (
         <div className="mb-3 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 dark:border-blue-800 dark:bg-blue-950/30">
           <div className="flex items-center gap-4 text-sm">
-            <span className="font-medium">{selectedPoint.time} Uhr</span>
+            <span className="font-medium">{selectedPoint.time}</span>
             <span className="text-lg font-bold">{selectedPoint.price.toFixed(2)} ct/kWh</span>
             {selectedPoint.isCharging && (
               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                Laden aktiv ({selectedPoint.chargingKwh?.toFixed(1)} kWh)
+                Charging active ({selectedPoint.chargingKwh?.toFixed(1)} kWh)
               </span>
             )}
           </div>
@@ -286,7 +285,7 @@ export function PriceChart({
             onClick={() => setSelectedPoint(null)}
             className="cursor-pointer rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-150 hover:bg-slate-100 hover:text-foreground dark:hover:bg-slate-800"
           >
-            Schliessen
+            Close
           </button>
         </div>
       )}
@@ -355,7 +354,7 @@ export function PriceChart({
               strokeDasharray="5 5"
               strokeWidth={2}
               label={{
-                value: 'O/ Fenster',
+                value: 'Avg Window',
                 position: 'right',
                 fill: '#64748b',
                 fontSize: 11
@@ -371,7 +370,7 @@ export function PriceChart({
               strokeDasharray="5 5"
               strokeWidth={2}
               label={{
-                value: 'Optimiert',
+                value: 'Optimized',
                 position: 'left',
                 fill: '#22c55e',
                 fontSize: 11
@@ -422,7 +421,7 @@ export function PriceChart({
               strokeOpacity={0.5}
               strokeWidth={1}
               label={{
-                value: 'Ladefenster',
+                value: 'Charge Window',
                 position: 'insideTop',
                 fill: '#16a34a',
                 fontSize: 11,
@@ -474,31 +473,31 @@ export function PriceChart({
         <div className="flex items-center gap-2">
           <div className="h-3 w-12 rounded bg-blue-500" />
           <span className="text-muted-foreground">
-            {timeRange === 'day' ? 'Stundlicher Preis' : 'Tagesdurchschnitt'}
+            {timeRange === 'day' ? 'Hourly Price' : 'Daily Average'}
           </span>
         </div>
         {timeRange === 'day' && chargingSchedule && chargingSchedule.length > 0 && (
           <div className="flex items-center gap-2">
             <div className="h-3 w-12 rounded bg-green-500/40" />
-            <span className="text-muted-foreground">Laden aktiv</span>
+            <span className="text-muted-foreground">Charging active</span>
           </div>
         )}
         {timeRange === 'day' && optimalZone && (
           <div className="flex items-center gap-2">
             <div className="h-3 w-12 rounded border border-green-500 bg-green-500/25" />
-            <span className="text-muted-foreground">Ladefenster</span>
+            <span className="text-muted-foreground">Charge Window</span>
           </div>
         )}
         {timeRange === 'day' && avgPrice && (
           <div className="flex items-center gap-2">
             <div className="h-0.5 w-12 border-t-2 border-dashed border-slate-500" />
-            <span className="text-muted-foreground">O/ Fenster</span>
+            <span className="text-muted-foreground">Avg Window</span>
           </div>
         )}
         {timeRange === 'day' && optimizedAvgPrice && (
           <div className="flex items-center gap-2">
             <div className="h-0.5 w-12 border-t-2 border-dashed border-green-500" />
-            <span className="text-muted-foreground">Optimiert</span>
+            <span className="text-muted-foreground">Optimized</span>
           </div>
         )}
       </div>
@@ -537,19 +536,19 @@ function CustomTooltip({ active, payload, avgPrice, timeRange }: {
       </p>
       {data.minPrice !== undefined && data.maxPrice !== undefined && (
         <p className="mt-1.5 text-xs text-muted-foreground">
-          Spanne: {data.minPrice.toFixed(1)} - {data.maxPrice.toFixed(1)} ct/kWh
+          Range: {data.minPrice.toFixed(1)} - {data.maxPrice.toFixed(1)} ct/kWh
         </p>
       )}
       {data.isCharging && (
         <p className="mt-1 text-xs font-medium text-green-600 dark:text-green-400">
-          Laden: {data.chargingKwh?.toFixed(1)} kWh
+          Charging: {data.chargingKwh?.toFixed(1)} kWh
         </p>
       )}
       {timeRange === 'day' && vsAverage !== null && Math.abs(vsAverage) > 5 && (
         <p className={`mt-1 text-xs font-medium ${
           vsAverage < 0 ? 'text-green-600' : 'text-red-600'
         }`}>
-          {vsAverage < 0 ? 'v' : '^'} {Math.abs(vsAverage).toFixed(0)}% vs Durchschnitt
+          {vsAverage < 0 ? 'v' : '^'} {Math.abs(vsAverage).toFixed(0)}% vs Average
         </p>
       )}
     </div>

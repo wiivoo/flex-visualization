@@ -1,11 +1,11 @@
 /**
  * Energy-Charts API Client (Fraunhofer ISE)
- * Quelle für deutsche Day-Ahead-Preise.
+ * Source for German day-ahead prices.
  *
- * API-Dokumentation: https://api.energy-charts.info/
- * Bidding Zone: DE-LU (Deutschland/Luxemburg)
+ * API documentation: https://api.energy-charts.info/
+ * Bidding Zone: DE-LU (Germany/Luxembourg)
  *
- * Preise kommen in EUR/MWh, Umrechnung: EUR/MWh ÷ 10 = ct/kWh
+ * Prices come in EUR/MWh, conversion: EUR/MWh / 10 = ct/kWh
  */
 
 import type { PricePoint } from '@/lib/config'
@@ -19,7 +19,7 @@ interface EnergyChartsResponse {
 }
 
 /**
- * Day-Ahead-Preise von Energy-Charts für einen einzelnen Tag laden.
+ * Load day-ahead prices from Energy-Charts for a single day.
  */
 export async function fetchEnergyChartsDayAhead(date: Date): Promise<PricePoint[]> {
   const dateStr = format(date, 'yyyy-MM-dd')
@@ -27,8 +27,8 @@ export async function fetchEnergyChartsDayAhead(date: Date): Promise<PricePoint[
 }
 
 /**
- * Day-Ahead-Preise von Energy-Charts für einen Zeitraum laden.
- * Energy-Charts unterstützt Zeiträume nativ über start/end Parameter.
+ * Load day-ahead prices from Energy-Charts for a date range.
+ * Energy-Charts supports date ranges natively via start/end parameters.
  */
 export async function fetchEnergyChartsRange(
   startDate: Date,
@@ -40,17 +40,17 @@ export async function fetchEnergyChartsRange(
   const url = `${ENERGY_CHARTS_BASE_URL}?bzn=DE-LU&start=${startStr}&end=${endStr}`
 
   const response = await fetch(url, {
-    next: { revalidate: 3600 } // 1 Stunde Cache
+    next: { revalidate: 3600 } // 1 hour cache
   })
 
   if (!response.ok) {
-    throw new Error(`Energy-Charts API-Anfrage fehlgeschlagen: ${response.status}`)
+    throw new Error(`Energy-Charts API request failed: ${response.status}`)
   }
 
   const data: EnergyChartsResponse = await response.json()
 
   if (!data.unix_seconds || !data.price || !Array.isArray(data.unix_seconds)) {
-    throw new Error('Energy-Charts API: Unerwartetes Antwortformat')
+    throw new Error('Energy-Charts API: Unexpected response format')
   }
 
   const prices: PricePoint[] = []

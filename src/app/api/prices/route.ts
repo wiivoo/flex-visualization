@@ -71,7 +71,7 @@ async function fetchFromAwattar(date: Date): Promise<PricePoint[] | null> {
     const prices = await fetchAwattarDayAhead(date)
     return prices.length > 0 ? prices : null
   } catch (error) {
-    console.error('aWATTar Abruffehler:', error)
+    console.error('aWATTar fetch error:', error)
     return null
   }
 }
@@ -84,7 +84,7 @@ async function fetchFromEnergyCharts(date: Date): Promise<PricePoint[] | null> {
     const prices = await fetchEnergyChartsDayAhead(date)
     return prices.length > 0 ? prices : null
   } catch (error) {
-    console.error('Energy-Charts Abruffehler:', error)
+    console.error('Energy-Charts fetch error:', error)
     return null
   }
 }
@@ -181,9 +181,9 @@ export async function GET(request: NextRequest) {
   let result: { prices: PricePoint[]; source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo' }
 
   // Step 2: Try API sources (Day-Ahead only)
-  // Fallback-Kette: aWATTar → SMARD → Energy-Charts → CSV → Demo
+  // Fallback chain: aWATTar → SMARD → Energy-Charts → CSV → Demo
   if (type === 'day-ahead') {
-    // Step 2a: aWATTar (schnellste Quelle, EPEX Spot)
+    // Step 2a: aWATTar (fastest source, EPEX Spot)
     const awattarPrices = await fetchFromAwattar(date)
     if (awattarPrices && awattarPrices.length > 0) {
       result = { prices: awattarPrices, source: 'awattar' }

@@ -1,4 +1,4 @@
-// Authentication utilities for FlexMon Dashboard
+// Authentication utilities for B2C Flex Monetization
 
 import { SignJWT, jwtVerify } from 'jose'
 
@@ -10,11 +10,11 @@ export async function createSession(password: string): Promise<string> {
   const expectedPassword = process.env.DASHBOARD_PASSWORD
 
   if (!expectedPassword) {
-    throw new Error('DASHBOARD_PASSWORD nicht konfiguriert')
+    throw new Error('DASHBOARD_PASSWORD not configured')
   }
 
   if (password !== expectedPassword) {
-    throw new Error('Ungültiges Passwort')
+    throw new Error('Invalid password')
   }
 
   const secret = typeof SECRET_KEY === 'string' ? new TextEncoder().encode(SECRET_KEY) : SECRET_KEY

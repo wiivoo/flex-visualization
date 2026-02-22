@@ -30,35 +30,35 @@ export default function LoginPage() {
       if (response.ok) {
         window.location.href = '/'
       } else {
-        setError(data.error || 'Passwort falsch')
+        setError(data.error || 'Wrong password')
       }
     } catch {
-      setError('Verbindungsfehler. Bitte erneut versuchen.')
+      setError('Connection error. Please try again.')
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 via-slate-50/80 to-white dark:from-slate-950 dark:to-slate-900 p-4">
-      <Card className="w-full max-w-md border-slate-200/60 shadow-[var(--shadow-lg)] dark:border-slate-800/60">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-gray-50 via-white to-white dark:from-neutral-950 dark:to-neutral-900 p-4">
+      <Card className="w-full max-w-md border-gray-200/60 shadow-[var(--shadow-lg)] dark:border-neutral-800/60">
         <CardHeader className="space-y-2 text-center">
-          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            <Lock className="h-6 w-6 text-primary" />
+          <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-[#EA1B0A]">
+            <Lock className="h-6 w-6 text-white" />
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-primary">FlexMon Dashboard</CardTitle>
+          <CardTitle className="text-2xl font-bold tracking-tight text-foreground">B2C Flex Monetization</CardTitle>
           <CardDescription className="text-sm">
-            Bitte Passwort eingeben, um auf das Dashboard zuzugreifen
+            Enter password to access the dashboard
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="password">Passwort</Label>
+              <Label htmlFor="password">Password</Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="Passwort eingeben"
+                placeholder="Enter password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={isLoading}
@@ -80,12 +80,12 @@ export default function LoginPage() {
               size="lg"
               disabled={isLoading || !password.trim()}
             >
-              {isLoading ? 'Wird geladen...' : 'Login'}
+              {isLoading ? 'Loading...' : 'Login'}
             </Button>
           </form>
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
-            Die Session gilt für 24 Stunden.
+            Session valid for 24 hours.
           </p>
         </CardContent>
       </Card>

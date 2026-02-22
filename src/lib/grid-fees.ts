@@ -1,21 +1,21 @@
 /**
- * §14a EnWG Modul 3 - Zeitvariable Netzentgelte
+ * §14a EnWG Module 3 - Time-variable grid fees
  *
- * Implementiert die zeitvariablen Netzentgelte nach §14a EnWG für
- * steuerbare Verbrauchseinrichtungen (z.B. E-Auto-Wallboxen).
+ * Implements time-variable grid fees per §14a EnWG for
+ * controllable consumption devices (e.g. EV wallboxes).
  *
- * Drei Preiszonen:
- * - HT (Hochlast): Nachmittag/Abend-Spitze - höchstes Entgelt
- * - ST (Standard): Morgen/Abend - mittleres Entgelt
- * - NT (Niederlast): Nacht - niedrigstes Entgelt
+ * Three price zones:
+ * - HT (peak load): afternoon/evening peak - highest fee
+ * - ST (standard): morning/evening - medium fee
+ * - NT (off-peak): night - lowest fee
  */
 
 export type Tarifzone = 'HT' | 'ST' | 'NT'
 
 export interface DsoTariff {
-  HT: number // ct/kWh Hochlast
-  ST: number // ct/kWh Standard
-  NT: number // ct/kWh Niederlast
+  HT: number // ct/kWh peak load
+  ST: number // ct/kWh standard
+  NT: number // ct/kWh off-peak
 }
 
 export interface QuarterValidity {
@@ -26,8 +26,8 @@ export interface QuarterValidity {
 }
 
 /**
- * DSO-Tarife für zeitvariable Netzentgelte (ct/kWh)
- * Quelle: Veröffentlichte Preisblätter der Netzbetreiber
+ * DSO tariffs for time-variable grid fees (ct/kWh)
+ * Source: Published price sheets of grid operators
  */
 export const DSO_TARIFFS: Record<string, DsoTariff> = {
   'Westnetz': { HT: 15.65, ST: 9.53, NT: 0.95 },
@@ -43,8 +43,8 @@ export const DSO_TARIFFS: Record<string, DsoTariff> = {
 } as const
 
 /**
- * Quartals-Gültigkeit pro DSO.
- * Manche Netzbetreiber wenden Modul 3 nur in bestimmten Quartalen an.
+ * Quarterly validity per DSO.
+ * Some grid operators only apply Module 3 in certain quarters.
  */
 export const DSO_QUARTER_VALID: Record<string, QuarterValidity> = {
   'Westnetz': { Q1: true, Q2: true, Q3: true, Q4: true },
@@ -60,13 +60,13 @@ export const DSO_QUARTER_VALID: Record<string, QuarterValidity> = {
 }
 
 /**
- * Stunden-Pattern für Tarifzonen (gleich für alle DSOs):
+ * Hourly pattern for tariff zones (same for all DSOs):
  *
- * 00-04: NT (Nacht)
- * 05-13: ST (Standard)
- * 14-20: HT (Hochlast/Peak)
- * 21-22: ST (Standard)
- * 23:    NT (Nacht)
+ * 00-04: NT (night)
+ * 05-13: ST (standard)
+ * 14-20: HT (peak load)
+ * 21-22: ST (standard)
+ * 23:    NT (night)
  */
 const HOURLY_ZONES: Tarifzone[] = [
   'NT', 'NT', 'NT', 'NT', 'NT',   // 00-04
@@ -79,23 +79,23 @@ const HOURLY_ZONES: Tarifzone[] = [
 ]
 
 /**
- * Tarifzone für eine bestimmte Stunde ermitteln
+ * Determine the tariff zone for a given hour
  */
 export function getTarifzone(hour: number): Tarifzone {
   if (hour < 0 || hour > 23) {
-    throw new Error(`Ungültige Stunde: ${hour}. Muss zwischen 0 und 23 liegen.`)
+    throw new Error(`Invalid hour: ${hour}. Must be between 0 and 23.`)
   }
   return HOURLY_ZONES[hour]
 }
 
 /**
- * Netzentgelt für eine bestimmte Stunde und einen DSO ermitteln (ct/kWh).
- * Wenn der DSO nicht bekannt ist, wird 0 zurückgegeben.
+ * Determine the grid fee for a given hour and DSO (ct/kWh).
+ * Returns 0 if the DSO is unknown.
  */
 export function getGridFee(hour: number, dso: string): number {
   const tariff = DSO_TARIFFS[dso]
   if (!tariff) {
-    console.warn(`Unbekannter DSO: ${dso}. Netzentgelt = 0`)
+    console.warn(`Unknown DSO: ${dso}. Grid fee = 0`)
     return 0
   }
 
@@ -104,8 +104,8 @@ export function getGridFee(hour: number, dso: string): number {
 }
 
 /**
- * Prüfe ob Modul 3 für einen DSO in einem bestimmten Monat aktiv ist.
- * Monat: 1-12 (Januar = 1)
+ * Check if Module 3 is active for a DSO in a given month.
+ * Month: 1-12 (January = 1)
  */
 export function isModul3Active(dso: string, month: number): boolean {
   const validity = DSO_QUARTER_VALID[dso]
@@ -113,7 +113,7 @@ export function isModul3Active(dso: string, month: number): boolean {
     return false
   }
 
-  // Monat → Quartal
+  // Month → Quarter
   if (month >= 1 && month <= 3) return validity.Q1
   if (month >= 4 && month <= 6) return validity.Q2
   if (month >= 7 && month <= 9) return validity.Q3
@@ -123,23 +123,23 @@ export function isModul3Active(dso: string, month: number): boolean {
 }
 
 /**
- * 24-Stunden Netzentgelt-Array für einen DSO (ct/kWh).
- * Index 0 = Stunde 0 (00:00), Index 23 = Stunde 23 (23:00).
+ * 24-hour grid fee array for a DSO (ct/kWh).
+ * Index 0 = hour 0 (00:00), Index 23 = hour 23 (23:00).
  */
 export function getDailyGridFees(dso: string): number[] {
   return Array.from({ length: 24 }, (_, hour) => getGridFee(hour, dso))
 }
 
 /**
- * Gesamtkosten berechnen inklusive Netzentgelt, Steuern und MwSt.
+ * Calculate total cost including grid fee, taxes and VAT.
  *
- * Formel: (Börsenpreis + Netzentgelt + Steuern/Abgaben) * (1 + MwSt/100)
+ * Formula: (exchange price + grid fee + taxes/levies) * (1 + VAT/100)
  *
- * @param priceCtKwh - Börsenstrompreis in ct/kWh
- * @param gridFeeCtKwh - Netzentgelt in ct/kWh
- * @param taxesCtKwh - Steuern, Abgaben, Umlagen in ct/kWh
- * @param vatPercent - Mehrwertsteuersatz in % (z.B. 19)
- * @returns Gesamtkosten in ct/kWh
+ * @param priceCtKwh - Exchange electricity price in ct/kWh
+ * @param gridFeeCtKwh - Grid fee in ct/kWh
+ * @param taxesCtKwh - Taxes, levies, surcharges in ct/kWh
+ * @param vatPercent - VAT rate in % (e.g. 19)
+ * @returns Total cost in ct/kWh
  */
 export function calculateTotalCost(
   priceCtKwh: number,
@@ -153,15 +153,15 @@ export function calculateTotalCost(
 }
 
 /**
- * Liste aller verfügbaren DSOs
+ * List of all available DSOs
  */
 export function getAvailableDSOs(): string[] {
   return Object.keys(DSO_TARIFFS)
 }
 
 /**
- * Durchschnittliches Netzentgelt für einen DSO über 24h (ct/kWh)
- * Nützlich für Vergleichsrechnungen ohne Modul 3
+ * Average grid fee for a DSO over 24h (ct/kWh)
+ * Useful for comparison calculations without Module 3
  */
 export function getAverageGridFee(dso: string): number {
   const fees = getDailyGridFees(dso)
@@ -170,8 +170,8 @@ export function getAverageGridFee(dso: string): number {
 }
 
 /**
- * Reduziertes Netzentgelt nach §14a (pauschaler Abzug, falls nicht Modul 3)
- * Standard-Reduktion: ca. 60% des regulären Netzentgelts
+ * Reduced grid fee per §14a (flat deduction, if not Module 3)
+ * Standard reduction: approx. 60% of regular grid fee
  */
 export function getReducedGridFee(dso: string): number {
   return getAverageGridFee(dso)

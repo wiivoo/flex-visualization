@@ -1,7 +1,7 @@
 'use client'
 
 import { PiggyBank, TrendingUp, Gift, Clock } from 'lucide-react'
-import { KPICard, MoneyKPICard, KPICardSkeleton } from './KPICard'
+import { KPICard, KPICardSkeleton } from './KPICard'
 import type { OptimizationResult } from '@/lib/config'
 
 interface KPIGridProps {
@@ -10,7 +10,7 @@ interface KPIGridProps {
 }
 
 /**
- * Format a EUR amount the German way: "€ 18,40"
+ * Format a EUR amount: "€ 18.40"
  * Uses explicit € prefix (no Intl) for maximum control over presentation.
  */
 function formatEUR(amount: number): string {
@@ -24,8 +24,8 @@ function formatEUR(amount: number): string {
 }
 
 /**
- * Derive "Beste Ladezeit" from the charging schedule.
- * Returns the earliest start and latest end in "HH:MM - HH:MM Uhr" format.
+ * Derive best charging time from the charging schedule.
+ * Returns the earliest start and latest end in "HH:MM - HH:MM" format.
  */
 function getBestChargingTime(opt: OptimizationResult): string {
   const schedule = opt.charging_schedule
@@ -40,13 +40,13 @@ function getBestChargingTime(opt: OptimizationResult): string {
   const fmtTime = (iso: string) => {
     try {
       const d = new Date(iso)
-      return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
     } catch {
       return iso.slice(11, 16)
     }
   }
 
-  return `${fmtTime(earliest)} - ${fmtTime(latest)} Uhr`
+  return `${fmtTime(earliest)} - ${fmtTime(latest)}`
 }
 
 const SKELETON_THEMES = ['green', 'blue', 'purple', 'amber'] as const
@@ -57,7 +57,7 @@ export function KPIGrid({ optimization, isLoading }: KPIGridProps) {
     return (
       <div
         className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-        aria-label="KPIs werden geladen"
+        aria-label="Loading KPIs"
         role="status"
       >
         {SKELETON_THEMES.map((theme) => (
@@ -72,34 +72,34 @@ export function KPIGrid({ optimization, isLoading }: KPIGridProps) {
     return (
       <div
         className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-        aria-label="KPI-Kennzahlen"
+        aria-label="KPI Metrics"
       >
         <KPICard
-          title="Ersparnis pro Ladung"
+          title="Savings per Charge"
           value="-"
           icon={PiggyBank}
-          description="Keine Daten"
+          description="No data"
           colorTheme="green"
         />
         <KPICard
-          title="Unsere Marge pro Monat"
+          title="Our Margin per Month"
           value="-"
           icon={TrendingUp}
-          description="Keine Daten"
+          description="No data"
           colorTheme="blue"
         />
         <KPICard
-          title="Kunden-Vorteil"
+          title="Customer Benefit"
           value="-"
           icon={Gift}
-          description="Keine Daten"
+          description="No data"
           colorTheme="purple"
         />
         <KPICard
-          title="Beste Ladezeit"
+          title="Best Charging Time"
           value="-"
           icon={Clock}
-          description="Keine Daten"
+          description="No data"
           colorTheme="amber"
         />
       </div>
@@ -112,46 +112,46 @@ export function KPIGrid({ optimization, isLoading }: KPIGridProps) {
   return (
     <div
       className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-      aria-label="KPI-Kennzahlen"
+      aria-label="KPI Metrics"
     >
-      {/* KPI 1: Ersparnis pro Ladung */}
+      {/* KPI 1: Savings per Charge */}
       <KPICard
-        title="Ersparnis pro Ladung"
+        title="Savings per Charge"
         value={formatEUR(optimization.savings_eur)}
         icon={PiggyBank}
         trend="up"
-        description="Durch flexible Ladesteuerung"
+        description="Through flexible charge control"
         colorTheme="green"
       />
 
-      {/* KPI 2: Unsere Marge pro Monat */}
+      {/* KPI 2: Our Margin per Month */}
       <KPICard
-        title="Unsere Marge pro Monat"
+        title="Our Margin per Month"
         value={formatEUR(monthlyMargin)}
-        unit="/ Auto"
+        unit="/ car"
         icon={TrendingUp}
         trend="up"
-        description={`${formatEUR(optimization.our_margin_eur)} pro Ladung x 30`}
+        description={`${formatEUR(optimization.our_margin_eur)} per charge x 30`}
         colorTheme="blue"
       />
 
-      {/* KPI 3: Kunden-Vorteil */}
+      {/* KPI 3: Customer Benefit */}
       <KPICard
-        title="Kunden-Vorteil"
+        title="Customer Benefit"
         value={formatEUR(optimization.customer_benefit_eur)}
-        unit="/ Ladung"
+        unit="/ charge"
         icon={Gift}
         trend="up"
-        description="Ersparnis für den Endkunden"
+        description="Savings for the end customer"
         colorTheme="purple"
       />
 
-      {/* KPI 4: Beste Ladezeit */}
+      {/* KPI 4: Best Charging Time */}
       <KPICard
-        title="Beste Ladezeit"
+        title="Best Charging Time"
         value={getBestChargingTime(optimization)}
         icon={Clock}
-        description="Günstigste Stunden laut Marktpreis"
+        description="Cheapest hours based on market price"
         colorTheme="amber"
       />
     </div>

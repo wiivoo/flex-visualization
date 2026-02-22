@@ -1,9 +1,9 @@
 /**
- * Optimierungs-Engine für Ladeplanung
+ * Optimization engine for charging schedule planning
  *
- * Extrahierte Kernlogik aus der optimize API-Route.
- * Berechnet optimale Ladezeitfenster basierend auf Börsenpreisen
- * und vergleicht mit einer "dummen" Baseline (sofortiges Laden).
+ * Extracted core logic from the optimize API route.
+ * Calculates optimal charging windows based on exchange prices
+ * and compares with a "naive" baseline (immediate charging).
  */
 
 import type { PricePoint, ChargingBlock } from '@/lib/config'
@@ -37,7 +37,7 @@ export interface OptimizeResult {
   target_level_reached: boolean
   baseline_schedule: ChargingBlock[]
   baseline_avg_price: number
-  // Modul 3 Felder (optional)
+  // Module 3 fields (optional)
   dso?: string
   mod3_active?: boolean
   cost_with_mod3_eur?: number
@@ -62,7 +62,7 @@ function isTimeInWindow(price: PricePointExt, windowStart: string, windowEnd: st
   const { hour: startHour } = parseTime(windowStart)
   const { hour: endHour } = parseTime(windowEnd)
 
-  // Übernacht-Fenster (z.B. 22:00 - 06:00)
+  // Overnight window (e.g. 22:00 - 06:00)
   if (startHour > endHour) {
     return price.hour >= startHour || price.hour < endHour
   }
@@ -75,7 +75,7 @@ function formatTime(hour: number, minute: number): string {
 }
 
 /**
- * Aufeinanderfolgende Intervalle zu Ladeblöcken zusammenfassen
+ * Merge consecutive intervals into charging blocks
  */
 function buildChargingBlocks(
   intervals: PricePointExt[],
@@ -85,7 +85,7 @@ function buildChargingBlocks(
   const blocks: ChargingBlock[] = []
   let currentBlock: ChargingBlock | null = null
 
-  // Chronologisch sortieren, Übernacht-Fenster berücksichtigen
+  // Sort chronologically, accounting for overnight windows
   const sorted = [...intervals].sort((a, b) => {
     const aNorm = a.hour < windowStartHour ? a.hour + 24 : a.hour
     const bNorm = b.hour < windowStartHour ? b.hour + 24 : b.hour
@@ -106,7 +106,7 @@ function buildChargingBlocks(
         kwh: kwhPerInterval
       }
     } else {
-      // Prüfen ob aufeinanderfolgend
+      // Check if consecutive
       const prevEnd = new Date()
       const [hours, minutes] = currentBlock.end.split(':').map(Number)
       prevEnd.setHours(hours, minutes, 0, 0)
@@ -115,15 +115,15 @@ function buildChargingBlocks(
       currentStart.setHours(interval.hour, interval.minute, 0, 0)
 
       if (Math.abs(currentStart.getTime() - prevEnd.getTime()) <= 15 * 60 * 1000) {
-        // Block erweitern
+        // Extend block
         currentBlock.end = endTimeStr
         currentBlock.kwh += kwhPerInterval
-        // Gewichteter Durchschnittspreis
+        // Weighted average price
         currentBlock.price_ct_kwh =
           (currentBlock.price_ct_kwh * (currentBlock.kwh - kwhPerInterval) +
            interval.price_ct_kwh * kwhPerInterval) / currentBlock.kwh
       } else {
-        // Neuer Block
+        // New block
         blocks.push(currentBlock)
         currentBlock = {
           start: time,
@@ -134,7 +134,7 @@ function buildChargingBlocks(
       }
     }
 
-    // Letzten Block hinzufügen
+    // Add last block
     if (index === sorted.length - 1 && currentBlock) {
       blocks.push(currentBlock)
     }
@@ -144,10 +144,10 @@ function buildChargingBlocks(
 }
 
 /**
- * Kernfunktion: Optimierung ausführen
+ * Core function: Run optimization
  *
- * Vergleicht optimiertes Laden (günstigste Intervalle) mit
- * Baseline ("dummes" sofortiges Laden ab window_start).
+ * Compares optimized charging (cheapest intervals) with
+ * baseline ("naive" immediate charging from window_start).
  */
 export function runOptimization(input: OptimizeInput): OptimizeResult {
   const {
@@ -164,15 +164,15 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
     dso
   } = input
 
-  // DSO validieren
+  // Validate DSO
   const useMod3 = dso ? getAvailableDSOs().includes(dso) : false
 
-  // Modul 3 Quartals-Check
+  // Module 3 quarterly check
   const firstPriceDate = prices.length > 0 ? new Date(prices[0].timestamp) : new Date()
   const priceMonth = firstPriceDate.getMonth() + 1
   const mod3Active = useMod3 && dso ? isModul3Active(dso, priceMonth) : false
 
-  // 1. Benötigte Energie berechnen
+  // 1. Calculate required energy
   const energy_needed_kwh = battery_kwh * (target_level_percent - start_level_percent) / 100
 
   if (energy_needed_kwh <= 0) {
@@ -193,11 +193,11 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
     }
   }
 
-  // 2. Ladedauer berechnen
+  // 2. Calculate charging duration
   const intervals_needed = Math.ceil((energy_needed_kwh / charge_power_kw) * 4)
   const kwh_per_interval = charge_power_kw / 4
 
-  // 3. Preise nach Zeitfenster filtern
+  // 3. Filter prices by time window
   const pricesWithTime: PricePointExt[] = prices.map(p => {
     const date = new Date(p.timestamp)
     return { ...p, hour: date.getHours(), minute: date.getMinutes() }
@@ -223,7 +223,7 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
 
   const { hour: windowStartHour } = parseTime(window_start)
 
-  // 4. Optimiert: Nach Gesamtkosten sortieren (günstigste zuerst)
+  // 4. Optimized: Sort by total cost (cheapest first)
   const sortedPrices = [...pricesWithTime].sort((a, b) => {
     if (mod3Active && dso) {
       const totalA = a.price_ct_kwh + getGridFee(a.hour, dso)
@@ -234,7 +234,7 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
   })
   const selectedIntervals = sortedPrices.slice(0, Math.min(intervals_needed, sortedPrices.length))
 
-  // 5. Baseline: Chronologisch erste N Intervalle ab window_start ("sofort laden")
+  // 5. Baseline: Chronologically first N intervals from window_start ("charge immediately")
   const chronologicalPrices = [...pricesWithTime].sort((a, b) => {
     const aNorm = a.hour < windowStartHour ? a.hour + 24 : a.hour
     const bNorm = b.hour < windowStartHour ? b.hour + 24 : b.hour
@@ -242,14 +242,14 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
   })
   const baselineIntervals = chronologicalPrices.slice(0, Math.min(intervals_needed, chronologicalPrices.length))
 
-  // 6. Ladeblöcke erstellen
+  // 6. Build charging blocks
   const actual_energy_kwh = (selectedIntervals.length / 4) * charge_power_kw
   const canFullyCharge = actual_energy_kwh >= energy_needed_kwh
 
   const charging_schedule = buildChargingBlocks(selectedIntervals, kwh_per_interval, windowStartHour)
   const baseline_schedule = buildChargingBlocks(baselineIntervals, kwh_per_interval, windowStartHour)
 
-  // 7. Wirtschaftlichkeit berechnen
+  // 7. Calculate economics
   const avg_window_price = pricesWithTime.reduce((sum, p) => sum + p.price_ct_kwh, 0) / pricesWithTime.length
   const avg_optimal_price = selectedIntervals.reduce((sum, p) => sum + p.price_ct_kwh, 0) / selectedIntervals.length
   const baseline_avg_price = baselineIntervals.reduce((sum, p) => sum + p.price_ct_kwh, 0) / baselineIntervals.length
@@ -264,7 +264,7 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
   const our_margin_eur = Math.max(0, savings_eur - customer_benefit_eur)
   const win_win_eur = customer_benefit_eur + our_margin_eur
 
-  // 8. Ergebnis zusammenbauen
+  // 8. Assemble result
   const result: OptimizeResult = {
     charging_schedule,
     baseline_schedule,
@@ -281,7 +281,7 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
     target_level_reached: canFullyCharge
   }
 
-  // 9. Modul 3 Zusatzberechnung
+  // 9. Module 3 supplementary calculation
   if (mod3Active && dso) {
     const avgGridFeeWindow = pricesWithTime.reduce(
       (sum, p) => sum + getGridFee(p.hour, dso), 0
@@ -308,7 +308,7 @@ export function runOptimization(input: OptimizeInput): OptimizeResult {
   } else if (dso) {
     result.dso = dso
     result.mod3_active = false
-    result.mod3_info = `Modul 3 ist für ${dso} im aktuellen Quartal nicht aktiv`
+    result.mod3_info = `Module 3 is not active for ${dso} in the current quarter`
   }
 
   return result

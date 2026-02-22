@@ -14,7 +14,7 @@ interface VehicleSelectorProps {
 export function VehicleSelector({ value, onChange }: VehicleSelectorProps) {
   return (
     <div className="space-y-3">
-      <Label className="text-base font-medium">Fahrzeugtyp</Label>
+      <Label className="text-base font-medium">Vehicle Type</Label>
       <RadioGroup value={value} onValueChange={(v) => onChange(v as ConfigState['vehicle'])}>
         <div className="space-y-2">
           {Object.entries(VEHICLE_PROFILES).map(([id, profile]) => {
@@ -45,7 +45,7 @@ export function VehicleSelector({ value, onChange }: VehicleSelectorProps) {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-muted-foreground">z.B.</p>
+                    <p className="text-xs text-muted-foreground">e.g.</p>
                     <p className="text-sm">{profile.examples.slice(0, 2).join(', ')}</p>
                   </div>
                 </CardContent>

@@ -15,12 +15,12 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Ladeplan</CardTitle>
+          <CardTitle>Charging Plan</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-2">
             <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-            <span className="text-sm text-muted-foreground">Berechne optimalen Ladeplan...</span>
+            <span className="text-sm text-muted-foreground">Calculating optimal charging plan...</span>
           </div>
         </CardContent>
       </Card>
@@ -31,11 +31,11 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Ladeplan</CardTitle>
+          <CardTitle>Charging Plan</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Keine optimalen Ladezeiten gefunden. Die Preise im Zeitfenster sind möglicherweise zu hoch.
+            No optimal charging times found. Prices in the time window may be too high.
           </p>
         </CardContent>
       </Card>
@@ -56,25 +56,25 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Optimaler Ladeplan</CardTitle>
+        <CardTitle>Optimal Charging Plan</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Before/After Comparison Card */}
         {(optimization.avg_price_without_flex && optimization.avg_price_with_flex) && (
           <div className="rounded-lg border bg-gradient-to-br from-slate-50 to-blue-50 p-4 dark:from-slate-950/20 dark:to-blue-950/20">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Lastverschiebungs-Vergleich
+              Load Shifting Comparison
             </p>
 
             {/* Before - Average of entire time window */}
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 dark:bg-slate-700">
-                  <span className="text-xs font-bold text-slate-600 dark:text-slate-400">∅</span>
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-400">&#8960;</span>
                 </div>
                 <div>
-                  <span className="text-sm">Fenster-Durchschnitt</span>
-                  <p className="text-xs text-muted-foreground">gesamtes Zeitfenster</p>
+                  <span className="text-sm">Window Average</span>
+                  <p className="text-xs text-muted-foreground">entire time window</p>
                 </div>
               </div>
               <div className="text-right">
@@ -97,8 +97,8 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
                   <TrendingDown className="h-3 w-3 text-green-600 dark:text-green-400" />
                 </div>
                 <div>
-                  <span className="text-sm">Optimiert</span>
-                  <p className="text-xs text-muted-foreground">nur günstigste Stunden</p>
+                  <span className="text-sm">Optimized</span>
+                  <p className="text-xs text-muted-foreground">cheapest hours only</p>
                 </div>
               </div>
               <div className="text-right">
@@ -114,7 +114,7 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
               <div className="mt-3 flex items-center justify-center rounded-full bg-green-500 px-3 py-1.5">
                 <TrendingDown className="mr-1 h-3 w-3 text-white" />
                 <span className="text-sm font-semibold text-white">
-                  {savingsPercent.toFixed(0)}% günstiger
+                  {savingsPercent.toFixed(0)}% cheaper
                 </span>
               </div>
             )}
@@ -124,7 +124,7 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
         {/* Charging blocks */}
         <div>
           <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Ladezeiten
+            Charging Times
           </p>
           <div className="space-y-2">
             {optimization.charging_schedule.map((block, index) => (
@@ -139,7 +139,7 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
                       {block.start} - {block.end}
                     </p>
                     <p className="text-sm text-muted-foreground">
-                      {block.kwh.toFixed(1)} kWh Ladung
+                      {block.kwh.toFixed(1)} kWh charge
                     </p>
                   </div>
                 </div>
@@ -156,13 +156,13 @@ export function OptimizationSummary({ optimization, isLoading }: OptimizationSum
           <div className="flex items-center gap-2">
             <Battery className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm">
-              Gesamt: <span className="font-semibold">{totalKwh.toFixed(1)} kWh</span>
+              Total: <span className="font-semibold">{totalKwh.toFixed(1)} kWh</span>
             </span>
           </div>
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm">
-              Durchschnitt: <span className="font-semibold">{avgPrice.toFixed(2)} ct/kWh</span>
+              Average: <span className="font-semibold">{avgPrice.toFixed(2)} ct/kWh</span>
             </span>
           </div>
         </div>

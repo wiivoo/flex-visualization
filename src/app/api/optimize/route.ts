@@ -22,7 +22,7 @@ const optimizeSchema = z.object({
     margin_ct_kwh: z.number().min(0),
     customer_discount_ct_kwh: z.number().min(0)
   }),
-  // Optional: DSO für zeitvariable Netzentgelte nach §14a EnWG Modul 3
+  // Optional: DSO for time-variable grid fees per §14a EnWG Module 3
   dso: z.string().optional()
 })
 
@@ -33,10 +33,10 @@ export async function POST(request: NextRequest) {
 
     const { prices, vehicle, config, dso } = validated
 
-    // DSO validieren, falls angegeben
+    // Validate DSO if provided
     if (dso && !getAvailableDSOs().includes(dso)) {
       return NextResponse.json(
-        { error: `Unbekannter Netzbetreiber: ${dso}. Verfügbar: ${getAvailableDSOs().join(', ')}` },
+        { error: `Unknown grid operator: ${dso}. Available: ${getAvailableDSOs().join(', ')}` },
         { status: 400 }
       )
     }
@@ -59,14 +59,14 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Ungültige Eingabe', details: error.issues },
+        { error: 'Invalid input', details: error.issues },
         { status: 400 }
       )
     }
 
-    console.error('Optimierungsfehler:', error)
+    console.error('Optimization error:', error)
     return NextResponse.json(
-      { error: 'Interner Serverfehler' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

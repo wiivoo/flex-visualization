@@ -35,16 +35,16 @@ export function ConfigPanel({ onConfigChange, trigger }: ConfigPanelProps) {
     const errs: string[] = []
 
     if (cfg.base_price_ct_kwh < 10 || cfg.base_price_ct_kwh > 100) {
-      errs.push('Basispreis muss 10-100 ct/kWh sein')
+      errs.push('Base price must be 10-100 ct/kWh')
     }
     if (cfg.margin_ct_kwh < 0 || cfg.margin_ct_kwh > 20) {
-      errs.push('Marge muss 0-20 ct/kWh sein')
+      errs.push('Margin must be 0-20 ct/kWh')
     }
     if (cfg.customer_discount_ct_kwh < 0 || cfg.customer_discount_ct_kwh > 50) {
-      errs.push('Rabatt muss 0-50 ct/kWh sein')
+      errs.push('Discount must be 0-50 ct/kWh')
     }
     if (cfg.margin_ct_kwh > cfg.base_price_ct_kwh) {
-      errs.push('Marge darf nicht höher als Basispreis sein')
+      errs.push('Margin must not exceed base price')
     }
 
     return errs
@@ -75,15 +75,15 @@ export function ConfigPanel({ onConfigChange, trigger }: ConfigPanelProps) {
         {trigger || (
           <Button variant="outline" size="icon">
             <Settings className="h-4 w-4" />
-            <span className="sr-only">Einstellungen</span>
+            <span className="sr-only">Settings</span>
           </Button>
         )}
       </SheetTrigger>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-md">
         <SheetHeader>
-          <SheetTitle>Konfiguration</SheetTitle>
+          <SheetTitle>Configuration</SheetTitle>
           <SheetDescription>
-            Passe die Fahrzeug- und Preisparameter an
+            Adjust vehicle and pricing parameters
           </SheetDescription>
         </SheetHeader>
 
@@ -102,10 +102,10 @@ export function ConfigPanel({ onConfigChange, trigger }: ConfigPanelProps) {
 
           <div className="flex gap-2">
             <Button variant="outline" onClick={handleReset} className="flex-1">
-              Zurücksetzen
+              Reset
             </Button>
             <Button onClick={handleApply} className="flex-1">
-              Anwenden
+              Apply
             </Button>
           </div>
         </div>

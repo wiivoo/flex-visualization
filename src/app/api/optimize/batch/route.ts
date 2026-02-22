@@ -1,14 +1,14 @@
 /**
- * Batch-Optimierung API Route
- * Optimierung über einen Zeitraum (mehrere Tage).
+ * Batch optimization API route
+ * Optimization over a date range (multiple days).
  *
  * POST /api/optimize/batch
  * Body: { startDate, endDate, vehicle, config, dso? }
  *
- * 1. Preise für den Zeitraum laden (über /api/prices/batch Infrastruktur)
- * 2. Nach Tag gruppieren
- * 3. Pro Tag Optimierung durchführen
- * 4. Ergebnisse aggregieren
+ * 1. Load prices for the date range (via /api/prices/batch infrastructure)
+ * 2. Group by day
+ * 3. Run optimization per day
+ * 4. Aggregate results
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -24,22 +24,22 @@ import { runOptimization } from '@/lib/optimizer'
 import type { PricePoint } from '@/lib/config'
 import { getAvailableDSOs } from '@/lib/grid-fees'
 
-// Zod-Schema für Batch-Optimierung
+// Zod schema for batch optimization
 const batchOptimizeSchema = z.object({
-  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate muss im Format YYYY-MM-DD sein'),
-  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate muss im Format YYYY-MM-DD sein'),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format'),
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format'),
   vehicle: z.object({
-    battery_kwh: z.number().positive('Batteriekapazität muss positiv sein'),
-    charge_power_kw: z.number().positive('Ladeleistung muss positiv sein'),
-    start_level_percent: z.number().min(0).max(100, 'Startlevel muss zwischen 0 und 100 liegen')
+    battery_kwh: z.number().positive('Battery capacity must be positive'),
+    charge_power_kw: z.number().positive('Charge power must be positive'),
+    start_level_percent: z.number().min(0).max(100, 'Start level must be between 0 and 100')
   }),
   config: z.object({
-    window_start: z.string().regex(/^\d{2}:\d{2}$/, 'window_start muss im Format HH:MM sein'),
-    window_end: z.string().regex(/^\d{2}:\d{2}$/, 'window_end muss im Format HH:MM sein'),
-    target_level_percent: z.number().min(0).max(100, 'Ziellevel muss zwischen 0 und 100 liegen'),
-    base_price_ct_kwh: z.number().positive('Basispreis muss positiv sein'),
-    margin_ct_kwh: z.number().min(0, 'Marge darf nicht negativ sein'),
-    customer_discount_ct_kwh: z.number().min(0, 'Kundenrabatt darf nicht negativ sein')
+    window_start: z.string().regex(/^\d{2}:\d{2}$/, 'window_start must be in HH:MM format'),
+    window_end: z.string().regex(/^\d{2}:\d{2}$/, 'window_end must be in HH:MM format'),
+    target_level_percent: z.number().min(0).max(100, 'Target level must be between 0 and 100'),
+    base_price_ct_kwh: z.number().positive('Base price must be positive'),
+    margin_ct_kwh: z.number().min(0, 'Margin must not be negative'),
+    customer_discount_ct_kwh: z.number().min(0, 'Customer discount must not be negative')
   }),
   dso: z.string().optional()
 })
@@ -55,14 +55,14 @@ interface DailyResult {
 }
 
 /**
- * Preise für einen Zeitraum laden (interne Funktion).
- * Nutzt dieselbe Fallback-Kette wie /api/prices/batch.
+ * Load prices for a date range (internal function).
+ * Uses the same fallback chain as /api/prices/batch.
  */
 async function fetchPricesForRange(
   startDate: string,
   endDate: string
 ): Promise<PricePoint[]> {
-  // Intern den Batch-Endpoint aufrufen via absolutem URL
+  // Call the batch endpoint internally via absolute URL
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
     ? `https://${process.env.VERCEL_URL}`
     : 'http://localhost:3000'
@@ -74,7 +74,7 @@ async function fetchPricesForRange(
   })
 
   if (!response.ok) {
-    throw new Error(`Preisabruf fehlgeschlagen: ${response.status}`)
+    throw new Error(`Price fetch failed: ${response.status}`)
   }
 
   const data = await response.json()
@@ -82,7 +82,7 @@ async function fetchPricesForRange(
 }
 
 /**
- * Ladeblock-Zeitfenster als lesbaren String formatieren
+ * Format charging block time windows as a readable string
  */
 function formatScheduleHours(schedule: Array<{ start: string; end: string }>): string {
   if (schedule.length === 0) return '-'
@@ -97,10 +97,10 @@ export async function POST(request: NextRequest) {
 
     const { startDate: startDateStr, endDate: endDateStr, vehicle, config, dso } = validated
 
-    // DSO validieren
+    // Validate DSO
     if (dso && !getAvailableDSOs().includes(dso)) {
       return NextResponse.json(
-        { error: `Unbekannter Netzbetreiber: ${dso}. Verfügbar: ${getAvailableDSOs().join(', ')}` },
+        { error: `Unknown grid operator: ${dso}. Available: ${getAvailableDSOs().join(', ')}` },
         { status: 400 }
       )
     }
@@ -108,17 +108,17 @@ export async function POST(request: NextRequest) {
     const startDate = parseISO(startDateStr)
     const endDate = parseISO(endDateStr)
 
-    // Datumsvalidierung
+    // Date validation
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return NextResponse.json(
-        { error: 'Ungültiges Datumsformat. Verwende YYYY-MM-DD' },
+        { error: 'Invalid date format. Use YYYY-MM-DD' },
         { status: 400 }
       )
     }
 
     if (isAfter(startDate, endDate)) {
       return NextResponse.json(
-        { error: 'startDate muss vor endDate liegen' },
+        { error: 'startDate must be before endDate' },
         { status: 400 }
       )
     }
@@ -126,22 +126,22 @@ export async function POST(request: NextRequest) {
     const dayCount = differenceInDays(endDate, startDate) + 1
     if (dayCount > 365) {
       return NextResponse.json(
-        { error: 'Maximaler Zeitraum: 365 Tage' },
+        { error: 'Maximum date range: 365 days' },
         { status: 400 }
       )
     }
 
-    // 1. Preise für gesamten Zeitraum laden
+    // 1. Load prices for entire date range
     const allPrices = await fetchPricesForRange(startDateStr, endDateStr)
 
     if (allPrices.length === 0) {
       return NextResponse.json(
-        { error: 'Keine Preisdaten für den angegebenen Zeitraum verfügbar' },
+        { error: 'No price data available for the specified date range' },
         { status: 404 }
       )
     }
 
-    // 2. Preise nach Tag gruppieren
+    // 2. Group prices by day
     const pricesByDay = new Map<string, PricePoint[]>()
     for (const price of allPrices) {
       const dateStr = format(new Date(price.timestamp), 'yyyy-MM-dd')
@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
       pricesByDay.get(dateStr)!.push(price)
     }
 
-    // 3. Pro Tag optimieren
+    // 3. Optimize per day
     const days = eachDayOfInterval({ start: startDate, end: endDate })
     const daily_results: DailyResult[] = []
 
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
         dso
       })
 
-      // Baseline-Kosten: Durchschnittspreis der Baseline * Energie
+      // Baseline cost: average baseline price * energy
       const baselineCost = (result.baseline_avg_price * result.energy_charged_kwh) / 100
 
       daily_results.push({
@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    // 4. Aggregate berechnen
+    // 4. Calculate aggregates
     const totals = {
       total_cost_baseline_eur: Math.round(
         daily_results.reduce((sum, d) => sum + d.cost_baseline_eur, 0) * 100
@@ -217,14 +217,14 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof z.ZodError) {
       return NextResponse.json(
-        { error: 'Ungültige Eingabe', details: error.issues },
+        { error: 'Invalid input', details: error.issues },
         { status: 400 }
       )
     }
 
-    console.error('Batch-Optimierungsfehler:', error)
+    console.error('Batch optimization error:', error)
     return NextResponse.json(
-      { error: 'Interner Serverfehler' },
+      { error: 'Internal server error' },
       { status: 500 }
     )
   }

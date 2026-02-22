@@ -3,7 +3,6 @@
 import { ChevronLeft, ChevronRight, Calendar, BarChart3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { format, addDays, subDays, addMonths, subMonths, startOfMonth, endOfMonth, startOfQuarter, endOfQuarter, startOfYear, endOfYear } from 'date-fns'
-import { de } from 'date-fns/locale'
 
 export type TimeRange = 'day' | 'month' | 'quarter' | 'year'
 
@@ -15,10 +14,10 @@ interface TimeRangeSelectorProps {
 }
 
 const RANGE_LABELS: Record<TimeRange, string> = {
-  day: 'Tag',
-  month: 'Monat',
-  quarter: 'Quartal',
-  year: 'Jahr'
+  day: 'Day',
+  month: 'Month',
+  quarter: 'Quarter',
+  year: 'Year'
 }
 
 export function TimeRangeSelector({
@@ -104,7 +103,7 @@ export function TimeRangeSelector({
       case 'day':
         return format(selectedDate, 'dd.MM.yyyy')
       case 'month':
-        return format(selectedDate, 'MMMM yyyy', { locale: de })
+        return format(selectedDate, 'MMMM yyyy')
       case 'quarter':
         const q = Math.floor(selectedDate.getMonth() / 3) + 1
         return `Q${q} ${selectedDate.getFullYear()}`
@@ -156,7 +155,7 @@ export function TimeRangeSelector({
           size="icon"
           onClick={goBack}
           disabled={isLoading}
-          aria-label="Zurück"
+          aria-label="Previous"
         >
           <ChevronLeft className="h-4 w-4" />
         </Button>
@@ -172,7 +171,7 @@ export function TimeRangeSelector({
           ) : (
             <BarChart3 className="mr-2 h-4 w-4" />
           )}
-          {isCurrent ? `Aktuell` : getDisplayLabel()}
+          {isCurrent ? `Current` : getDisplayLabel()}
         </Button>
 
         <Button
@@ -180,7 +179,7 @@ export function TimeRangeSelector({
           size="icon"
           onClick={goForward}
           disabled={isLoading || !canGoForward}
-          aria-label="Weiter"
+          aria-label="Next"
         >
           <ChevronRight className="h-4 w-4" />
         </Button>
