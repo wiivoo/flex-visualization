@@ -164,12 +164,12 @@ export function Step5MarketContext({ monthly, daily, hourly, onBack, onRestart }
               N
             </div>
             <div>
-              <p className="font-semibold text-[#313131] mb-1">Night Charging Window (22:00-06:00)</p>
+              <p className="font-semibold text-[#313131] mb-1">Night Spread: 18:00 vs. Cheapest Night Hour</p>
               <p className="text-sm text-gray-700 leading-relaxed">
-                The average spread between the mean night price and the cheapest night hour is{' '}
+                The average spread between the 18:00 price (when customers typically plug in) and the cheapest night hour is{' '}
                 <span className="font-bold text-[#115BA7]">{avgNightSpreadOverall} EUR/MWh</span>.
-                This is the core optimization potential for overnight EV charging. By shifting load
-                to the cheapest 2-3 hours within the night window, we capture this spread as value.
+                This represents the maximum optimization potential. The more energy you need to charge,
+                the more night hours you occupy — so the effective spread narrows with higher demand per session.
               </p>
             </div>
           </div>

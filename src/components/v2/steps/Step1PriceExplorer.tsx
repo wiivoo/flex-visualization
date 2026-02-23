@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -50,6 +50,13 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
     if (dataRange.lastMonth) return dataRange.lastMonth
     return new Date().toISOString().slice(0, 7)
   })
+
+  // Sync viewMonth when selectedDate changes (e.g., after data loads)
+  useEffect(() => {
+    if (selectedDate) {
+      setViewMonth(selectedDate.slice(0, 7))
+    }
+  }, [selectedDate])
 
   const monthDays = useMemo(() => {
     const [year, month] = viewMonth.split('-').map(Number)
@@ -154,10 +161,13 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
     let min = selectedDayPrices[0].priceEurMwh, max = min
     let minHour = selectedDayPrices[0], maxHour = selectedDayPrices[0]
     let sum = 0, daySum = 0, nightSum = 0, dayCount = 0, nightCount = 0
+    let priceAt18 = 0
+    let cheapestNight = Infinity
     for (const p of selectedDayPrices) {
       if (p.priceEurMwh < min) { min = p.priceEurMwh; minHour = p }
       if (p.priceEurMwh > max) { max = p.priceEurMwh; maxHour = p }
       sum += p.priceEurMwh
+      if (p.hour === 18) priceAt18 = p.priceEurMwh
       // Day: 6-22h, Night: 22-6h
       if (p.hour >= 6 && p.hour < 22) {
         daySum += p.priceEurMwh
@@ -165,13 +175,15 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
       } else {
         nightSum += p.priceEurMwh
         nightCount++
+        if (p.priceEurMwh < cheapestNight) cheapestNight = p.priceEurMwh
       }
     }
     const avg = sum / selectedDayPrices.length
     const dayAvg = dayCount > 0 ? daySum / dayCount : 0
     const nightAvg = nightCount > 0 ? nightSum / nightCount : 0
-    const dayNightSpread = dayAvg - nightAvg
-    return { min, max, spread: max - min, avg, minHour, maxHour, dayAvg, nightAvg, dayNightSpread }
+    if (cheapestNight === Infinity) cheapestNight = nightAvg
+    const nightSpread = priceAt18 - cheapestNight // the real opportunity
+    return { min, max, spread: max - min, avg, minHour, maxHour, dayAvg, nightAvg, priceAt18, cheapestNight, nightSpread }
   }, [selectedDayPrices])
 
   // Build chart data with generation overlay
@@ -266,11 +278,13 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
               </div>
             </CardContent>
           </Card>
-          <Card className={dayStats.dayNightSpread > 0 ? 'border-green-200 bg-green-50/30' : ''}>
+          <Card className={dayStats.nightSpread > 0 ? 'border-green-200 bg-green-50/30' : ''}>
             <CardContent className="pt-4 pb-3 text-center">
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Day-Night Spread</p>
-              <AnimatedNumber value={dayStats.dayNightSpread} decimals={0} suffix=" EUR/MWh" className="text-2xl font-bold text-green-600" />
-              <p className="text-[10px] text-gray-400 mt-0.5">Night charging opportunity</p>
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Night Spread (18h vs min)</p>
+              <AnimatedNumber value={dayStats.nightSpread} decimals={0} suffix=" EUR/MWh" className="text-2xl font-bold text-green-600" />
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                18:00: {dayStats.priceAt18.toFixed(0)} → cheapest: {dayStats.cheapestNight.toFixed(0)} EUR/MWh
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -410,9 +424,9 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
                 <strong>On this day, the price swing was {dayStats.spread.toFixed(0)} EUR/MWh</strong> — that&apos;s the difference between the cheapest and most expensive hour. This volatility is the raw material for flexibility monetization.
               </div>
             )}
-            {dayStats && dayStats.dayNightSpread > 20 && (
+            {dayStats && dayStats.nightSpread > 10 && (
               <div className="mt-2 p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-sm">
-                <strong>Day-Night spread: {dayStats.dayNightSpread.toFixed(0)} EUR/MWh.</strong> Night electricity is significantly cheaper — shifting EV charging to nighttime hours saves money without any inconvenience.
+                <strong>Night spread: {dayStats.nightSpread.toFixed(0)} EUR/MWh.</strong> The price at 18:00 ({dayStats.priceAt18.toFixed(0)} EUR/MWh) vs. the cheapest night hour ({dayStats.cheapestNight.toFixed(0)} EUR/MWh). The more you need to charge, the more night hours you use — so the effective spread narrows with higher energy demand.
               </div>
             )}
           </CardContent>
@@ -449,7 +463,7 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
                   <Tooltip
                     contentStyle={{ borderRadius: 8, fontSize: 12 }}
                     formatter={(val, name) => {
-                      if (name === 'dayNightSpread') return [`${val} EUR/MWh`, 'Day-Night Spread']
+                      if (name === 'dayNightSpread') return [`${val} EUR/MWh`, 'Night Spread (18h vs min)']
                       return [`${val} EUR/MWh`, 'Avg. Daily Spread']
                     }}
                   />
@@ -460,10 +474,10 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
             </div>
             <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#EA1C0A] opacity-60" />Avg. Daily Spread</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-[#4F46E5]" />Day-Night Spread</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-[#4F46E5]" />Night Spread (18h vs cheapest)</span>
             </div>
             <p className="text-sm text-gray-500 mt-3">
-              Winter months (Oct-Mar) typically show the highest volatility — these are the months with the biggest optimization opportunity. The day-night spread shows how much cheaper nighttime electricity is on average, which directly translates to EV charging savings.
+              Winter months (Oct-Mar) typically show the highest volatility — these are the months with the biggest optimization opportunity. The night spread shows the gap between the 18:00 price (when you plug in) and the cheapest night hour — the more you need to charge, the more hours you use, narrowing the effective spread.
             </p>
           </CardContent>
         </Card>

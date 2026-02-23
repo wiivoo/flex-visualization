@@ -40,15 +40,21 @@ function deriveDailySummaries(prices: HourlyPrice[]): DailySummary[] {
     let negCount = 0
     let daySum = 0, dayCount = 0
     let nightSum = 0, nightCount = 0
+    let priceAt18 = 0
+    let cheapestNight = Infinity
 
     for (const p of dayPrices) {
       if (p.priceEurMwh < min) min = p.priceEurMwh
       if (p.priceEurMwh > max) max = p.priceEurMwh
       if (p.priceEurMwh < 0) negCount++
 
+      // Track 18:00 price (typical EV arrival time)
+      if (p.hour === 18) priceAt18 = p.priceEurMwh
+
       if (isNightHour(p.hour)) {
         nightSum += p.priceEurMwh
         nightCount++
+        if (p.priceEurMwh < cheapestNight) cheapestNight = p.priceEurMwh
       } else {
         daySum += p.priceEurMwh
         dayCount++
@@ -57,6 +63,7 @@ function deriveDailySummaries(prices: HourlyPrice[]): DailySummary[] {
 
     const dayAvg = dayCount > 0 ? daySum / dayCount : 0
     const nightAvg = nightCount > 0 ? nightSum / nightCount : 0
+    if (cheapestNight === Infinity) cheapestNight = nightAvg
 
     summaries.push({
       date,
@@ -68,6 +75,9 @@ function deriveDailySummaries(prices: HourlyPrice[]): DailySummary[] {
       dayAvgPrice: Math.round(dayAvg * 10) / 10,
       nightAvgPrice: Math.round(nightAvg * 10) / 10,
       dayNightSpread: Math.round((dayAvg - nightAvg) * 10) / 10,
+      priceAt18: Math.round(priceAt18 * 10) / 10,
+      cheapestNightPrice: Math.round(cheapestNight * 10) / 10,
+      nightSpread: Math.round((priceAt18 - cheapestNight) * 10) / 10,
     })
   }
   return summaries.sort((a, b) => a.date.localeCompare(b.date))
@@ -81,7 +91,7 @@ function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): Month
     const entry = byMonth.get(month) || { spreads: [], prices: [], negHours: 0, totalHours: 0, nightSpreads: [] }
     entry.spreads.push(d.spread)
     entry.negHours += d.negativeHours
-    entry.nightSpreads.push(d.dayNightSpread)
+    entry.nightSpreads.push(d.nightSpread) // 18:00 vs cheapest night
     byMonth.set(month, entry)
   }
 
