@@ -1,14 +1,15 @@
 /**
  * Hook for fetching and managing price data across the v2 flow.
  * Loads pre-downloaded SMARD data from static JSON files.
- * Falls back to API for any data not in the static files.
+ * On page visit, fetches incremental updates from SMARD via API
+ * to keep data up-to-date without manual re-downloads.
  */
 'use client'
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { HourlyPrice, DailySummary, MonthlyStats, GenerationData } from '@/lib/v2-config'
 
-interface PriceData {
+export interface PriceData {
   hourly: HourlyPrice[]
   daily: DailySummary[]
   monthly: MonthlyStats[]
@@ -141,6 +142,31 @@ export function usePrices(): PriceData {
   const generationCache = useRef<Map<string, GenerationData[]>>(new Map())
   const allGeneration = useRef<CompactGen[]>([])
 
+  /** Convert compact price to HourlyPrice */
+  const toHourlyPrice = useCallback((p: CompactPrice): HourlyPrice => {
+    const d = new Date(p.t)
+    return {
+      timestamp: p.t,
+      priceEurMwh: p.p,
+      priceCtKwh: Math.round((p.p / 10) * 100) / 100,
+      hour: d.getHours(),
+      date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+    }
+  }, [])
+
+  /** Get next day string from YYYY-MM-DD */
+  const nextDay = useCallback((dateStr: string): string => {
+    const d = new Date(dateStr + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + 1)
+    return d.toISOString().slice(0, 10)
+  }, [])
+
+  /** Today's date in local time */
+  const todayStr = useCallback((): string => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }, [])
+
   useEffect(() => {
     if (fetched.current) return
     fetched.current = true
@@ -172,31 +198,26 @@ export function usePrices(): PriceData {
         }
 
         // Convert compact format to HourlyPrice
-        const prices: HourlyPrice[] = rawPrices.map(p => {
-          const d = new Date(p.t)
-          const localYear = d.getFullYear()
-          const localMonth = String(d.getMonth() + 1).padStart(2, '0')
-          const localDay = String(d.getDate()).padStart(2, '0')
-          return {
-            timestamp: p.t,
-            priceEurMwh: p.p,
-            priceCtKwh: Math.round((p.p / 10) * 100) / 100,
-            hour: d.getHours(),
-            date: `${localYear}-${localMonth}-${localDay}`,
-          }
-        })
+        let prices: HourlyPrice[] = rawPrices.map(toHourlyPrice)
 
+        // Determine the last date in static data
+        const lastStaticDate = prices[prices.length - 1].date
+        const today = todayStr()
+
+        // Show static data immediately (fast first paint)
         setHourly(prices)
-
         const dailySummaries = deriveDailySummaries(prices)
         setDaily(dailySummaries)
+        setMonthly(deriveMonthlyStats(dailySummaries, prices))
 
-        const monthlyStats = deriveMonthlyStats(dailySummaries, prices)
-        setMonthly(monthlyStats)
-
-        // Default to most recent date with data
+        // Default to most recent date
         if (dailySummaries.length > 0) {
           setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
+        }
+
+        // Background: fetch incremental data if static is behind
+        if (lastStaticDate < today) {
+          fetchIncremental(lastStaticDate, today, prices)
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load prices')
@@ -206,13 +227,82 @@ export function usePrices(): PriceData {
     }
 
     loadData()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Fetch new prices from SMARD via batch API and merge into state */
+  const fetchIncremental = useCallback(async (lastStaticDate: string, today: string, existingPrices: HourlyPrice[]) => {
+    try {
+      const startDate = nextDay(lastStaticDate)
+      if (startDate > today) return
+
+      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}`)
+      if (!res.ok) return
+
+      const data = await res.json()
+      const newPoints: { timestamp: string; price_ct_kwh: number }[] = data.prices || []
+      if (newPoints.length === 0) return
+
+      // Convert batch API format to HourlyPrice
+      const newHourly: HourlyPrice[] = newPoints.map(p => {
+        const d = new Date(p.timestamp)
+        const eurMwh = p.price_ct_kwh * 10
+        return {
+          timestamp: d.getTime(),
+          priceEurMwh: eurMwh,
+          priceCtKwh: p.price_ct_kwh,
+          hour: d.getHours(),
+          date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+        }
+      })
+
+      // Deduplicate by timestamp and merge
+      const existingTs = new Set(existingPrices.map(p => p.timestamp))
+      const unique = newHourly.filter(p => !existingTs.has(p.timestamp))
+      if (unique.length === 0) return
+
+      const merged = [...existingPrices, ...unique].sort((a, b) => a.timestamp - b.timestamp)
+
+      setHourly(merged)
+      const dailySummaries = deriveDailySummaries(merged)
+      setDaily(dailySummaries)
+      setMonthly(deriveMonthlyStats(dailySummaries, merged))
+
+      // Update selected date to the latest available
+      if (dailySummaries.length > 0) {
+        const latest = dailySummaries[dailySummaries.length - 1].date
+        setSelectedDate(prev => prev || latest)
+      }
+
+      console.log(`[usePrices] Incremental update: +${unique.length} price points (${startDate} → ${today})`)
+    } catch (e) {
+      console.warn('[usePrices] Incremental fetch failed (non-fatal):', e)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Fetch generation from live API and cache */
+  const fetchLiveGeneration = useCallback((date: string) => {
+    setGenerationLoading(true)
+    fetch(`/api/generation?date=${date}`)
+      .then(res => res.ok ? res.json() : { hourly: [] })
+      .then(json => {
+        const data: GenerationData[] = json.hourly || []
+        if (data.length > 0) {
+          generationCache.current.set(date, data)
+          setGeneration(data)
+        }
+      })
+      .catch(() => {/* keep existing data */})
+      .finally(() => setGenerationLoading(false))
   }, [])
 
   // Get generation data for selected day from the pre-loaded dataset
+  // Falls back to live SMARD API if static data is incomplete (< 20 hours)
   const loadGenerationForDate = useCallback((date: string) => {
     if (!date) return
 
-    // Check cache
+    // Check cache first (live-fetched data is always complete)
     if (generationCache.current.has(date)) {
       setGeneration(generationCache.current.get(date)!)
       return
@@ -220,13 +310,13 @@ export function usePrices(): PriceData {
 
     setGenerationLoading(true)
 
-    // Filter from pre-loaded data
+    // Filter from pre-loaded static data
     const gen = allGeneration.current
-    if (gen.length > 0) {
-      const startOfDay = new Date(date + 'T00:00:00').getTime()
-      const endOfDay = new Date(date + 'T23:59:59').getTime()
+    const startOfDay = new Date(date + 'T00:00:00').getTime()
+    const endOfDay = new Date(date + 'T23:59:59').getTime()
 
-      const dayGen: GenerationData[] = []
+    const dayGen: GenerationData[] = []
+    if (gen.length > 0) {
       for (const g of gen) {
         if (g.t >= startOfDay && g.t <= endOfDay) {
           const d = new Date(g.t)
@@ -243,23 +333,23 @@ export function usePrices(): PriceData {
           })
         }
       }
+    }
 
+    // If static data is incomplete (< 20 hours), fetch live from SMARD API
+    if (dayGen.length < 20) {
+      // Show what we have immediately, then upgrade with live data
+      if (dayGen.length > 0) {
+        setGeneration(dayGen)
+        setGenerationLoading(false)
+      }
+      fetchLiveGeneration(date)
+    } else {
+      // Static data is complete — use it
       generationCache.current.set(date, dayGen)
       setGeneration(dayGen)
       setGenerationLoading(false)
-    } else {
-      // Fallback: fetch from API if static data not available
-      fetch(`/api/generation?date=${date}`)
-        .then(res => res.ok ? res.json() : { hourly: [] })
-        .then(json => {
-          const data = json.hourly || []
-          generationCache.current.set(date, data)
-          setGeneration(data)
-        })
-        .catch(() => setGeneration([]))
-        .finally(() => setGenerationLoading(false))
     }
-  }, [])
+  }, [fetchLiveGeneration])
 
   useEffect(() => {
     if (selectedDate) loadGenerationForDate(selectedDate)
