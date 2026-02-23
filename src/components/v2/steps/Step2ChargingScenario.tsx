@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
-import { deriveEnergyPerSession, type ChargingScenario, type HourlyPrice } from '@/lib/v2-config'
+import { deriveEnergyPerSession, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -60,52 +60,51 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
   const kmPerCharge = Math.round(scenario.yearlyMileageKm / (scenario.weeklyPlugIns * 52))
   const sessionsPerYear = scenario.weeklyPlugIns * 52
 
-  // Build chart data: price curve with baseline/optimized segments directly on the line
+  // Build chart data: compute charging hours directly from hourly prices
   const { chartData, baselineAnnotation, optimizedAnnotation } = useMemo(() => {
     if (prices.selectedDayPrices.length === 0) return { chartData: [], baselineAnnotation: null, optimizedAnnotation: null }
 
-    // Build sets of which hours have baseline/optimized charging
-    const baselineHourSet = new Set<number>()
-    const optimizedHourSet = new Set<number>()
+    // How many full hours of charging needed?
+    const hoursNeeded = Math.ceil(energyPerSession / DEFAULT_CHARGE_POWER_KW)
 
-    if (optimization) {
-      for (const block of optimization.baseline_schedule) {
-        const startH = parseInt(block.start.split(':')[0])
-        const endH = parseInt(block.end.split(':')[0])
-        // Always add the start hour (handles sub-hour blocks where startH === endH)
-        baselineHourSet.add(startH)
-        for (let h = (startH + 1) % 24; h !== endH && baselineHourSet.size <= 24; h = (h + 1) % 24) {
-          baselineHourSet.add(h)
-        }
-      }
-      for (const block of optimization.charging_schedule) {
-        const startH = parseInt(block.start.split(':')[0])
-        const endH = parseInt(block.end.split(':')[0])
-        optimizedHourSet.add(startH)
-        for (let h = (startH + 1) % 24; h !== endH && optimizedHourSet.size <= 24; h = (h + 1) % 24) {
-          optimizedHourSet.add(h)
-        }
-      }
-    }
-
-    // Reorder to show from plug-in time
+    // Sort prices in plug-in order (18:00 → 17:00 next day)
     const allPrices = [...prices.selectedDayPrices].sort((a, b) => {
       const aAdj = a.hour < scenario.plugInTime ? a.hour + 24 : a.hour
       const bAdj = b.hour < scenario.plugInTime ? b.hour + 24 : b.hour
       return aAdj - bAdj
     })
 
-    // Only color exact charging hours — no boundary expansion
+    // Filter to charging window only (plug-in to departure)
+    const windowPrices = allPrices.filter(p => {
+      const adj = p.hour < scenario.plugInTime ? p.hour + 24 : p.hour
+      const depAdj = scenario.departureTime < scenario.plugInTime ? scenario.departureTime + 24 : scenario.departureTime
+      return adj >= scenario.plugInTime && adj < depAdj
+    })
+
+    // Baseline: first N hours from plug-in (charge immediately)
+    const baselineHours = new Set(windowPrices.slice(0, hoursNeeded).map(p => p.hour))
+
+    // Optimized: cheapest N hours in window
+    const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+    const optimizedHours = new Set(sortedByPrice.slice(0, hoursNeeded).map(p => p.hour))
+
+    // Compute avg prices for annotations
+    const baselinePrices = windowPrices.filter(p => baselineHours.has(p.hour))
+    const optimizedPrices = windowPrices.filter(p => optimizedHours.has(p.hour))
+    const baselineAvg = baselinePrices.length > 0 ? baselinePrices.reduce((s, p) => s + p.priceCtKwh, 0) / baselinePrices.length : 0
+    const optimizedAvg = optimizedPrices.length > 0 ? optimizedPrices.reduce((s, p) => s + p.priceCtKwh, 0) / optimizedPrices.length : 0
+    const baselineCost = baselineAvg * energyPerSession / 100
+    const optimizedCost = optimizedAvg * energyPerSession / 100
+
     const data = allPrices.map(p => {
       const hourKey = String(p.hour).padStart(2, '0')
-      const isBaseline = baselineHourSet.has(p.hour)
-      const isOptimized = optimizedHourSet.has(p.hour)
+      const isBaseline = baselineHours.has(p.hour)
+      const isOptimized = optimizedHours.has(p.hour)
       const priceVal = Math.round(p.priceEurMwh * 10) / 10
       return {
         hour: `${hourKey}:00`,
         hourNum: p.hour,
         price: priceVal,
-        // Only show on charging line at actual charging hours
         baselinePrice: isBaseline ? priceVal : null,
         optimizedPrice: isOptimized ? priceVal : null,
         isBaseline,
@@ -113,37 +112,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
       }
     })
 
-    // Calculate annotation positions (midpoint of charging segments)
-    let bAnno = null
-    let oAnno = null
-    if (optimization) {
-      const baselinePoints = data.filter(d => d.isBaseline)
-      const optimizedPoints = data.filter(d => d.isOptimized)
-      if (baselinePoints.length > 0) {
-        const midIdx = Math.floor(baselinePoints.length / 2)
-        const avgPrice = baselinePoints.reduce((s, p) => s + p.price, 0) / baselinePoints.length
-        bAnno = {
-          hour: baselinePoints[midIdx].hour,
-          price: Math.max(...baselinePoints.map(p => p.price)) + 15,
-          kwh: optimization.energy_charged_kwh,
-          ctKwh: optimization.baseline_avg_price,
-          costEur: optimization.cost_without_flex_eur,
-        }
-      }
-      if (optimizedPoints.length > 0) {
-        const midIdx = Math.floor(optimizedPoints.length / 2)
-        oAnno = {
-          hour: optimizedPoints[midIdx].hour,
-          price: Math.min(...optimizedPoints.map(p => p.price)) - 20,
-          kwh: optimization.energy_charged_kwh,
-          ctKwh: optimization.avg_price_with_flex,
-          costEur: optimization.cost_with_flex_eur,
-        }
-      }
-    }
+    // Annotations
+    const bPoints = data.filter(d => d.isBaseline)
+    const oPoints = data.filter(d => d.isOptimized)
+    const bAnno = bPoints.length > 0 ? {
+      kwh: energyPerSession,
+      ctKwh: Math.round(baselineAvg * 10) / 10,
+      costEur: Math.round(baselineCost * 100) / 100,
+    } : null
+    const oAnno = oPoints.length > 0 ? {
+      kwh: energyPerSession,
+      ctKwh: Math.round(optimizedAvg * 10) / 10,
+      costEur: Math.round(optimizedCost * 100) / 100,
+    } : null
 
     return { chartData: data, baselineAnnotation: bAnno, optimizedAnnotation: oAnno }
-  }, [prices.selectedDayPrices, optimization, scenario.plugInTime, scenario.departureTime])
+  }, [prices.selectedDayPrices, energyPerSession, scenario.plugInTime, scenario.departureTime])
 
   // Compute arrival/departure labels for chart
   const arrivalLabel = `${String(scenario.plugInTime).padStart(2, '0')}:00`
@@ -251,21 +235,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                   <Line type="monotone" dataKey="optimizedPrice" stroke="#22C55E" strokeWidth={5} dot={false} name="optimizedPrice" connectNulls={false} />
                   <Area type="monotone" dataKey="optimizedPrice" fill="url(#optimizedGrad)" stroke="none" connectNulls={false} />
                   {/* Average reference lines */}
-                  {optimization && (
-                    <>
-                      <ReferenceLine
-                        y={optimization.baseline_avg_price * 10}
-                        stroke="#EA1C0A"
-                        strokeDasharray="5 5"
-                        strokeOpacity={0.6}
-                      />
-                      <ReferenceLine
-                        y={optimization.avg_price_with_flex * 10}
-                        stroke="#22C55E"
-                        strokeDasharray="5 5"
-                        strokeOpacity={0.6}
-                      />
-                    </>
+                  {baselineAnnotation && (
+                    <ReferenceLine
+                      y={baselineAnnotation.ctKwh * 10}
+                      stroke="#EA1C0A"
+                      strokeDasharray="5 5"
+                      strokeOpacity={0.6}
+                    />
+                  )}
+                  {optimizedAnnotation && (
+                    <ReferenceLine
+                      y={optimizedAnnotation.ctKwh * 10}
+                      stroke="#22C55E"
+                      strokeDasharray="5 5"
+                      strokeOpacity={0.6}
+                    />
                   )}
                 </ComposedChart>
               </ResponsiveContainer>

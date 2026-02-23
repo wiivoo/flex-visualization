@@ -23,7 +23,8 @@ interface PriceData {
 }
 
 function isNightHour(hour: number): boolean {
-  return hour >= 22 || hour < 6
+  // Night = 18:00 to 05:59 (EV charging window: plug-in at 18h to departure ~6h)
+  return hour >= 18 || hour < 6
 }
 
 /** Compact format from static JSON: { t: timestamp, p: priceEurMwh } */
