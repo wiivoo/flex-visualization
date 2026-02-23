@@ -29,7 +29,7 @@ async function getSmardTimeSeries(
   timestamp: number,
   resolution: string
 ): Promise<SmardPricePoint[]> {
-  const url = `${SMARD_BASE_URL}/${filter}/${filter}_${timestamp}_${resolution}.json`
+  const url = `${SMARD_BASE_URL}/${filter}/DE/${filter}_DE_${resolution}_${timestamp}.json`
   const response = await fetch(url, {
     next: { revalidate: 3600 } // Cache for 1 hour
   })
@@ -63,7 +63,7 @@ export async function fetchSmardDayAhead(
 ): Promise<SmardPricePoint[]> {
   try {
     // Get available timestamp indices
-    const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/index_${SMARD_RESOLUTION.HOUR}.json`
+    const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/DE/index_${SMARD_RESOLUTION.HOUR}.json`
     const response = await fetch(url, {
       next: { revalidate: 3600 }
     })
@@ -72,7 +72,9 @@ export async function fetchSmardDayAhead(
       throw new Error(`SMARD index request failed: ${response.status}`)
     }
 
-    const timestamps: number[] = await response.json()
+    const indexData = await response.json()
+    // SMARD returns { timestamps: [...] }, not a plain array
+    const timestamps: number[] = Array.isArray(indexData) ? indexData : indexData.timestamps || []
     if (!timestamps || timestamps.length === 0) {
       throw new Error('No SMARD timestamps available')
     }
