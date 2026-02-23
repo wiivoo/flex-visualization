@@ -22,7 +22,10 @@ async function fetchSmardFilter(filter: number, date: Date): Promise<Map<number,
   const indexUrl = `${SMARD_BASE}/${filter}/DE/index_hour.json`
   const indexRes = await fetch(indexUrl, { next: { revalidate: 3600 } })
   if (!indexRes.ok) throw new Error(`SMARD index ${filter}: ${indexRes.status}`)
-  const timestamps: number[] = await indexRes.json()
+  const indexData = await indexRes.json()
+  // SMARD returns { timestamps: [...] }, not a plain array
+  const timestamps: number[] = Array.isArray(indexData) ? indexData : indexData.timestamps || []
+  if (timestamps.length === 0) throw new Error(`SMARD index ${filter} empty`)
 
   // Find the timestamp bucket containing our date
   const targetMs = date.getTime()

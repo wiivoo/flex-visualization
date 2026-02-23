@@ -14,7 +14,10 @@ async function fetchFromSmard(startMs: number, endMs: number): Promise<{ timesta
   const indexUrl = `${SMARD_BASE}/${SMARD_FILTER_PRICE}/DE/index_hour.json`
   const indexRes = await fetch(indexUrl, { next: { revalidate: 3600 } })
   if (!indexRes.ok) throw new Error(`SMARD index: ${indexRes.status}`)
-  const timestamps: number[] = await indexRes.json()
+  const indexData = await indexRes.json()
+  // SMARD returns { timestamps: [...] }, not a plain array
+  const timestamps: number[] = Array.isArray(indexData) ? indexData : indexData.timestamps || []
+  if (timestamps.length === 0) throw new Error('SMARD index empty')
 
   // 2. Find all weekly chunks that overlap our date range
   const relevantTimestamps = timestamps.filter((ts, i) => {
