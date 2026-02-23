@@ -72,17 +72,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
       for (const block of optimization.baseline_schedule) {
         const startH = parseInt(block.start.split(':')[0])
         const endH = parseInt(block.end.split(':')[0])
-        for (let h = startH; h !== endH; h = (h + 1) % 24) {
+        // Always add the start hour (handles sub-hour blocks where startH === endH)
+        baselineHourSet.add(startH)
+        for (let h = (startH + 1) % 24; h !== endH && baselineHourSet.size <= 24; h = (h + 1) % 24) {
           baselineHourSet.add(h)
-          if (baselineHourSet.size > 24) break
         }
       }
       for (const block of optimization.charging_schedule) {
         const startH = parseInt(block.start.split(':')[0])
         const endH = parseInt(block.end.split(':')[0])
-        for (let h = startH; h !== endH; h = (h + 1) % 24) {
+        optimizedHourSet.add(startH)
+        for (let h = (startH + 1) % 24; h !== endH && optimizedHourSet.size <= 24; h = (h + 1) % 24) {
           optimizedHourSet.add(h)
-          if (optimizedHourSet.size > 24) break
         }
       }
     }
