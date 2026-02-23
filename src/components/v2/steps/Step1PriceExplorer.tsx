@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ReferenceLine, ReferenceArea, ResponsiveContainer, Bar
+  ReferenceLine, ReferenceArea, ReferenceDot, ResponsiveContainer, Bar
 } from 'recharts'
 import type { HourlyPrice, DailySummary, MonthlyStats, GenerationData } from '@/lib/v2-config'
 
@@ -435,6 +435,21 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
                         stroke="#4F46E5"
                         strokeDasharray="3 3"
                         label={{ value: `Night: ${dayStats.nightAvg.toFixed(0)}`, position: 'right', fontSize: 9, fill: '#4F46E5' }}
+                      />
+                      {/* Min/Max spread indicators */}
+                      <ReferenceDot
+                        x={`${String(dayStats.maxHour.hour).padStart(2, '0')}:00`}
+                        y={dayStats.max}
+                        yAxisId="price"
+                        r={5} fill="#DC2626" stroke="#fff" strokeWidth={2}
+                        label={{ value: `▲ ${dayStats.max.toFixed(0)}`, position: 'top', fontSize: 10, fontWeight: 600, fill: '#DC2626', offset: 8 }}
+                      />
+                      <ReferenceDot
+                        x={`${String(dayStats.minHour.hour).padStart(2, '0')}:00`}
+                        y={dayStats.min}
+                        yAxisId="price"
+                        r={5} fill="#16A34A" stroke="#fff" strokeWidth={2}
+                        label={{ value: `▼ ${dayStats.min.toFixed(0)}`, position: 'bottom', fontSize: 10, fontWeight: 600, fill: '#16A34A', offset: 8 }}
                       />
                     </>
                   )}
