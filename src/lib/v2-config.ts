@@ -95,6 +95,9 @@ export interface DailySummary {
   dayAvgPrice: number  // EUR/MWh avg 6:00-22:00
   nightAvgPrice: number // EUR/MWh avg 22:00-6:00
   dayNightSpread: number // dayAvg - nightAvg
+  priceAt18: number    // EUR/MWh price at 18:00 (typical arrival)
+  cheapestNightPrice: number // EUR/MWh cheapest hour in 22:00-06:00
+  nightSpread: number  // priceAt18 - cheapestNightPrice (the real opportunity)
 }
 
 /** Monthly stats for volatility analysis */
