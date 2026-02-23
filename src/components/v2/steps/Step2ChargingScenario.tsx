@@ -5,10 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
-import { deriveEnergyPerSession, type ChargingScenario, type HourlyPrice, AVG_CONSUMPTION_KWH_PER_100KM } from '@/lib/v2-config'
+import { deriveEnergyPerSession, type ChargingScenario, type HourlyPrice } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ReferenceLine, ReferenceArea, ResponsiveContainer
 } from 'recharts'
 
@@ -55,39 +55,34 @@ function SliderInput({ label, value, min, max, step, unit, onChange, formatValue
   )
 }
 
-function isHourInWindow(hour: number, start: number, end: number): boolean {
-  if (start > end) return hour >= start || hour < end
-  return hour >= start && hour < end
-}
-
 export function Step2ChargingScenario({ prices, scenario, setScenario, optimization, onNext, onBack }: Props) {
   const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weeklyPlugIns)
   const kmPerCharge = Math.round(scenario.yearlyMileageKm / (scenario.weeklyPlugIns * 52))
   const sessionsPerYear = scenario.weeklyPlugIns * 52
 
-  // Build chart data: price curve + baseline bars + optimized bars
-  const chartData = useMemo(() => {
-    if (prices.selectedDayPrices.length === 0) return []
+  // Build chart data: price curve with baseline/optimized segments directly on the line
+  const { chartData, baselineAnnotation, optimizedAnnotation } = useMemo(() => {
+    if (prices.selectedDayPrices.length === 0) return { chartData: [], baselineAnnotation: null, optimizedAnnotation: null }
 
     // Build sets of which hours have baseline/optimized charging
-    const baselineHours = new Map<string, number>()
-    const optimizedHours = new Map<string, number>()
+    const baselineHourSet = new Set<number>()
+    const optimizedHourSet = new Set<number>()
 
     if (optimization) {
       for (const block of optimization.baseline_schedule) {
         const startH = parseInt(block.start.split(':')[0])
         const endH = parseInt(block.end.split(':')[0])
         for (let h = startH; h !== endH; h = (h + 1) % 24) {
-          baselineHours.set(String(h).padStart(2, '0'), block.price_ct_kwh)
-          if (baselineHours.size > 24) break
+          baselineHourSet.add(h)
+          if (baselineHourSet.size > 24) break
         }
       }
       for (const block of optimization.charging_schedule) {
         const startH = parseInt(block.start.split(':')[0])
         const endH = parseInt(block.end.split(':')[0])
         for (let h = startH; h !== endH; h = (h + 1) % 24) {
-          optimizedHours.set(String(h).padStart(2, '0'), block.price_ct_kwh)
-          if (optimizedHours.size > 24) break
+          optimizedHourSet.add(h)
+          if (optimizedHourSet.size > 24) break
         }
       }
     }
@@ -99,18 +94,61 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
       return aAdj - bAdj
     })
 
-    return allPrices.map(p => {
+    // For continuous line segments, include the price at boundary points too
+    const data = allPrices.map((p, idx) => {
       const hourKey = String(p.hour).padStart(2, '0')
-      const inWindow = isHourInWindow(p.hour, scenario.plugInTime, scenario.departureTime)
+      const isBaseline = baselineHourSet.has(p.hour)
+      const isOptimized = optimizedHourSet.has(p.hour)
+      // Also check neighbors for connecting lines at boundaries
+      const nextHour = idx < allPrices.length - 1 ? allPrices[idx + 1].hour : -1
+      const prevHour = idx > 0 ? allPrices[idx - 1].hour : -1
+      const nextIsBaseline = baselineHourSet.has(nextHour)
+      const prevIsBaseline = baselineHourSet.has(prevHour)
+      const nextIsOptimized = optimizedHourSet.has(nextHour)
+      const prevIsOptimized = optimizedHourSet.has(prevHour)
+      const priceVal = Math.round(p.priceEurMwh * 10) / 10
       return {
         hour: `${hourKey}:00`,
         hourNum: p.hour,
-        price: Math.round(p.priceEurMwh * 10) / 10,
-        baseline: baselineHours.has(hourKey) ? Math.round(p.priceEurMwh * 10) / 10 : null,
-        optimized: optimizedHours.has(hourKey) ? Math.round(p.priceEurMwh * 10) / 10 : null,
-        inWindow,
+        price: priceVal,
+        // Show price on baseline/optimized line at charging hours + boundaries for smooth connection
+        baselinePrice: (isBaseline || nextIsBaseline || prevIsBaseline) ? priceVal : null,
+        optimizedPrice: (isOptimized || nextIsOptimized || prevIsOptimized) ? priceVal : null,
+        isBaseline,
+        isOptimized,
       }
     })
+
+    // Calculate annotation positions (midpoint of charging segments)
+    let bAnno = null
+    let oAnno = null
+    if (optimization) {
+      const baselinePoints = data.filter(d => d.isBaseline)
+      const optimizedPoints = data.filter(d => d.isOptimized)
+      if (baselinePoints.length > 0) {
+        const midIdx = Math.floor(baselinePoints.length / 2)
+        const avgPrice = baselinePoints.reduce((s, p) => s + p.price, 0) / baselinePoints.length
+        bAnno = {
+          hour: baselinePoints[midIdx].hour,
+          price: Math.max(...baselinePoints.map(p => p.price)) + 15,
+          kwh: optimization.energy_charged_kwh,
+          ctKwh: optimization.baseline_avg_price,
+          costEur: optimization.cost_without_flex_eur,
+        }
+      }
+      if (optimizedPoints.length > 0) {
+        const midIdx = Math.floor(optimizedPoints.length / 2)
+        oAnno = {
+          hour: optimizedPoints[midIdx].hour,
+          price: Math.min(...optimizedPoints.map(p => p.price)) - 20,
+          kwh: optimization.energy_charged_kwh,
+          ctKwh: optimization.avg_price_with_flex,
+          costEur: optimization.cost_with_flex_eur,
+        }
+      }
+    }
+
+    return { chartData: data, baselineAnnotation: bAnno, optimizedAnnotation: oAnno }
   }, [prices.selectedDayPrices, optimization, scenario.plugInTime, scenario.departureTime])
 
   // Compute arrival/departure labels for chart
@@ -168,32 +206,35 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <CardTitle className="text-lg">Baseline vs. Optimized Charging</CardTitle>
+              <CardTitle className="text-lg">Charging on the Price Curve</CardTitle>
               <div className="flex gap-2">
-                <Badge className="bg-red-100 text-red-700 border-red-200">Baseline (charge immediately)</Badge>
-                <Badge className="bg-green-100 text-green-700 border-green-200">Optimized (cheapest hours)</Badge>
+                <Badge className="bg-red-100 text-red-700 border-red-200">Baseline</Badge>
+                <Badge className="bg-green-100 text-green-700 border-green-200">Optimized</Badge>
               </div>
             </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[380px]">
+            <div className="h-[380px] relative">
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                <ComposedChart data={chartData} margin={{ top: 40, right: 10, bottom: 0, left: 0 }}>
                   <defs>
-                    <linearGradient id="priceGrad2" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#115BA7" stopOpacity={0.1} />
-                      <stop offset="100%" stopColor="#115BA7" stopOpacity={0} />
+                    <linearGradient id="baselineGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#EA1C0A" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#EA1C0A" stopOpacity={0.02} />
+                    </linearGradient>
+                    <linearGradient id="optimizedGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22C55E" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#22C55E" stopOpacity={0.02} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                  {/* Arrival-Departure window highlight — data is sorted from plugInTime, so first item is arrival, last is before departure */}
+                  {/* Charging window background */}
                   {chartData.length > 0 && (
                     <ReferenceArea
                       x1={chartData[0].hour}
                       x2={chartData[chartData.length - 1].hour}
-                      fill="#FEF9C3"
-                      fillOpacity={0.5}
-                      label={{ value: 'Charging Window', position: 'insideTop', fontSize: 10, fill: '#92400E' }}
+                      fill="#F3F4F6"
+                      fillOpacity={0.6}
                     />
                   )}
                   <XAxis dataKey="hour" tick={{ fontSize: 11 }} stroke="#9CA3AF" />
@@ -201,32 +242,60 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                   <Tooltip
                     contentStyle={{ borderRadius: 8, border: '1px solid #E5E7EB', fontSize: 13 }}
                     formatter={(val, name) => {
-                      if (val == null) return ['-', String(name)]
-                      const label = name === 'baseline' ? 'Baseline' : name === 'optimized' ? 'Optimized' : 'Price'
-                      return [`${Number(val).toFixed(1)} EUR/MWh`, label]
+                      if (val == null) return [null, null]
+                      if (name === 'baselinePrice') return [`${Number(val).toFixed(1)} EUR/MWh`, 'Baseline Charging']
+                      if (name === 'optimizedPrice') return [`${Number(val).toFixed(1)} EUR/MWh`, 'Optimized Charging']
+                      return [`${Number(val).toFixed(1)} EUR/MWh (${(Number(val) / 10).toFixed(2)} ct/kWh)`, 'Spot Price']
                     }}
                   />
-                  <Bar dataKey="baseline" fill="#EA1C0A" opacity={0.5} radius={[2, 2, 0, 0]} name="baseline" />
-                  <Bar dataKey="optimized" fill="#22C55E" opacity={0.6} radius={[2, 2, 0, 0]} name="optimized" />
-                  <Line type="monotone" dataKey="price" stroke="#115BA7" strokeWidth={2.5} dot={false} name="Price" />
+                  {/* Base price line — thin, gray */}
+                  <Line type="monotone" dataKey="price" stroke="#9CA3AF" strokeWidth={1.5} dot={false} name="price" connectNulls />
+                  {/* Baseline charging segment — thick red, directly on the price line */}
+                  <Line type="monotone" dataKey="baselinePrice" stroke="#EA1C0A" strokeWidth={5} dot={false} name="baselinePrice" connectNulls={false} />
+                  <Area type="monotone" dataKey="baselinePrice" fill="url(#baselineGrad)" stroke="none" connectNulls={false} />
+                  {/* Optimized charging segment — thick green, directly on the price line */}
+                  <Line type="monotone" dataKey="optimizedPrice" stroke="#22C55E" strokeWidth={5} dot={false} name="optimizedPrice" connectNulls={false} />
+                  <Area type="monotone" dataKey="optimizedPrice" fill="url(#optimizedGrad)" stroke="none" connectNulls={false} />
+                  {/* Average reference lines */}
                   {optimization && (
                     <>
                       <ReferenceLine
                         y={optimization.baseline_avg_price * 10}
                         stroke="#EA1C0A"
                         strokeDasharray="5 5"
-                        label={{ value: `Baseline avg: ${(optimization.baseline_avg_price * 10).toFixed(0)}`, position: 'right', fontSize: 10, fill: '#EA1C0A' }}
+                        strokeOpacity={0.6}
                       />
                       <ReferenceLine
                         y={optimization.avg_price_with_flex * 10}
                         stroke="#22C55E"
                         strokeDasharray="5 5"
-                        label={{ value: `Optimized avg: ${(optimization.avg_price_with_flex * 10).toFixed(0)}`, position: 'left', fontSize: 10, fill: '#22C55E' }}
+                        strokeOpacity={0.6}
                       />
                     </>
                   )}
                 </ComposedChart>
               </ResponsiveContainer>
+              {/* Annotation badges — positioned above the chart */}
+              {baselineAnnotation && (
+                <div className="absolute top-1 left-[15%] flex items-center gap-1 bg-red-50 border border-red-200 rounded-lg px-2 py-1 shadow-sm">
+                  <span className="text-red-600 text-xs font-bold">Baseline:</span>
+                  <span className="text-red-700 text-xs">{baselineAnnotation.kwh} kWh</span>
+                  <span className="text-red-400 text-xs">@</span>
+                  <span className="text-red-700 text-xs font-semibold">{baselineAnnotation.ctKwh.toFixed(1)} ct/kWh</span>
+                  <span className="text-red-500 text-xs">=</span>
+                  <span className="text-red-700 text-xs font-bold">{baselineAnnotation.costEur.toFixed(2)} €</span>
+                </div>
+              )}
+              {optimizedAnnotation && (
+                <div className="absolute top-1 right-[5%] flex items-center gap-1 bg-green-50 border border-green-200 rounded-lg px-2 py-1 shadow-sm">
+                  <span className="text-green-600 text-xs font-bold">Optimized:</span>
+                  <span className="text-green-700 text-xs">{optimizedAnnotation.kwh} kWh</span>
+                  <span className="text-green-400 text-xs">@</span>
+                  <span className="text-green-700 text-xs font-semibold">{optimizedAnnotation.ctKwh.toFixed(1)} ct/kWh</span>
+                  <span className="text-green-500 text-xs">=</span>
+                  <span className="text-green-700 text-xs font-bold">{optimizedAnnotation.costEur.toFixed(2)} €</span>
+                </div>
+              )}
             </div>
 
             {/* Dual-thumb arrival/departure sliders */}
@@ -286,10 +355,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
             {/* Explanation */}
             <div className="mt-4 p-4 bg-gray-50 rounded-lg text-sm text-gray-700">
               <p>
-                <span className="inline-block w-3 h-3 bg-red-400 rounded mr-1 align-middle" /> <strong>Red bars</strong> show when charging would happen without optimization — starting immediately at plug-in time, hitting expensive peak hours.
+                <span className="inline-block w-8 h-1 bg-red-500 rounded mr-1 align-middle" /> <strong>Red line</strong> = baseline charging (start at plug-in, charge until full — hits peak prices).
               </p>
               <p className="mt-1">
-                <span className="inline-block w-3 h-3 bg-green-500 rounded mr-1 align-middle" /> <strong>Green bars</strong> show our optimized schedule — charging shifted to the cheapest available hours within your window. Same energy, lower cost.
+                <span className="inline-block w-8 h-1 bg-green-500 rounded mr-1 align-middle" /> <strong>Green line</strong> = optimized charging (cheapest hours selected). More energy needed → more hours used → spread advantage narrows.
+              </p>
+              <p className="mt-1">
+                <span className="inline-block w-8 h-0.5 bg-gray-400 rounded mr-1 align-middle" /> Thin gray = full price curve for reference.
               </p>
             </div>
           </CardContent>
