@@ -207,16 +207,43 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
     })
   }, [selectedDayPrices, generation])
 
-  // Monthly volatility with day-night spread
-  const monthlyChartData = useMemo(() =>
-    monthly.map(m => ({
-      month: new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
-      avgSpread: Math.round(m.avgSpread),
-      dayNightSpread: Math.round(m.avgNightSpread),
-      avgPrice: m.avgPrice,
-    })),
-    [monthly]
-  )
+  // Available years from monthly data
+  const availableYears = useMemo(() => {
+    const years = [...new Set(monthly.map(m => m.month.slice(0, 4)))]
+    return years.sort()
+  }, [monthly])
+
+  const [selectedYear, setSelectedYear] = useState('')
+
+  // Set default year once data loads
+  useEffect(() => {
+    if (availableYears.length > 0 && !selectedYear) {
+      setSelectedYear(availableYears[availableYears.length - 1])
+    }
+  }, [availableYears, selectedYear])
+
+  // Monthly volatility filtered by selected year, with season coloring
+  const monthlyChartData = useMemo(() => {
+    const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const WINTER_MONTHS = new Set([1, 2, 3, 10, 11, 12]) // Oct-Mar
+    return monthly
+      .filter(m => m.month.startsWith(selectedYear))
+      .map(m => {
+        const monthNum = parseInt(m.month.split('-')[1])
+        const isWinter = WINTER_MONTHS.has(monthNum)
+        return {
+          month: MONTH_NAMES[monthNum - 1],
+          monthNum,
+          avgSpread: Math.round(m.avgSpread),
+          dayNightSpread: Math.round(m.avgNightSpread),
+          avgPrice: m.avgPrice,
+          // Split into two bar series for season coloring
+          winterSpread: isWinter ? Math.round(m.avgSpread) : null,
+          summerSpread: !isWinter ? Math.round(m.avgSpread) : null,
+          isWinter,
+        }
+      })
+  }, [monthly, selectedYear])
 
   if (loading) {
     return (
@@ -451,37 +478,64 @@ export function Step1PriceExplorer({ prices, onNext }: Props) {
         </Card>
       </div>
 
-      {/* Volatility Seasonality */}
+      {/* Volatility Seasonality — yearly view with season highlighting */}
       {monthlyChartData.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Monthly Volatility — When Is the Opportunity Biggest?</CardTitle>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <CardTitle className="text-lg">Monthly Volatility — When Is the Opportunity Biggest?</CardTitle>
+              <div className="flex gap-1">
+                {availableYears.map(year => (
+                  <button
+                    key={year}
+                    onClick={() => setSelectedYear(year)}
+                    className={`px-3 py-1 text-sm rounded-full transition-all ${
+                      selectedYear === year
+                        ? 'bg-[#EA1C0A] text-white font-semibold'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                  >
+                    {year}
+                  </button>
+                ))}
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="h-[220px]">
+            <div className="h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={monthlyChartData} margin={{ top: 10, right: 30, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                  <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="#9CA3AF" interval={2} />
+                  {/* Winter season background bands: Oct-Dec and Jan-Mar */}
+                  <ReferenceArea x1="Jan" x2="Mar" fill="#DBEAFE" fillOpacity={0.3} label={{ value: 'Winter', position: 'insideTop', fontSize: 10, fill: '#3B82F6' }} />
+                  <ReferenceArea x1="Apr" x2="Sep" fill="#FEF9C3" fillOpacity={0.2} label={{ value: 'Summer', position: 'insideTop', fontSize: 10, fill: '#D97706' }} />
+                  <ReferenceArea x1="Oct" x2="Dec" fill="#DBEAFE" fillOpacity={0.3} label={{ value: 'Winter', position: 'insideTop', fontSize: 10, fill: '#3B82F6' }} />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#9CA3AF" />
                   <YAxis tick={{ fontSize: 11 }} stroke="#9CA3AF" label={{ value: 'EUR/MWh', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9CA3AF' } }} />
                   <Tooltip
                     contentStyle={{ borderRadius: 8, fontSize: 12 }}
                     formatter={(val, name) => {
-                      if (name === 'dayNightSpread') return [`${val} EUR/MWh`, 'Night Spread (18h vs min)']
-                      return [`${val} EUR/MWh`, 'Avg. Daily Spread']
+                      if (val == null) return [null, null]
+                      if (name === 'dayNightSpread') return [`${val} EUR/MWh`, 'Night Spread (18h vs cheapest)']
+                      if (name === 'winterSpread') return [`${val} EUR/MWh`, 'Avg. Daily Spread (Winter)']
+                      if (name === 'summerSpread') return [`${val} EUR/MWh`, 'Avg. Daily Spread (Summer)']
+                      return [`${val} EUR/MWh`, String(name)]
                     }}
                   />
-                  <Bar dataKey="avgSpread" fill="#EA1C0A" opacity={0.6} name="avgSpread" radius={[2, 2, 0, 0]} />
-                  <Line type="monotone" dataKey="dayNightSpread" stroke="#4F46E5" strokeWidth={2.5} name="dayNightSpread" dot={{ r: 3, fill: '#4F46E5' }} />
+                  {/* Season-colored bars */}
+                  <Bar dataKey="winterSpread" fill="#3B82F6" opacity={0.7} name="winterSpread" radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="summerSpread" fill="#F59E0B" opacity={0.5} name="summerSpread" radius={[2, 2, 0, 0]} />
+                  <Line type="monotone" dataKey="dayNightSpread" stroke="#EA1C0A" strokeWidth={2.5} name="dayNightSpread" dot={{ r: 3, fill: '#EA1C0A' }} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
             <div className="flex flex-wrap gap-4 mt-3 text-xs text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#EA1C0A] opacity-60" />Avg. Daily Spread</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-[#4F46E5]" />Night Spread (18h vs cheapest)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-blue-500 opacity-70" />Winter Spread (Oct-Mar)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-amber-400 opacity-50" />Summer Spread (Apr-Sep)</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-1 rounded bg-[#EA1C0A]" />Night Spread (18h vs cheapest)</span>
             </div>
             <p className="text-sm text-gray-500 mt-3">
-              Winter months (Oct-Mar) typically show the highest volatility — these are the months with the biggest optimization opportunity. The night spread shows the gap between the 18:00 price (when you plug in) and the cheapest night hour — the more you need to charge, the more hours you use, narrowing the effective spread.
+              Winter months (Oct-Mar) typically show the highest volatility — more heating demand, less solar. This is when flexibility monetization generates the most value.
             </p>
           </CardContent>
         </Card>
