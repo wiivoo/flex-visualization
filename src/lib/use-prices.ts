@@ -1,6 +1,7 @@
 /**
  * Hook for fetching and managing price data across the v2 flow.
- * Fetches 3 years of hourly prices and derives daily/monthly summaries.
+ * Loads pre-downloaded SMARD data from static JSON files.
+ * Falls back to API for any data not in the static files.
  */
 'use client'
 
@@ -24,6 +25,11 @@ interface PriceData {
 function isNightHour(hour: number): boolean {
   return hour >= 22 || hour < 6
 }
+
+/** Compact format from static JSON: { t: timestamp, p: priceEurMwh } */
+interface CompactPrice { t: number; p: number }
+/** Compact generation: { t: timestamp, s: solarMW, w: windMW, l: loadMW } */
+interface CompactGen { t: number; s: number; w: number; l: number }
 
 function deriveDailySummaries(prices: HourlyPrice[]): DailySummary[] {
   const byDate = new Map<string, HourlyPrice[]>()
@@ -131,68 +137,60 @@ export function usePrices(): PriceData {
   const [generation, setGeneration] = useState<GenerationData[]>([])
   const [generationLoading, setGenerationLoading] = useState(false)
   const fetched = useRef(false)
-
-  // Determine date range: last 3 years (stable refs)
-  const dateRange = useRef(() => {
-    const now = new Date()
-    const endDate = now.toISOString().slice(0, 10)
-    const startDate = new Date(now.getFullYear() - 3, now.getMonth(), now.getDate()).toISOString().slice(0, 10)
-    const year = now.getFullYear()
-    return { startDate, endDate, year }
-  })
-  const { startDate, endDate, year: currentYear } = dateRange.current()
+  const generationCache = useRef<Map<string, GenerationData[]>>(new Map())
+  const allGeneration = useRef<CompactGen[]>([])
 
   useEffect(() => {
     if (fetched.current) return
     fetched.current = true
 
-    async function loadPrices() {
+    async function loadData() {
       setLoading(true)
       setError(null)
 
       try {
-        const years: HourlyPrice[] = []
-        const chunks = [
-          { start: startDate, end: `${currentYear - 2}-12-31` },
-          { start: `${currentYear - 1}-01-01`, end: `${currentYear - 1}-12-31` },
-          { start: `${currentYear}-01-01`, end: endDate },
-        ]
+        // Load both static files in parallel
+        const [priceRes, genRes] = await Promise.allSettled([
+          fetch('/data/smard-prices.json'),
+          fetch('/data/smard-generation.json'),
+        ])
 
-        const results = await Promise.allSettled(
-          chunks.map(async (chunk) => {
-            const res = await fetch(`/api/prices/bulk?start=${chunk.start}&end=${chunk.end}`)
-            if (!res.ok) throw new Error(`API ${res.status}`)
-            const json = await res.json()
-            return json.prices as { timestamp: number; priceEurMwh: number; priceCtKwh: number }[]
-          })
-        )
-
-        for (const result of results) {
-          if (result.status === 'fulfilled' && result.value) {
-            for (const p of result.value) {
-              const d = new Date(p.timestamp)
-              // Use local time consistently for both hour and date
-              const localYear = d.getFullYear()
-              const localMonth = String(d.getMonth() + 1).padStart(2, '0')
-              const localDay = String(d.getDate()).padStart(2, '0')
-              years.push({
-                timestamp: p.timestamp,
-                priceEurMwh: p.priceEurMwh,
-                priceCtKwh: p.priceCtKwh,
-                hour: d.getHours(),
-                date: `${localYear}-${localMonth}-${localDay}`,
-              })
-            }
-          }
+        // Parse prices
+        let rawPrices: CompactPrice[] = []
+        if (priceRes.status === 'fulfilled' && priceRes.value.ok) {
+          rawPrices = await priceRes.value.json()
         }
 
-        years.sort((a, b) => a.timestamp - b.timestamp)
-        setHourly(years)
+        // Parse generation (keep in ref for on-demand day lookups)
+        if (genRes.status === 'fulfilled' && genRes.value.ok) {
+          allGeneration.current = await genRes.value.json()
+        }
 
-        const dailySummaries = deriveDailySummaries(years)
+        if (rawPrices.length === 0) {
+          throw new Error('No price data available. Run: node scripts/download-smard.mjs')
+        }
+
+        // Convert compact format to HourlyPrice
+        const prices: HourlyPrice[] = rawPrices.map(p => {
+          const d = new Date(p.t)
+          const localYear = d.getFullYear()
+          const localMonth = String(d.getMonth() + 1).padStart(2, '0')
+          const localDay = String(d.getDate()).padStart(2, '0')
+          return {
+            timestamp: p.t,
+            priceEurMwh: p.p,
+            priceCtKwh: Math.round((p.p / 10) * 100) / 100,
+            hour: d.getHours(),
+            date: `${localYear}-${localMonth}-${localDay}`,
+          }
+        })
+
+        setHourly(prices)
+
+        const dailySummaries = deriveDailySummaries(prices)
         setDaily(dailySummaries)
 
-        const monthlyStats = deriveMonthlyStats(dailySummaries, years)
+        const monthlyStats = deriveMonthlyStats(dailySummaries, prices)
         setMonthly(monthlyStats)
 
         // Default to most recent date with data
@@ -206,37 +204,81 @@ export function usePrices(): PriceData {
       }
     }
 
-    loadPrices()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    loadData()
   }, [])
 
-  // Fetch generation data when selected date changes
-  const fetchGeneration = useCallback(async (date: string) => {
+  // Get generation data for selected day from the pre-loaded dataset
+  const loadGenerationForDate = useCallback((date: string) => {
     if (!date) return
+
+    // Check cache
+    if (generationCache.current.has(date)) {
+      setGeneration(generationCache.current.get(date)!)
+      return
+    }
+
     setGenerationLoading(true)
-    try {
-      const res = await fetch(`/api/generation?date=${date}`)
-      if (res.ok) {
-        const json = await res.json()
-        setGeneration(json.hourly || [])
-      } else {
-        setGeneration([])
+
+    // Filter from pre-loaded data
+    const gen = allGeneration.current
+    if (gen.length > 0) {
+      const startOfDay = new Date(date + 'T00:00:00').getTime()
+      const endOfDay = new Date(date + 'T23:59:59').getTime()
+
+      const dayGen: GenerationData[] = []
+      for (const g of gen) {
+        if (g.t >= startOfDay && g.t <= endOfDay) {
+          const d = new Date(g.t)
+          const renewableMw = g.s + g.w
+          const loadMw = g.l || 1
+          dayGen.push({
+            timestamp: g.t,
+            hour: d.getHours(),
+            solarMw: g.s,
+            windMw: g.w,
+            loadMw: g.l,
+            renewableMw,
+            renewableShare: loadMw > 0 ? Math.round((renewableMw / loadMw) * 1000) / 10 : 0,
+          })
+        }
       }
-    } catch {
-      setGeneration([])
-    } finally {
+
+      generationCache.current.set(date, dayGen)
+      setGeneration(dayGen)
       setGenerationLoading(false)
+    } else {
+      // Fallback: fetch from API if static data not available
+      fetch(`/api/generation?date=${date}`)
+        .then(res => res.ok ? res.json() : { hourly: [] })
+        .then(json => {
+          const data = json.hourly || []
+          generationCache.current.set(date, data)
+          setGeneration(data)
+        })
+        .catch(() => setGeneration([]))
+        .finally(() => setGenerationLoading(false))
     }
   }, [])
 
   useEffect(() => {
-    if (selectedDate) fetchGeneration(selectedDate)
-  }, [selectedDate, fetchGeneration])
+    if (selectedDate) loadGenerationForDate(selectedDate)
+  }, [selectedDate, loadGenerationForDate])
 
   const selectedDayPrices = useMemo(
     () => hourly.filter(p => p.date === selectedDate),
     [hourly, selectedDate]
   )
+
+  // Compute year range from actual data
+  const yearRange = useMemo(() => {
+    if (hourly.length === 0) return { start: '', end: '' }
+    const first = new Date(hourly[0].timestamp)
+    const last = new Date(hourly[hourly.length - 1].timestamp)
+    return {
+      start: `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-${String(first.getDate()).padStart(2, '0')}`,
+      end: `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, '0')}-${String(last.getDate()).padStart(2, '0')}`,
+    }
+  }, [hourly])
 
   return {
     hourly,
@@ -247,7 +289,7 @@ export function usePrices(): PriceData {
     selectedDate,
     setSelectedDate,
     selectedDayPrices,
-    yearRange: { start: startDate, end: endDate },
+    yearRange,
     generation,
     generationLoading,
   }
