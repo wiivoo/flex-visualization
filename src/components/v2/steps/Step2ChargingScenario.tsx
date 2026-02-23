@@ -95,26 +95,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
       return aAdj - bAdj
     })
 
-    // For continuous line segments, include the price at boundary points too
-    const data = allPrices.map((p, idx) => {
+    // Only color exact charging hours — no boundary expansion
+    const data = allPrices.map(p => {
       const hourKey = String(p.hour).padStart(2, '0')
       const isBaseline = baselineHourSet.has(p.hour)
       const isOptimized = optimizedHourSet.has(p.hour)
-      // Also check neighbors for connecting lines at boundaries
-      const nextHour = idx < allPrices.length - 1 ? allPrices[idx + 1].hour : -1
-      const prevHour = idx > 0 ? allPrices[idx - 1].hour : -1
-      const nextIsBaseline = baselineHourSet.has(nextHour)
-      const prevIsBaseline = baselineHourSet.has(prevHour)
-      const nextIsOptimized = optimizedHourSet.has(nextHour)
-      const prevIsOptimized = optimizedHourSet.has(prevHour)
       const priceVal = Math.round(p.priceEurMwh * 10) / 10
       return {
         hour: `${hourKey}:00`,
         hourNum: p.hour,
         price: priceVal,
-        // Show price on baseline/optimized line at charging hours + boundaries for smooth connection
-        baselinePrice: (isBaseline || nextIsBaseline || prevIsBaseline) ? priceVal : null,
-        optimizedPrice: (isOptimized || nextIsOptimized || prevIsOptimized) ? priceVal : null,
+        // Only show on charging line at actual charging hours
+        baselinePrice: isBaseline ? priceVal : null,
+        optimizedPrice: isOptimized ? priceVal : null,
         isBaseline,
         isOptimized,
       }
