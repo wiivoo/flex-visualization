@@ -132,7 +132,7 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
       <div className="flex items-center justify-between mb-3">
         <button onClick={() => shiftMonth(-1)} disabled={!canGoBack} aria-label="Previous month"
           className={`px-2 py-1 text-sm rounded ${canGoBack ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}>&larr;</button>
-        <span className="font-semibold text-[#313131]">{monthLabel}</span>
+        <span className="text-sm font-bold text-[#313131]">{monthLabel}</span>
         <button onClick={() => shiftMonth(1)} disabled={!canGoForward} aria-label="Next month"
           className={`px-2 py-1 text-sm rounded ${canGoForward ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}>&rarr;</button>
       </div>
@@ -560,29 +560,29 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
   }, [chartData])
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Hero */}
-      <div className="text-center mb-4">
-        <h2 className="text-4xl font-bold text-[#313131] mb-2">
+      <div className="text-center mb-2">
+        <h2 className="text-3xl md:text-4xl font-extrabold text-[#313131] mb-3 tracking-tight">
           Charge when electricity is cheap
         </h2>
-        <p className="text-lg text-gray-500 max-w-2xl mx-auto">
+        <p className="text-base md:text-lg text-gray-500 max-w-2xl mx-auto leading-relaxed">
           Your car is plugged in for hours overnight. Smart charging shifts consumption to the cheapest windows — same energy, lower cost.
         </p>
       </div>
 
       {/* ── Driving Profile ── */}
-      <Card className="overflow-hidden">
-        <CardHeader className="pb-3 bg-gradient-to-r from-gray-50 to-white border-b border-gray-100">
-          <CardTitle className="text-sm font-semibold tracking-wide uppercase text-gray-500">Your Driving Profile</CardTitle>
+      <Card className="overflow-hidden shadow-sm border-gray-200/80">
+        <CardHeader className="pb-3 bg-gray-50/80 border-b border-gray-100">
+          <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Your Driving Profile</CardTitle>
         </CardHeader>
-        <CardContent className="pt-6 pb-5">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+        <CardContent className="pt-6 pb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
             {/* Mileage slider — distribution subtly below */}
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div className="flex items-baseline justify-between">
-                <span className="text-sm font-medium text-gray-700">Yearly Mileage</span>
-                <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.yearlyMileageKm.toLocaleString('en-US')}<span className="text-sm font-normal text-gray-400 ml-1">km</span></span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Yearly Mileage</span>
+                <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.yearlyMileageKm.toLocaleString('en-US')}<span className="text-xs font-normal text-gray-400 ml-1">km</span></span>
               </div>
               <input type="range" min={SLIDER_MIN} max={SLIDER_MAX} step={1000}
                 value={scenario.yearlyMileageKm}
@@ -612,16 +612,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[8px] text-gray-400 font-medium whitespace-nowrap">avg</span>
                 </div>
               </div>
-              <p className="text-xs text-gray-400 text-center">
-                {kwhPerYear.toLocaleString('en-US')} kWh/yr &middot; {AVG_CONSUMPTION_KWH_PER_100KM} kWh/100km
+              <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                {kwhPerYear.toLocaleString('en-US')} kWh/yr · {AVG_CONSUMPTION_KWH_PER_100KM} kWh/100km
               </p>
             </div>
 
             {/* Weekly plug-ins */}
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div className="flex items-baseline justify-between">
-                <span className="text-sm font-medium text-gray-700">Weekly Plug-ins</span>
-                <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.weeklyPlugIns}<span className="text-sm font-normal text-gray-400 ml-1">x / week</span></span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Weekly Plug-ins</span>
+                <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.weeklyPlugIns}<span className="text-xs font-normal text-gray-400 ml-1">x / week</span></span>
               </div>
               <input type="range" min={1} max={7} step={1} value={scenario.weeklyPlugIns}
                 onChange={(e) => setScenario({ ...scenario, weeklyPlugIns: Number(e.target.value) })}
@@ -637,22 +637,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                   <div key={i} className={`h-4 flex-1 rounded-sm transition-colors ${i < scenario.weeklyPlugIns ? 'bg-[#313131]/20' : 'bg-gray-100'}`} />
                 ))}
               </div>
-              <p className="text-xs text-gray-400 text-center">
-                ~{sessionLabel} per session &middot; {DEFAULT_CHARGE_POWER_KW} kW wallbox
+              <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                ~{sessionLabel} per session · {DEFAULT_CHARGE_POWER_KW} kW wallbox
               </p>
             </div>
 
             {/* Typical Plug-in Time — with distribution */}
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               <div className="flex items-baseline justify-between">
-                <span className="text-sm font-medium text-gray-700">Typical Plug-in Time</span>
-                <span className="text-2xl font-bold text-[#313131] tabular-nums">{String(scenario.plugInTime).padStart(2, '0')}<span className="text-sm font-normal text-gray-400 ml-0.5">:00</span></span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Plug-in Time</span>
+                <span className="text-2xl font-bold text-[#313131] tabular-nums">{String(scenario.plugInTime).padStart(2, '0')}<span className="text-xs font-normal text-gray-400 ml-0.5">:00</span></span>
               </div>
               <input type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
                 value={scenario.plugInTime}
                 onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
                 aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
-                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
               <div className="flex justify-between text-[10px] text-gray-400">
                 <span>14:00</span>
                 <span>22:00</span>
@@ -672,19 +672,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                   )
                 })}
               </div>
-              <p className="text-xs text-gray-400 text-center">
-                Baseline arrival &middot; also draggable on chart
+              <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                Baseline arrival · also draggable on chart
               </p>
             </div>
 
             {/* Derived stats */}
-            <div className="flex flex-col justify-center items-center p-5 bg-gradient-to-br from-gray-50 to-gray-100/50 rounded-xl border border-gray-100">
-              <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Per Charge Session</p>
-              <p className="text-4xl font-bold text-[#313131] tabular-nums">~{energyPerSession}</p>
-              <p className="text-sm text-gray-500 mt-0.5">kWh</p>
-              <div className="w-12 h-px bg-gray-200 my-3" />
-              <p className="text-sm text-gray-500">~{kmPerCharge} km range</p>
-              <p className="text-xs text-gray-400 mt-1">{sessionsPerYear} sessions/year</p>
+            <div className="flex flex-col justify-center items-center p-5 bg-gray-50/80 rounded-xl border border-gray-200/60">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Per Session</p>
+              <p className="text-4xl font-extrabold text-[#313131] tabular-nums leading-none">~{energyPerSession}</p>
+              <p className="text-sm font-medium text-gray-500 mt-1">kWh</p>
+              <div className="w-10 h-px bg-gray-200 my-3" />
+              <p className="text-sm text-gray-600 font-medium">~{kmPerCharge} km range</p>
+              <p className="text-xs text-gray-400 mt-1.5">{sessionsPerYear} sessions/year</p>
             </div>
           </div>
         </CardContent>
@@ -693,9 +693,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
       {/* ── Chart + Sidebar ── */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Chart (3/4) */}
-        <Card className="lg:col-span-3 overflow-hidden">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg">Overnight Price Curve</CardTitle>
+        <Card className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <CardTitle className="text-base font-bold text-[#313131]">Overnight Price Curve</CardTitle>
           </CardHeader>
           <CardContent>
             {/* ── Chart container ── */}
@@ -948,9 +948,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
 
         {/* ── Sidebar ── */}
         <div className="h-full">
-          <Card className="h-full flex flex-col">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Select a Day</CardTitle>
+          <Card className="h-full flex flex-col shadow-sm border-gray-200/80">
+            <CardHeader className="pb-2 border-b border-gray-100">
+              <CardTitle className="text-sm font-bold text-[#313131]">Select a Day</CardTitle>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto">
               <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} />
@@ -973,63 +973,63 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
 
             {/* ── LEFT: Session Cost Breakdown ── */}
-            <Card className="border-gray-200 flex flex-col">
-              <CardHeader className="pb-2 border-b border-gray-100">
-                <CardTitle className="text-base font-semibold">Session Cost Breakdown</CardTitle>
-                <p className="text-[11px] text-gray-400 mt-0.5">
+            <Card className="shadow-sm border-gray-200/80 flex flex-col">
+              <CardHeader className="pb-3 border-b border-gray-100">
+                <CardTitle className="text-base font-bold text-[#313131]">Session Cost Breakdown</CardTitle>
+                <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
                   {sessionsPerYear} sessions/yr · {energyPerSession} kWh · {sessionHoursNeeded}h charge ·{' '}
                   {windowHours}h window ·{' '}
-                  <span className={flexibilityHours > 3 ? 'text-emerald-600' : flexibilityHours > 0 ? 'text-amber-600' : 'text-red-500'}>
+                  <span className={`font-semibold ${flexibilityHours > 3 ? 'text-emerald-600' : flexibilityHours > 0 ? 'text-amber-600' : 'text-red-500'}`}>
                     {flexibilityHours}h flex
                   </span>
                 </p>
               </CardHeader>
-              <CardContent className="pt-4 space-y-4 flex-1">
+              <CardContent className="pt-5 space-y-4 flex-1">
 
                 {/* Hour-by-hour price table */}
                 <div className="grid grid-cols-2 gap-3">
                   {/* Immediate */}
-                  <div className="bg-red-50/70 rounded-xl p-3 border border-red-100">
-                    <p className="text-[9px] font-bold text-red-500 uppercase tracking-wider mb-2">
+                  <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
+                    <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2.5">
                       Immediate · first {sessionHoursNeeded}h
                     </p>
-                    <div className="space-y-0.5">
+                    <div className="space-y-1">
                       {sessionCost.baselineHours.map((h, i) => (
-                        <div key={i} className="flex justify-between text-[12px]">
+                        <div key={i} className="flex justify-between text-[12px] leading-snug">
                           <span className="font-mono text-gray-500">{h.label}</span>
-                          <span className="tabular-nums font-medium text-red-700">{h.ct.toFixed(1)} ct</span>
+                          <span className="tabular-nums font-semibold text-red-700">{h.ct.toFixed(1)} ct</span>
                         </div>
                       ))}
                     </div>
-                    <div className="border-t border-red-200 mt-2 pt-2 flex justify-between text-[12px]">
-                      <span className="text-gray-500">avg</span>
+                    <div className="border-t border-red-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
+                      <span className="text-gray-500 font-medium">avg</span>
                       <span className="font-bold text-red-700 tabular-nums">{sessionCost.baselineAvgCt.toFixed(1)} ct/kWh</span>
                     </div>
                   </div>
 
                   {/* Optimized */}
-                  <div className="bg-emerald-50/70 rounded-xl p-3 border border-emerald-100">
-                    <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
+                  <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
+                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2.5">
                       Optimized · cheapest {sessionHoursNeeded}h
                     </p>
-                    <div className="space-y-0.5">
+                    <div className="space-y-1">
                       {sessionCost.optimizedHours.map((h, i) => (
-                        <div key={i} className="flex justify-between text-[12px]">
+                        <div key={i} className="flex justify-between text-[12px] leading-snug">
                           <span className="font-mono text-gray-500">{h.label}</span>
-                          <span className="tabular-nums font-medium text-emerald-700">{h.ct.toFixed(1)} ct</span>
+                          <span className="tabular-nums font-semibold text-emerald-700">{h.ct.toFixed(1)} ct</span>
                         </div>
                       ))}
                     </div>
-                    <div className="border-t border-emerald-200 mt-2 pt-2 flex justify-between text-[12px]">
-                      <span className="text-gray-500">avg</span>
+                    <div className="border-t border-emerald-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
+                      <span className="text-gray-500 font-medium">avg</span>
                       <span className="font-bold text-emerald-700 tabular-nums">{sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh</span>
                     </div>
                   </div>
                 </div>
 
                 {/* Cost formula chain */}
-                <div className="bg-gray-50 rounded-xl px-3 py-3 text-[11px] space-y-1.5 border border-gray-100">
-                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-2">Formula: avg ct × kWh ÷ 100 = EUR</p>
+                <div className="bg-gray-50/80 rounded-lg px-3.5 py-3 text-[11px] space-y-1.5 border border-gray-200/60">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Formula: avg ct x kWh / 100 = EUR</p>
                   <div className="flex justify-between text-gray-500">
                     <span className="font-mono">{sessionCost.baselineAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
                     <span className="font-semibold text-red-600 tabular-nums">{sessionCost.baselineEur.toFixed(2)} EUR</span>
@@ -1057,14 +1057,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
             </Card>
 
             {/* ── RIGHT: Monthly Savings Potential + rolling avg methodology ── */}
-            <Card className="overflow-hidden flex flex-col">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-semibold">Monthly Savings Potential</CardTitle>
-                <p className="text-[11px] text-gray-500">
+            <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
+              <CardHeader className="pb-3 border-b border-gray-100">
+                <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings Potential</CardTitle>
+                <p className="text-[11px] text-gray-500 mt-1">
                   {scenario.weeklyPlugIns}x/week · {energyPerSession} kWh/session · day-ahead spot shifting
                 </p>
               </CardHeader>
-              <CardContent className="space-y-4 flex-1 flex flex-col">
+              <CardContent className="pt-5 space-y-4 flex-1 flex flex-col">
                 {/* Bar chart — last 12 months of rolling window + cumulative line */}
                 {(() => {
                   const SEASON_BG: Record<string, string> = {
@@ -1156,8 +1156,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                 })()}
 
                 {/* Rolling average methodology */}
-                <div className="bg-gray-50 rounded-xl border border-gray-100 px-3 py-3 space-y-1.5">
-                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-2">
+                <div className="bg-gray-50/80 rounded-lg border border-gray-200/60 px-3.5 py-3 space-y-1.5">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
                     Rolling 365-day average — how the yearly total is derived
                   </p>
                   <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-[11px]">
@@ -1183,10 +1183,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
 
       {/* loading state when sessionCost not yet ready */}
       {!sessionCost && monthlySavingsData.length === 0 && (
-        <Card className="border-gray-200">
-          <CardContent className="pt-6 pb-6 text-center">
-            <div className="w-10 h-10 border-4 border-[#EA1C0A] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-            <p className="text-sm text-gray-500">Computing optimal schedule...</p>
+        <Card className="shadow-sm border-gray-200/80">
+          <CardContent className="py-10 text-center">
+            <div className="w-8 h-8 border-[3px] border-[#EA1C0A] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-sm text-gray-500 font-medium">Computing optimal schedule...</p>
           </CardContent>
         </Card>
       )}
@@ -1206,55 +1206,54 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
         const cellData = (mil: number, pi: number) => heatmapData.find(d => d.mileage === mil && d.plugIns === pi)
 
         return (
-          <Card className="overflow-hidden">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Savings Sensitivity</CardTitle>
-              <p className="text-sm text-gray-500">
+          <Card className="overflow-hidden shadow-sm border-gray-200/80">
+            <CardHeader className="pb-3 border-b border-gray-100">
+              <CardTitle className="text-base font-bold text-[#313131]">Savings Sensitivity</CardTitle>
+              <p className="text-[13px] text-gray-500 mt-1">
                 Yearly savings (EUR/yr) · mileage vs. charging frequency · adjust plug-in time below
               </p>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-5">
               <div className="flex gap-5 items-start">
 
-                {/* ── Vertical plug-in time slider — same design as top-right setting ── */}
-                <div className="flex gap-2 shrink-0 select-none" style={{ height: `${mileages.length * 40 + 24}px` }}>
-                  {/* Distribution bars (horizontal, mirroring vertical bars at top) */}
-                  <div className="flex flex-col justify-between py-[2px]" style={{ width: 32 }}>
+                {/* ── Vertical plug-in time slider — matches top-right design ── */}
+                <div className="flex gap-2 shrink-0 select-none items-end pb-6" style={{ height: `${mileages.length * 40 + 24}px` }}>
+                  {/* Vertical range input — 22 at top, 14 at bottom (writing-mode, no direction flip) */}
+                  <div className="flex flex-col items-center gap-1 h-full">
+                    <span className="text-[10px] text-gray-400 tabular-nums">22</span>
+                    <input
+                      type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
+                      value={scenario.plugInTime}
+                      onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
+                      aria-label={`Plug-in time: ${scenario.plugInTime}:00`}
+                      style={{ writingMode: 'vertical-lr' } as React.CSSProperties}
+                      className="flex-1 w-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer
+                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
+                        [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131]
+                        [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer
+                        [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <span className="text-[10px] text-gray-400 tabular-nums">14</span>
+                  </div>
+
+                  {/* Distribution bars — same as top: vertical columns growing upward, items-end */}
+                  <div className="flex flex-col-reverse items-end gap-px h-full justify-end" style={{ width: 28 }}>
                     {PLUGIN_TIME_DIST.map((bin) => {
-                      const widthPct = (bin.pct / MAX_PLUGIN_PCT) * 100
+                      const heightPct = (bin.pct / MAX_PLUGIN_PCT) * 100
                       const isActive = bin.hour === scenario.plugInTime
                       return (
-                        <div key={bin.hour} className="flex items-center justify-end h-full">
-                          <div className="rounded-sm transition-all" style={{
-                            height: 6,
-                            width: `${widthPct}%`,
-                            background: isActive ? 'rgba(234,28,10,0.4)' : 'rgba(0,0,0,0.07)',
+                        <div key={bin.hour} className="w-full rounded-sm transition-all flex-1 flex items-end">
+                          <div className="w-full rounded-sm transition-all" style={{
+                            height: `${heightPct}%`,
+                            background: isActive ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.06)',
                           }} />
                         </div>
                       )
                     })}
                   </div>
 
-                  {/* Vertical range input — same thumb style as top-right */}
-                  <div className="flex flex-col items-center gap-1">
-                    <span className="text-[10px] text-gray-400 tabular-nums">14</span>
-                    <input
-                      type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
-                      value={scenario.plugInTime}
-                      onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
-                      aria-label={`Plug-in time: ${scenario.plugInTime}:00`}
-                      style={{ writingMode: 'vertical-lr', direction: 'rtl' } as React.CSSProperties}
-                      className="flex-1 w-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer
-                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
-                        [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A]
-                        [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer
-                        [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-                    <span className="text-[10px] text-gray-400 tabular-nums">22</span>
-                  </div>
-
                   {/* Selected time label */}
-                  <div className="flex flex-col justify-center">
-                    <span className="text-[11px] font-bold text-[#EA1C0A] tabular-nums -rotate-90 whitespace-nowrap origin-center">
+                  <div className="flex flex-col justify-center self-stretch">
+                    <span className="text-[11px] font-bold text-[#313131] tabular-nums -rotate-90 whitespace-nowrap origin-center">
                       {String(scenario.plugInTime).padStart(2,'0')}:00
                     </span>
                   </div>
@@ -1265,9 +1264,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                   <table className="w-full border-collapse text-center">
                     <thead>
                       <tr>
-                        <th className="text-[11px] text-gray-500 font-medium p-2 text-left">km/yr ↓ · plug-ins →</th>
+                        <th className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide p-2 text-left">km/yr</th>
                         {plugins.map(pi => (
-                          <th key={pi} className={`text-[11px] font-semibold p-2 ${pi === scenario.weeklyPlugIns ? 'text-[#EA1C0A]' : 'text-gray-500'}`}>
+                          <th key={pi} className={`text-[11px] font-bold p-2 transition-colors ${pi === scenario.weeklyPlugIns ? 'text-[#EA1C0A]' : 'text-gray-400'}`}>
                             {pi}x
                           </th>
                         ))}
@@ -1276,7 +1275,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                     <tbody>
                       {mileages.map(mil => (
                         <tr key={mil}>
-                          <td className={`text-[11px] font-medium p-2 text-left tabular-nums ${mil === scenario.yearlyMileageKm ? 'text-[#EA1C0A] font-bold' : 'text-gray-600'}`}>
+                          <td className={`text-[11px] font-semibold p-2 text-left tabular-nums transition-colors ${mil === scenario.yearlyMileageKm ? 'text-[#EA1C0A] font-bold' : 'text-gray-500'}`}>
                             {(mil / 1000).toFixed(0)}k
                           </td>
                           {plugins.map(pi => {
@@ -1301,8 +1300,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                       ))}
                     </tbody>
                   </table>
-                  <div className="flex justify-end mt-3 px-2">
-                    <span className="text-[10px] text-gray-400">Your profile highlighted · last 12 months</span>
+                  <div className="flex justify-end mt-4 px-2">
+                    <span className="text-[10px] text-gray-400 font-medium">Your profile highlighted · last 12 months</span>
                   </div>
                 </div>
 
@@ -1313,12 +1312,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
       })()}
 
       {/* Navigation */}
-      <div className="flex justify-between items-center pt-4">
-        <Button variant="outline" onClick={onBack}>&larr; Back: Price Explorer</Button>
-        <p className="text-gray-500 text-sm">
+      <div className="flex justify-between items-center pt-6 border-t border-gray-100">
+        <Button variant="outline" onClick={onBack} className="text-gray-600">&larr; Back: Price Explorer</Button>
+        <p className="text-gray-400 text-sm hidden md:block">
           But day-ahead is just the beginning — there are more value drivers.
         </p>
-        <Button onClick={onNext} size="lg" className="bg-[#EA1C0A] hover:bg-[#C51608] text-white px-8">
+        <Button onClick={onNext} size="lg" className="bg-[#EA1C0A] hover:bg-[#C51608] text-white px-8 font-semibold shadow-sm">
           Next: Value Waterfall &rarr;
         </Button>
       </div>
