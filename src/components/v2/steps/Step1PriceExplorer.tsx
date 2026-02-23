@@ -48,7 +48,8 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
   const [viewMonth, setViewMonth] = useState(() => {
     if (selectedDate) return selectedDate.slice(0, 7)
     if (dataRange.lastMonth) return dataRange.lastMonth
-    return new Date().toISOString().slice(0, 7)
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   })
 
   // Sync viewMonth when selectedDate changes (e.g., after data loads)
@@ -75,7 +76,10 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
     return days
   }, [viewMonth, daily])
 
-  const monthLabel = new Date(viewMonth + '-01').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const monthLabel = (() => {
+    const [y, m] = viewMonth.split('-').map(Number)
+    return new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  })()
 
   const canGoBack = dataRange.firstMonth && viewMonth > dataRange.firstMonth
   const canGoForward = dataRange.lastMonth && viewMonth < dataRange.lastMonth
@@ -83,7 +87,7 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
   function shiftMonth(delta: number) {
     const [y, m] = viewMonth.split('-').map(Number)
     const d = new Date(y, m - 1 + delta, 1)
-    const newMonth = d.toISOString().slice(0, 7)
+    const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     // Constrain to data range
     if (dataRange.firstMonth && newMonth < dataRange.firstMonth) return
     if (dataRange.lastMonth && newMonth > dataRange.lastMonth) return
