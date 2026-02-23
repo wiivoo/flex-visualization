@@ -215,10 +215,10 @@ export function usePrices(): PriceData {
           setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
         }
 
-        // Background: fetch incremental data if static is behind
-        if (lastStaticDate < today) {
-          fetchIncremental(lastStaticDate, today, prices)
-        }
+        // Background: fetch incremental data up to tomorrow (EPEX publishes D+1 prices after ~noon)
+        // Always run — even if static is current, tomorrow's prices may already be on SMARD
+        const tomorrow = nextDay(today)
+        fetchIncremental(lastStaticDate, tomorrow, prices)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load prices')
       } finally {
@@ -268,10 +268,10 @@ export function usePrices(): PriceData {
       setDaily(dailySummaries)
       setMonthly(deriveMonthlyStats(dailySummaries, merged))
 
-      // Update selected date to the latest available
+      // Advance selected date to the latest available (only if user hasn't gone back in time)
       if (dailySummaries.length > 0) {
         const latest = dailySummaries[dailySummaries.length - 1].date
-        setSelectedDate(prev => prev || latest)
+        setSelectedDate(prev => (!prev || latest > prev) ? latest : prev)
       }
 
       console.log(`[usePrices] Incremental update: +${unique.length} price points (${startDate} → ${today})`)
@@ -281,14 +281,18 @@ export function usePrices(): PriceData {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /** Fetch generation from live API and cache */
+  /** Fetch generation from live API and cache.
+   *  Only replaces existing data if the live result is at least as complete
+   *  (same or more hours) — prevents partial today-data from overwriting a
+   *  complete static dataset. */
   const fetchLiveGeneration = useCallback((date: string) => {
     setGenerationLoading(true)
     fetch(`/api/generation?date=${date}`)
       .then(res => res.ok ? res.json() : { hourly: [] })
       .then(json => {
         const data: GenerationData[] = json.hourly || []
-        if (data.length > 0) {
+        const existing = generationCache.current.get(date)
+        if (data.length > 0 && (!existing || data.length >= existing.length)) {
           generationCache.current.set(date, data)
           setGeneration(data)
         }
@@ -335,16 +339,19 @@ export function usePrices(): PriceData {
       }
     }
 
-    // If static data is incomplete (< 20 hours), fetch live from SMARD API
-    if (dayGen.length < 20) {
-      // Show what we have immediately, then upgrade with live data
+    // For recent dates (last 7 days), always refresh from live SMARD — static may be stale
+    const dayAgeMs = Date.now() - new Date(date + 'T12:00:00').getTime()
+    const isRecentDate = dayAgeMs < 7 * 24 * 3600 * 1000
+
+    if (dayGen.length < 20 || isRecentDate) {
+      // Show static data immediately if available, then upgrade with live data
       if (dayGen.length > 0) {
         setGeneration(dayGen)
         setGenerationLoading(false)
       }
       fetchLiveGeneration(date)
     } else {
-      // Static data is complete — use it
+      // Static data is complete and old enough — use it directly
       generationCache.current.set(date, dayGen)
       setGeneration(dayGen)
       setGenerationLoading(false)

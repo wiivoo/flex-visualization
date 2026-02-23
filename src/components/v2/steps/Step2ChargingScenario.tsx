@@ -2,7 +2,6 @@
 
 import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
@@ -60,8 +59,6 @@ interface Props {
   scenario: ChargingScenario
   setScenario: (s: ChargingScenario) => void
   optimization: OptimizeResult | null
-  onNext: () => void
-  onBack: () => void
 }
 
 /* ────── MiniCalendar ────── */
@@ -178,7 +175,7 @@ function fmtDateShort(dateStr: string): string {
 
 
 /* ────── Main Component ────── */
-export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, onBack }: Props) {
+export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) {
   const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weeklyPlugIns)
   const kmPerCharge = Math.round(scenario.yearlyMileageKm / (scenario.weeklyPlugIns * 52))
   const sessionsPerYear = scenario.weeklyPlugIns * 52
@@ -561,16 +558,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
 
   return (
     <div className="space-y-8">
-      {/* Hero */}
-      <div className="text-center mb-2">
-        <h2 className="text-3xl md:text-4xl font-extrabold text-[#313131] mb-3 tracking-tight">
-          Charge when electricity is cheap
-        </h2>
-        <p className="text-base md:text-lg text-gray-500 max-w-2xl mx-auto leading-relaxed">
-          Your car is plugged in for hours overnight. Smart charging shifts consumption to the cheapest windows — same energy, lower cost.
-        </p>
-      </div>
-
       {/* ── Driving Profile ── */}
       <Card className="overflow-hidden shadow-sm border-gray-200/80">
         <CardHeader className="pb-3 bg-gray-50/80 border-b border-gray-100">
@@ -666,7 +653,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                     <div key={bin.hour} className="flex-1 rounded-sm transition-all"
                       style={{
                         height: `${heightPct}%`,
-                        background: isActive ? 'rgba(234,28,10,0.35)' : 'rgba(0,0,0,0.06)',
+                        background: isActive ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.06)',
                       }}
                       title={`${bin.hour}:00 — ${bin.pct}% of drivers`} />
                   )
@@ -1216,11 +1203,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
             <CardContent className="pt-5">
               <div className="flex gap-5 items-start">
 
-                {/* ── Vertical plug-in time slider — matches top-right design ── */}
-                <div className="flex gap-2 shrink-0 select-none items-end pb-6" style={{ height: `${mileages.length * 40 + 24}px` }}>
-                  {/* Vertical range input — 22 at top, 14 at bottom (writing-mode, no direction flip) */}
+                {/* ── Vertical plug-in time slider ── */}
+                <div className="flex gap-2 shrink-0 select-none" style={{ height: `${mileages.length * 40 + 24}px` }}>
                   <div className="flex flex-col items-center gap-1 h-full">
-                    <span className="text-[10px] text-gray-400 tabular-nums">22</span>
+                    <span className="text-[10px] text-gray-400 tabular-nums">22:00</span>
                     <input
                       type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
                       value={scenario.plugInTime}
@@ -1232,27 +1218,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
                         [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131]
                         [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer
                         [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-                    <span className="text-[10px] text-gray-400 tabular-nums">14</span>
+                    <span className="text-[10px] text-gray-400 tabular-nums">14:00</span>
                   </div>
-
-                  {/* Distribution bars — same as top: vertical columns growing upward, items-end */}
-                  <div className="flex flex-col-reverse items-end gap-px h-full justify-end" style={{ width: 28 }}>
-                    {PLUGIN_TIME_DIST.map((bin) => {
-                      const heightPct = (bin.pct / MAX_PLUGIN_PCT) * 100
-                      const isActive = bin.hour === scenario.plugInTime
-                      return (
-                        <div key={bin.hour} className="w-full rounded-sm transition-all flex-1 flex items-end">
-                          <div className="w-full rounded-sm transition-all" style={{
-                            height: `${heightPct}%`,
-                            background: isActive ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.06)',
-                          }} />
-                        </div>
-                      )
-                    })}
-                  </div>
-
                   {/* Selected time label */}
-                  <div className="flex flex-col justify-center self-stretch">
+                  <div className="flex flex-col justify-center">
                     <span className="text-[11px] font-bold text-[#313131] tabular-nums -rotate-90 whitespace-nowrap origin-center">
                       {String(scenario.plugInTime).padStart(2,'0')}:00
                     </span>
@@ -1311,16 +1280,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, o
         )
       })()}
 
-      {/* Navigation */}
-      <div className="flex justify-between items-center pt-6 border-t border-gray-100">
-        <Button variant="outline" onClick={onBack} className="text-gray-600">&larr; Back: Price Explorer</Button>
-        <p className="text-gray-400 text-sm hidden md:block">
-          But day-ahead is just the beginning — there are more value drivers.
-        </p>
-        <Button onClick={onNext} size="lg" className="bg-[#EA1C0A] hover:bg-[#C51608] text-white px-8 font-semibold shadow-sm">
-          Next: Value Waterfall &rarr;
-        </Button>
-      </div>
     </div>
   )
 }
