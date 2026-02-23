@@ -11,9 +11,9 @@ export interface VehiclePreset {
 }
 
 export const VEHICLE_PRESETS: VehiclePreset[] = [
-  { id: 'compact', label: 'Compact', battery_kwh: 40, charge_power_kw: 10, examples: 'Zoe, ID.3, Mini E' },
-  { id: 'mid', label: 'Mid-Range', battery_kwh: 60, charge_power_kw: 10, examples: 'Model 3, Model Y, Ioniq 6' },
-  { id: 'suv', label: 'SUV', battery_kwh: 100, charge_power_kw: 10, examples: 'e-tron, EQS, Model X' },
+  { id: 'compact', label: 'Compact', battery_kwh: 40, charge_power_kw: 7, examples: 'Zoe, ID.3, Mini E' },
+  { id: 'mid', label: 'Mid-Range', battery_kwh: 60, charge_power_kw: 7, examples: 'Model 3, Model Y, Ioniq 6' },
+  { id: 'suv', label: 'SUV', battery_kwh: 100, charge_power_kw: 7, examples: 'e-tron, EQS, Model X' },
 ]
 
 export interface ChargingScenario {
@@ -40,7 +40,7 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
 export const AVG_CONSUMPTION_KWH_PER_100KM = 19
 
 /** Default wallbox power in kW (net at home) */
-export const DEFAULT_CHARGE_POWER_KW = 10
+export const DEFAULT_CHARGE_POWER_KW = 7
 
 /** Default battery capacity */
 export const DEFAULT_BATTERY_KWH = 60

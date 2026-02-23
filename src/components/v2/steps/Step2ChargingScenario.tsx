@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useCallback, useEffect, useRef } from 'react'
+import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
@@ -8,7 +8,8 @@ import { deriveEnergyPerSession, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_P
 import type { OptimizeResult } from '@/lib/optimizer'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, ReferenceArea
+  ResponsiveContainer, ReferenceLine, ReferenceArea,
+  Bar
 } from 'recharts'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
@@ -23,6 +24,23 @@ const MILEAGE_DIST = [
 const MAX_DIST_PCT = 26
 const SLIDER_MIN = 5000, SLIDER_MAX = 40000, SLIDER_RANGE = SLIDER_MAX - SLIDER_MIN
 const DE_AVG_MILEAGE = 14000
+
+// Typical EV plug-in time distribution (home charging, Germany)
+// Based on smart-meter + BDEW load profile research: peak after-work return 17-18h
+const PLUGIN_TIME_DIST = [
+  { hour: 14, pct: 2 },
+  { hour: 15, pct: 4 },
+  { hour: 16, pct: 9 },
+  { hour: 17, pct: 21 },
+  { hour: 18, pct: 27 },
+  { hour: 19, pct: 18 },
+  { hour: 20, pct: 11 },
+  { hour: 21, pct: 5 },
+  { hour: 22, pct: 3 },
+]
+const MAX_PLUGIN_PCT = 27
+const PLUGIN_HOUR_MIN = 14
+const PLUGIN_HOUR_MAX = 22
 
 // Chart margins — passed to Recharts (actual plot area measured from DOM)
 const CHART_MARGIN = { top: 42, right: 15, bottom: 25, left: 50 }
@@ -160,15 +178,23 @@ function fmtDateShort(dateStr: string): string {
 
 
 /* ────── Main Component ────── */
-export function Step2ChargingScenario({ prices, scenario, setScenario, optimization, onNext, onBack }: Props) {
+export function Step2ChargingScenario({ prices, scenario, setScenario, onNext, onBack }: Props) {
   const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weeklyPlugIns)
   const kmPerCharge = Math.round(scenario.yearlyMileageKm / (scenario.weeklyPlugIns * 52))
   const sessionsPerYear = scenario.weeklyPlugIns * 52
   const kwhPerYear = Math.round(energyPerSession * sessionsPerYear)
-  const sessionMinutes = Math.round((energyPerSession / DEFAULT_CHARGE_POWER_KW) * 60)
+  const sessionDurationHExact = energyPerSession / DEFAULT_CHARGE_POWER_KW
+  const sessionHoursNeeded = Math.ceil(sessionDurationHExact)
+  const sessionMinutes = Math.round(sessionDurationHExact * 60)
   const sessionH = Math.floor(sessionMinutes / 60)
   const sessionM = sessionMinutes % 60
   const sessionLabel = sessionH > 0 ? `${sessionH}h ${sessionM > 0 ? `${sessionM}m` : ''}` : `${sessionM}m`
+  // Overnight window: spans midnight (plugInTime evening → departureTime morning)
+  const windowHours = scenario.plugInTime < scenario.departureTime
+    ? scenario.departureTime - scenario.plugInTime
+    : (24 - scenario.plugInTime) + scenario.departureTime
+  const flexibilityHours = windowHours - sessionHoursNeeded
+  const baselineEndHour = (scenario.plugInTime + sessionHoursNeeded) % 24
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
@@ -176,6 +202,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
 
   const date1 = prices.selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
+
+  // Deferred scenario values — heavy computations (heatmap, monthly) use these
+  // so they don't block the UI during handle dragging
+  const deferredPlugInTime = useDeferredValue(scenario.plugInTime)
+  const deferredDepartureTime = useDeferredValue(scenario.departureTime)
+  const deferredWeeklyPlugIns = useDeferredValue(scenario.weeklyPlugIns)
+  const deferredEnergyPerSession = useDeferredValue(energyPerSession)
+
 
   // ── Build two-day overnight chart data ──
   const { chartData, sessionCost, rollingAvgSavings, monthlySavings } = useMemo(() => {
@@ -235,6 +269,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
       kwh: energyPerSession,
       baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
       optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
+      // Individual charged hours — for transparent derivation display
+      baselineHours: windowPrices.slice(0, hoursNeeded).map(p => ({
+        label: `${String(p.hour).padStart(2, '0')}:00`,
+        ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+      })),
+      optimizedHours: [...sortedByPrice.slice(0, hoursNeeded)]
+        .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour - b.hour)
+        .map(p => ({
+          label: `${String(p.hour).padStart(2, '0')}:00`,
+          ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+        })),
     }
 
     // 365-day rolling average
@@ -362,6 +407,121 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
     return { baselineRanges: findRanges('baselinePrice'), optimizedRanges: findRanges('optimizedPrice') }
   }, [chartData, arrivalIdx, departureIdx, N])
 
+  // ── Pre-compute overnight windows (shared by monthly + heatmap) ──
+  // Uses deferred values so these heavy computations don't block during drag
+  const overnightWindows = useMemo(() => {
+    if (prices.hourly.length === 0) return []
+    const byDate = new Map<string, HourlyPrice[]>()
+    for (const p of prices.hourly) {
+      const arr = byDate.get(p.date) || []
+      arr.push(p)
+      byDate.set(p.date, arr)
+    }
+    const windows: { date: string; month: string; prices: HourlyPrice[]; sorted: HourlyPrice[] }[] = []
+    for (const [dDate, dPrices] of byDate) {
+      const nd = nextDayStr(dDate)
+      const nPrices = byDate.get(nd)
+      if (!nPrices || nPrices.length === 0) continue
+      const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
+      const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
+      const win = [...eve, ...morn]
+      if (win.length === 0) continue
+      const sorted = [...win].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+      windows.push({ date: dDate, month: dDate.slice(0, 7), prices: win, sorted })
+    }
+    return windows
+  }, [prices.hourly, deferredPlugInTime, deferredDepartureTime])
+
+  // ── Monthly savings breakdown for yearly chart ──
+  const monthlySavingsData = useMemo(() => {
+    if (overnightWindows.length === 0) return []
+    const hoursNeeded = Math.ceil(deferredEnergyPerSession / DEFAULT_CHARGE_POWER_KW)
+    const monthMap = new Map<string, { totalSavings: number; days: number }>()
+    for (const w of overnightWindows) {
+      if (w.prices.length < hoursNeeded) continue
+      const bH = w.prices.slice(0, hoursNeeded)
+      const oH = w.sorted.slice(0, hoursNeeded)
+      const bA = bH.reduce((s, p) => s + p.priceCtKwh, 0) / bH.length
+      const oA = oH.reduce((s, p) => s + p.priceCtKwh, 0) / oH.length
+      const savingsEur = (bA - oA) * deferredEnergyPerSession / 100
+      const entry = monthMap.get(w.month) || { totalSavings: 0, days: 0 }
+      entry.totalSavings += savingsEur
+      entry.days++
+      monthMap.set(w.month, entry)
+    }
+    const plugDaysPerMonth = (deferredWeeklyPlugIns / 7) * 30.44
+    return [...monthMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, data]) => {
+        const avgPerSession = data.days > 0 ? data.totalSavings / data.days : 0
+        const monthlySav = Math.round(avgPerSession * plugDaysPerMonth * 100) / 100
+        const [y, m] = month.split('-').map(Number)
+        const label = new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'short' })
+        const mNum = m
+        const season: 'winter' | 'spring' | 'summer' | 'autumn' =
+          mNum <= 2 || mNum === 12 ? 'winter' : mNum <= 5 ? 'spring' : mNum <= 8 ? 'summer' : 'autumn'
+        return { month, label, savings: monthlySav, season, year: y }
+      })
+  }, [overnightWindows, deferredEnergyPerSession, deferredWeeklyPlugIns])
+
+  // ── Separate overnight windows for heatmap (uses its own plug-in time slider) ──
+  const heatmapOvernightWindows = useMemo(() => {
+    if (prices.hourly.length === 0) return []
+    const byDate = new Map<string, HourlyPrice[]>()
+    for (const p of prices.hourly) {
+      const arr = byDate.get(p.date) || []
+      arr.push(p)
+      byDate.set(p.date, arr)
+    }
+    const windows: { date: string; month: string; prices: HourlyPrice[]; sorted: HourlyPrice[] }[] = []
+    for (const [dDate, dPrices] of byDate) {
+      const nd = nextDayStr(dDate)
+      const nPrices = byDate.get(nd)
+      if (!nPrices || nPrices.length === 0) continue
+      const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
+      const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
+      const win = [...eve, ...morn]
+      if (win.length === 0) continue
+      const sorted = [...win].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+      windows.push({ date: dDate, month: dDate.slice(0, 7), prices: win, sorted })
+    }
+    return windows
+  }, [prices.hourly, deferredPlugInTime, deferredDepartureTime])
+
+  // ── Heatmap data: savings for different mileage × plug-in combinations ──
+  // Uses the same last-12-month window as the monthly savings chart for consistency
+  const heatmapData = useMemo(() => {
+    if (heatmapOvernightWindows.length === 0) return []
+    // Identify the same 12 months shown in the savings chart
+    const allMonths = [...new Set(heatmapOvernightWindows.map(w => w.month))].sort()
+    const last12Months = new Set(allMonths.slice(-12))
+    const windows = heatmapOvernightWindows.filter(w => last12Months.has(w.month))
+    const mileages = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
+    const plugins = [1, 2, 3, 4, 5, 6, 7]
+    const grid: { mileage: number; plugIns: number; savings: number; kwhPerSession: number }[] = []
+    for (const mil of mileages) {
+      for (const pi of plugins) {
+        const eps = deriveEnergyPerSession(mil, pi)
+        const hoursNeeded = Math.ceil(eps / DEFAULT_CHARGE_POWER_KW)
+        let totalSav = 0, days = 0
+        for (const w of windows) {
+          if (w.prices.length < hoursNeeded) continue
+          const bH = w.prices.slice(0, hoursNeeded)
+          const oH = w.sorted.slice(0, hoursNeeded)
+          const bA = bH.reduce((s, p) => s + p.priceCtKwh, 0) / bH.length
+          const oA = oH.reduce((s, p) => s + p.priceCtKwh, 0) / oH.length
+          totalSav += (bA - oA) * eps / 100
+          days++
+        }
+        const avgPerSession = days > 0 ? totalSav / days : 0
+        const plugDaysPerMonth = (pi / 7) * 30.44
+        const yearlySav = Math.round(avgPerSession * plugDaysPerMonth * 12 * 100) / 100
+        grid.push({ mileage: mil, plugIns: pi, savings: yearlySav, kwhPerSession: eps })
+      }
+    }
+    return grid
+  }, [heatmapOvernightWindows])
+
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
     const prices = chartData.map(d => d.price)
@@ -393,7 +553,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
       <g transform={`translate(${x},${y})`}>
         <line x1={0} y1={0} x2={0} y2={showLabel ? 6 : 4} stroke="#D1D5DB" strokeWidth={1} />
         {showLabel && (
-          <text x={0} y={0} dy={18} textAnchor="middle" fill="#9CA3AF" fontSize={11}>{pt.label}</text>
+          <text x={0} y={0} dy={18} textAnchor="middle" fill="#6B7280" fontSize={12} fontWeight={500}>{pt.label}</text>
         )}
       </g>
     )
@@ -417,7 +577,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
           <CardTitle className="text-sm font-semibold tracking-wide uppercase text-gray-500">Your Driving Profile</CardTitle>
         </CardHeader>
         <CardContent className="pt-6 pb-5">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
             {/* Mileage slider — distribution subtly below */}
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
@@ -433,7 +593,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                 <span>5,000 km</span>
                 <span>40,000 km</span>
               </div>
-              {/* Subtle distribution bars below slider */}
+              {/* Mileage distribution bars */}
               <div className="relative h-6 mt-0.5">
                 {MILEAGE_DIST.map((bin, i) => {
                   const leftPct = ((bin.lo - SLIDER_MIN) / SLIDER_RANGE) * 100
@@ -457,7 +617,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
               </p>
             </div>
 
-            {/* Weekly plug-ins — clean slider only */}
+            {/* Weekly plug-ins */}
             <div className="space-y-2">
               <div className="flex items-baseline justify-between">
                 <span className="text-sm font-medium text-gray-700">Weekly Plug-ins</span>
@@ -471,8 +631,49 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                 <span>1x</span>
                 <span>daily</span>
               </div>
+              {/* Spacer to align with distribution bars in other columns */}
+              <div className="h-6 mt-0.5 flex items-center justify-center gap-0.5">
+                {Array.from({ length: 7 }, (_, i) => (
+                  <div key={i} className={`h-4 flex-1 rounded-sm transition-colors ${i < scenario.weeklyPlugIns ? 'bg-[#313131]/20' : 'bg-gray-100'}`} />
+                ))}
+              </div>
               <p className="text-xs text-gray-400 text-center">
                 ~{sessionLabel} per session &middot; {DEFAULT_CHARGE_POWER_KW} kW wallbox
+              </p>
+            </div>
+
+            {/* Typical Plug-in Time — with distribution */}
+            <div className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm font-medium text-gray-700">Typical Plug-in Time</span>
+                <span className="text-2xl font-bold text-[#313131] tabular-nums">{String(scenario.plugInTime).padStart(2, '0')}<span className="text-sm font-normal text-gray-400 ml-0.5">:00</span></span>
+              </div>
+              <input type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
+                value={scenario.plugInTime}
+                onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
+                aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
+                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+              <div className="flex justify-between text-[10px] text-gray-400">
+                <span>14:00</span>
+                <span>22:00</span>
+              </div>
+              {/* Plug-in time distribution bars (reference: typical German EV driver) */}
+              <div className="relative h-6 mt-0.5 flex items-end gap-px">
+                {PLUGIN_TIME_DIST.map((bin) => {
+                  const heightPct = (bin.pct / MAX_PLUGIN_PCT) * 100
+                  const isActive = bin.hour === scenario.plugInTime
+                  return (
+                    <div key={bin.hour} className="flex-1 rounded-sm transition-all"
+                      style={{
+                        height: `${heightPct}%`,
+                        background: isActive ? 'rgba(234,28,10,0.35)' : 'rgba(0,0,0,0.06)',
+                      }}
+                      title={`${bin.hour}:00 — ${bin.pct}% of drivers`} />
+                  )
+                })}
+              </div>
+              <p className="text-xs text-gray-400 text-center">
+                Baseline arrival &middot; also draggable on chart
               </p>
             </div>
 
@@ -494,22 +695,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
         {/* Chart (3/4) */}
         <Card className="lg:col-span-3 overflow-hidden">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <CardTitle className="text-lg">Overnight Price Curve</CardTitle>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {date1 ? (
-                    <>
-                      <span className="font-medium text-gray-700">{fmtDateShort(date1)}</span>
-                      <span className="text-gray-400"> 14:00</span>
-                      <span className="text-gray-400 mx-1">&rarr;</span>
-                      <span className="font-medium text-gray-700">{fmtDateShort(date2)}</span>
-                      <span className="text-gray-400"> 10:00</span>
-                    </>
-                  ) : 'Select a date'}
-                </p>
-              </div>
-            </div>
+            <CardTitle className="text-lg">Overnight Price Curve</CardTitle>
           </CardHeader>
           <CardContent>
             {/* ── Chart container ── */}
@@ -533,8 +719,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                     ticks={xTicks} tick={renderXTick as never} tickLine={false}
                     stroke="#9CA3AF" interval={0} height={40}
                     allowDecimals={false} />
-                  <YAxis tick={{ fontSize: 11 }} stroke="#9CA3AF"
-                    label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#9CA3AF' } }} />
+                  <YAxis tick={{ fontSize: 12, fontWeight: 500 }} stroke="#9CA3AF"
+                    label={{ value: 'ct/kWh Day-Ahead Spot Price', angle: -90, position: 'insideLeft', offset: -8, style: { fontSize: 11, fill: '#6B7280', fontWeight: 400 } }} />
 
                   {/* Custom tooltip — shows price once, indicates charging type */}
                   <Tooltip
@@ -602,51 +788,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                 </ComposedChart>
               </ResponsiveContainer>
 
-              {/* ── Date labels at top, centered for each day's portion ── */}
-              {N > 1 && plotArea && midnightIdx > 0 && (() => {
-                const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
-                const midX = idxToPx(midnightIdx)
-                const day1CenterX = (plotArea.left + midX) / 2
-                const day2CenterX = (midX + plotArea.left + plotArea.width) / 2
-                return (
-                  <>
-                    <div className="absolute pointer-events-none z-10 text-[11px] font-semibold text-gray-400"
-                      style={{ left: day1CenterX, top: plotArea.top - 18, transform: 'translateX(-50%)' }}>
-                      {fmtDateShort(date1)}
-                    </div>
-                    <div className="absolute pointer-events-none z-10 text-[11px] font-semibold text-gray-400"
-                      style={{ left: day2CenterX, top: plotArea.top - 18, transform: 'translateX(-50%)' }}>
-                      {fmtDateShort(date2)}
-                    </div>
-                  </>
-                )
-              })()}
-
-              {/* ── Charging window labels at top, centered over respective areas ── */}
+              {/* ── Date labels — centered over each day's half ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
-                // "Immediate" label centered over baseline charging area
-                const bCenterX = baselineRanges.length > 0
-                  ? baselineRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / baselineRanges.length
-                  : null
-                // "Optimized" label centered over optimized charging area
-                const oCenterX = optimizedRanges.length > 0
-                  ? optimizedRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / optimizedRanges.length
-                  : null
+                const midX = midnightIdx >= 0 ? idxToPx(midnightIdx) : plotArea.left + plotArea.width / 2
+                const day1Center = plotArea.left + (midX - plotArea.left) / 2
+                const day2Center = midX + (plotArea.left + plotArea.width - midX) / 2
                 return (
                   <>
-                    {bCenterX !== null && (
-                      <div className="absolute pointer-events-none z-10 text-[10px] font-bold text-red-500/80"
-                        style={{ left: bCenterX, top: plotArea.top - 30, transform: 'translateX(-50%)' }}>
-                        Immediate
-                      </div>
-                    )}
-                    {oCenterX !== null && (
-                      <div className="absolute pointer-events-none z-10 text-[10px] font-bold text-emerald-500/80"
-                        style={{ left: oCenterX, top: plotArea.top - 30, transform: 'translateX(-50%)' }}>
-                        Optimized
-                      </div>
-                    )}
+                    <div className="absolute pointer-events-none z-[6] text-[11px] font-semibold text-gray-400"
+                      style={{ left: day1Center, top: plotArea.top + 6, transform: 'translateX(-50%)' }}>
+                      {fmtDateShort(date1)}
+                    </div>
+                    <div className="absolute pointer-events-none z-[6] text-[11px] font-semibold text-gray-400"
+                      style={{ left: day2Center, top: plotArea.top + 6, transform: 'translateX(-50%)' }}>
+                      {fmtDateShort(date2)}
+                    </div>
                   </>
                 )
               })()}
@@ -670,40 +827,60 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                 )
               })()}
 
-              {/* ── Floating cost labels — centered in charging area, close to line ── */}
+              {/* ── Floating cost labels with type tag — track their lines ── */}
               {sessionCost && N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
-                // Center X of baseline/optimized charging areas
                 const bCenter = baselineRanges.length > 0
                   ? baselineRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / baselineRanges.length
                   : idxToPx(sessionCost.baselineMidIdx)
                 const oCenter = optimizedRanges.length > 0
                   ? optimizedRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / optimizedRanges.length
                   : idxToPx(sessionCost.optimizedMidIdx)
+                const bY = priceToY(sessionCost.baselineAvgCt)
+                const oY = priceToY(sessionCost.optimizedAvgCt)
+                // Position: baseline below its line, optimized above its line
+                // Each pill is ~28px tall (label 14px + pill 14px gap), need 56px separation
+                const minGap = 56
+                let bYAdj = bY + 8, oYAdj = oY - 48
+                if (bYAdj - oYAdj < minGap) {
+                  const mid = (bYAdj + oYAdj) / 2
+                  bYAdj = mid + minGap / 2
+                  oYAdj = mid - minGap / 2
+                }
+                oYAdj = Math.max(plotArea.top + 2, Math.min(oYAdj, plotArea.top + plotArea.height - 48))
+                bYAdj = Math.max(plotArea.top + 2, Math.min(bYAdj, plotArea.top + plotArea.height - 48))
                 return (
                   <>
+                    {/* Baseline (Immediate) */}
                     <div className="absolute pointer-events-none transition-all duration-300 ease-out z-10"
-                      style={{ left: bCenter, top: priceToY(sessionCost.baselineAvgCt) + 14, transform: 'translateX(-50%)' }}>
-                      <div className="bg-red-50/95 backdrop-blur-sm border border-red-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
-                        <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                          <AnimatedNumber value={sessionCost.baselineEur} decimals={2} suffix=" €" />
-                        </span>
-                        <span className="text-red-400 text-[9px] tabular-nums whitespace-nowrap">
-                          {sessionCost.baselineAvgCt.toFixed(1)} ct
-                        </span>
+                      style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)' }}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider">Immediate</span>
+                        <div className="bg-red-50/95 backdrop-blur-sm border border-red-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
+                          <span className="text-red-700 text-[12px] font-bold tabular-nums whitespace-nowrap">
+                            <AnimatedNumber value={sessionCost.baselineEur} decimals={2} suffix=" €" />
+                          </span>
+                          <span className="text-red-400 text-[10px] tabular-nums whitespace-nowrap">
+                            {sessionCost.baselineAvgCt.toFixed(1)} ct
+                          </span>
+                        </div>
                       </div>
                     </div>
+                    {/* Optimized */}
                     <div className="absolute pointer-events-none transition-all duration-300 ease-out z-10"
-                      style={{ left: oCenter, top: priceToY(sessionCost.optimizedAvgCt) + 2, transform: 'translateX(-50%)' }}>
-                      <div className="bg-emerald-50/95 backdrop-blur-sm border border-emerald-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
-                        <span className="text-emerald-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                          <AnimatedNumber value={sessionCost.optimizedEur} decimals={2} suffix=" €" />
-                        </span>
-                        <span className="text-emerald-400 text-[9px] tabular-nums whitespace-nowrap">
-                          {sessionCost.optimizedAvgCt.toFixed(1)} ct
-                        </span>
+                      style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Optimized</span>
+                        <div className="bg-emerald-50/95 backdrop-blur-sm border border-emerald-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
+                          <span className="text-emerald-700 text-[12px] font-bold tabular-nums whitespace-nowrap">
+                            <AnimatedNumber value={sessionCost.optimizedEur} decimals={2} suffix=" €" />
+                          </span>
+                          <span className="text-emerald-400 text-[10px] tabular-nums whitespace-nowrap">
+                            {sessionCost.optimizedAvgCt.toFixed(1)} ct
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </>
@@ -722,21 +899,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                       style={{ width: 28 }}
                       onMouseDown={(e) => { e.preventDefault(); setIsDragging('arrival') }}
                       onTouchStart={(e) => { e.preventDefault(); setIsDragging('arrival') }}>
-                      {/* Label above chart */}
                       <div className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap transition-all ${
                         isDragging === 'arrival' ? 'scale-105' : ''
                       }`} style={{ top: 4 }}>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border transition-colors ${
-                          isDragging === 'arrival'
-                            ? 'text-white bg-[#EA1C0A] border-[#EA1C0A]'
-                            : 'text-[#EA1C0A] bg-white/95 border-red-200 group-hover:bg-red-50'
-                        }`}>
-                          {arrivalLabel}
-                        </span>
-                      </div>
-                      <div className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none"
-                        style={{ bottom: 2 }}>
-                        <span className="text-[9px] font-medium text-[#EA1C0A]/70">Plug-in</span>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border transition-colors ${
+                            isDragging === 'arrival'
+                              ? 'text-white bg-[#EA1C0A] border-[#EA1C0A]'
+                              : 'text-[#EA1C0A] bg-white/95 border-red-200 group-hover:bg-red-50'
+                          }`}>
+                            Plug-in {arrivalLabel}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -753,17 +927,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
                       <div className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap transition-all ${
                         isDragging === 'departure' ? 'scale-105' : ''
                       }`} style={{ top: 4 }}>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border transition-colors ${
-                          isDragging === 'departure'
-                            ? 'text-white bg-blue-600 border-blue-600'
-                            : 'text-blue-600 bg-white/95 border-blue-200 group-hover:bg-blue-50'
-                        }`}>
-                          {departureLabel}
-                        </span>
-                      </div>
-                      <div className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap pointer-events-none"
-                        style={{ bottom: 2 }}>
-                        <span className="text-[9px] font-medium text-blue-500/70">Departure</span>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border transition-colors ${
+                            isDragging === 'departure'
+                              ? 'text-white bg-blue-600 border-blue-600'
+                              : 'text-blue-600 bg-white/95 border-blue-200 group-hover:bg-blue-50'
+                          }`}>
+                            Departure {departureLabel}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -771,93 +943,374 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, optimizat
               )}
             </div>
 
-            {/* Legend + charging schedule */}
-            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-gray-500 px-1">
-              <span className="flex items-center gap-1.5">
-                <span className="w-5 h-0.5 bg-gray-400 inline-block rounded" /> Spot price
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-5 h-1 bg-red-500 inline-block rounded" /> Immediate
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-5 h-1 bg-emerald-500 inline-block rounded" /> Optimized
-              </span>
-              <span className="text-gray-300">|</span>
-              <span className="text-gray-400 italic ml-auto">Drag handles to adjust</span>
-            </div>
-            {/* Charging schedule blocks */}
-            <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1 text-[11px] px-1">
-              {baselineRanges.length > 0 && (
-                <span className="text-red-600">
-                  Immediate: {baselineRanges.map(r => `${r.startLabel}–${String(r.endHour).padStart(2, '0')}:00 (${r.hours}h)`).join(', ')}
-                </span>
-              )}
-              {optimizedRanges.length > 0 && (
-                <span className="text-emerald-600">
-                  Optimized: {optimizedRanges.map(r => `${r.startLabel}–${String(r.endHour).padStart(2, '0')}:00 (${r.hours}h)`).join(', ')}
-                </span>
-              )}
-            </div>
           </CardContent>
         </Card>
 
         {/* ── Sidebar ── */}
-        <div className="space-y-4">
-          <Card>
+        <div className="h-full">
+          <Card className="h-full flex flex-col">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm">Select a Day</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1 overflow-auto">
               <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} />
             </CardContent>
           </Card>
-
-          {sessionCost && (
-            <Card className="border-[#EA1C0A]/20 bg-gradient-to-b from-white to-red-50/30">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">This Session</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Immediate</span>
-                  <span className="font-semibold text-red-600 tabular-nums">{sessionCost.baselineEur.toFixed(2)} EUR</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Optimized</span>
-                  <span className="font-semibold text-emerald-600 tabular-nums">{sessionCost.optimizedEur.toFixed(2)} EUR</span>
-                </div>
-                <div className="border-t pt-2">
-                  <div className="flex justify-between items-center">
-                    <span className="font-semibold text-sm">Savings</span>
-                    <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="text-xl font-bold text-[#EA1C0A] tabular-nums" />
-                  </div>
-                </div>
-                <div className="text-xs text-gray-500 space-y-0.5 border-t pt-2">
-                  <div className="flex justify-between"><span>Energy</span><span className="tabular-nums">{sessionCost.kwh} kWh</span></div>
-                  <div className="flex justify-between"><span>Avg. immediate</span><span className="tabular-nums">{sessionCost.baselineAvgCt.toFixed(1)} ct/kWh</span></div>
-                  <div className="flex justify-between"><span>Avg. optimized</span><span className="tabular-nums">{sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh</span></div>
-                </div>
-
-                <div className="bg-[#EA1C0A]/5 rounded-xl p-3 text-center border border-[#EA1C0A]/10">
-                  <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">365-day avg &times; {sessionsPerYear} sessions</p>
-                  <AnimatedNumber value={rollingAvgSavings} suffix=" EUR/yr" className="text-2xl font-bold text-[#EA1C0A] tabular-nums" />
-                  <p className="text-xs text-gray-400 mt-1">~{monthlySavings.toFixed(1)} EUR/month</p>
-                  <p className="text-[10px] text-gray-400 mt-1">Day-ahead load shifting — Layer 1 of 5</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {!sessionCost && (
-            <Card className="border-gray-200">
-              <CardContent className="pt-6 pb-6 text-center">
-                <div className="w-10 h-10 border-4 border-[#EA1C0A] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                <p className="text-sm text-gray-500">Computing optimal schedule...</p>
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
+
+      {/* ── Session Cost Breakdown  +  Monthly Savings Potential ── */}
+      {sessionCost && monthlySavingsData.length > 0 && (() => {
+        const SEASON_COLORS: Record<string, string> = {
+          winter: '#7EB8E8',
+          spring: '#6AC09A',
+          summer: '#E8C94A',
+          autumn: '#E8A066',
+        }
+        // Derive avg-per-session from rolling annual figure for methodology display
+        const avgDailyEur = sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+            {/* ── LEFT: Session Cost Breakdown ── */}
+            <Card className="border-gray-200 flex flex-col">
+              <CardHeader className="pb-2 border-b border-gray-100">
+                <CardTitle className="text-base font-semibold">Session Cost Breakdown</CardTitle>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {sessionsPerYear} sessions/yr · {energyPerSession} kWh · {sessionHoursNeeded}h charge ·{' '}
+                  {windowHours}h window ·{' '}
+                  <span className={flexibilityHours > 3 ? 'text-emerald-600' : flexibilityHours > 0 ? 'text-amber-600' : 'text-red-500'}>
+                    {flexibilityHours}h flex
+                  </span>
+                </p>
+              </CardHeader>
+              <CardContent className="pt-4 space-y-4 flex-1">
+
+                {/* Hour-by-hour price table */}
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Immediate */}
+                  <div className="bg-red-50/70 rounded-xl p-3 border border-red-100">
+                    <p className="text-[9px] font-bold text-red-500 uppercase tracking-wider mb-2">
+                      Immediate · first {sessionHoursNeeded}h
+                    </p>
+                    <div className="space-y-0.5">
+                      {sessionCost.baselineHours.map((h, i) => (
+                        <div key={i} className="flex justify-between text-[12px]">
+                          <span className="font-mono text-gray-500">{h.label}</span>
+                          <span className="tabular-nums font-medium text-red-700">{h.ct.toFixed(1)} ct</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="border-t border-red-200 mt-2 pt-2 flex justify-between text-[12px]">
+                      <span className="text-gray-500">avg</span>
+                      <span className="font-bold text-red-700 tabular-nums">{sessionCost.baselineAvgCt.toFixed(1)} ct/kWh</span>
+                    </div>
+                  </div>
+
+                  {/* Optimized */}
+                  <div className="bg-emerald-50/70 rounded-xl p-3 border border-emerald-100">
+                    <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
+                      Optimized · cheapest {sessionHoursNeeded}h
+                    </p>
+                    <div className="space-y-0.5">
+                      {sessionCost.optimizedHours.map((h, i) => (
+                        <div key={i} className="flex justify-between text-[12px]">
+                          <span className="font-mono text-gray-500">{h.label}</span>
+                          <span className="tabular-nums font-medium text-emerald-700">{h.ct.toFixed(1)} ct</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="border-t border-emerald-200 mt-2 pt-2 flex justify-between text-[12px]">
+                      <span className="text-gray-500">avg</span>
+                      <span className="font-bold text-emerald-700 tabular-nums">{sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Cost formula chain */}
+                <div className="bg-gray-50 rounded-xl px-3 py-3 text-[11px] space-y-1.5 border border-gray-100">
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-2">Formula: avg ct × kWh ÷ 100 = EUR</p>
+                  <div className="flex justify-between text-gray-500">
+                    <span className="font-mono">{sessionCost.baselineAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
+                    <span className="font-semibold text-red-600 tabular-nums">{sessionCost.baselineEur.toFixed(2)} EUR</span>
+                  </div>
+                  <div className="flex justify-between text-gray-500">
+                    <span className="font-mono">{sessionCost.optimizedAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
+                    <span className="font-semibold text-emerald-600 tabular-nums">{sessionCost.optimizedEur.toFixed(2)} EUR</span>
+                  </div>
+                  <div className="flex justify-between border-t border-gray-200 pt-1.5 mt-0.5">
+                    <span className="font-mono text-gray-400">
+                      ({sessionCost.baselineAvgCt.toFixed(1)} − {sessionCost.optimizedAvgCt.toFixed(1)}) × {sessionCost.kwh} ÷ 100
+                    </span>
+                    <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
+                  </div>
+                </div>
+
+                {/* Baseline end time note */}
+                <p className="text-[10px] text-gray-400 leading-relaxed">
+                  Immediate: plug-in at{' '}
+                  <span className="font-mono">{String(scenario.plugInTime).padStart(2, '0')}:00</span> → done by{' '}
+                  <span className="font-mono">{String(baselineEndHour).padStart(2, '0')}:00</span>.
+                  Optimized shifts the same {sessionHoursNeeded}h to the cheapest slot in the {windowHours}h window.
+                </p>
+              </CardContent>
+            </Card>
+
+            {/* ── RIGHT: Monthly Savings Potential + rolling avg methodology ── */}
+            <Card className="overflow-hidden flex flex-col">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-semibold">Monthly Savings Potential</CardTitle>
+                <p className="text-[11px] text-gray-500">
+                  {scenario.weeklyPlugIns}x/week · {energyPerSession} kWh/session · day-ahead spot shifting
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4 flex-1 flex flex-col">
+                {/* Bar chart — last 12 months of rolling window + cumulative line */}
+                {(() => {
+                  const SEASON_BG: Record<string, string> = {
+                    winter: '#EFF6FF', spring: '#F0FDF4', summer: '#FEFCE8', autumn: '#FFF7ED',
+                  }
+                  // Last 12 months only (matches rolling 365-day avg)
+                  const last12 = monthlySavingsData.slice(-12).map(d => ({
+                    ...d,
+                    displayLabel: d.label === 'Jan' ? `Jan '${String(d.year).slice(2)}` : d.label,
+                  }))
+                  // Add running cumulative sum for double-check line
+                  let runSum = 0
+                  const last12c = last12.map(d => { runSum += d.savings; return { ...d, cumulative: Math.round(runSum * 10) / 10 } })
+
+                  // Season background bands
+                  const bands: { x1: string; x2: string; season: string }[] = []
+                  let cur = '', start = ''
+                  for (let i = 0; i < last12c.length; i++) {
+                    const d = last12c[i]
+                    if (d.season !== cur) {
+                      if (cur && start) bands.push({ x1: start, x2: last12c[i - 1].displayLabel, season: cur })
+                      cur = d.season; start = d.displayLabel
+                    }
+                  }
+                  if (cur && start) bands.push({ x1: start, x2: last12c[last12c.length - 1].displayLabel, season: cur })
+
+                  const totalSum = last12c[last12c.length - 1]?.cumulative ?? 0
+
+                  return (
+                    <>
+                      <div className="flex-1 min-h-[180px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <ComposedChart data={last12c} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
+                            {/* Season background overlays */}
+                            {bands.map((b, i) => (
+                              <ReferenceArea key={i} x1={b.x1} x2={b.x2}
+                                fill={SEASON_BG[b.season] || '#F9FAFB'} fillOpacity={1} ifOverflow="hidden" />
+                            ))}
+                            <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                            <XAxis dataKey="displayLabel" tick={{ fontSize: 11, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} />
+                            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                              label={{ value: 'EUR/mo', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                              label={{ value: 'EUR cumul.', angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                            <Tooltip
+                              content={({ active, payload }) => {
+                                if (!active || !payload?.length) return null
+                                const d = payload[0].payload as (typeof last12c)[number]
+                                const color = SEASON_COLORS[d.season] || '#6B7280'
+                                return (
+                                  <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
+                                    <p className="text-gray-500 text-[10px]">{d.month} · {d.season}</p>
+                                    <p className="font-semibold tabular-nums" style={{ color }}>{d.savings.toFixed(2)} EUR/mo</p>
+                                    <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} EUR so far</p>
+                                  </div>
+                                )
+                              }} />
+                            <Bar yAxisId="left" dataKey="savings" radius={[3, 3, 0, 0]} maxBarSize={28}
+                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                              shape={((props: any) => {
+                                const { x = 0, y = 0, width = 0, height = 0, season = '' } = props as { x: number; y: number; width: number; height: number; season: string }
+                                const fill = SEASON_COLORS[season] || '#6B7280'
+                                return <rect x={x} y={y} width={width} height={Math.max(height, 0)} rx={3} ry={3} fill={fill} fillOpacity={0.75} />
+                              }) as any} />
+                            <Line yAxisId="right" dataKey="cumulative" type="monotone"
+                              stroke="#374151" strokeWidth={1.5} strokeDasharray="4 3"
+                              dot={false} activeDot={{ r: 3, fill: '#374151' }} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      </div>
+                      {/* Season legend + cumulative note */}
+                      <div className="flex items-center justify-between text-[10px] text-gray-500 flex-wrap gap-2">
+                        <div className="flex items-center gap-3">
+                          {(['winter', 'spring', 'summer', 'autumn'] as const).map(s => (
+                            <span key={s} className="flex items-center gap-1 capitalize">
+                              <span className="inline-block w-2.5 h-2.5 rounded-sm border border-black/8" style={{ background: SEASON_BG[s] }} />
+                              <span className="inline-block w-2 h-2 rounded-sm" style={{ background: SEASON_COLORS[s] }} />
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                        <span className="flex items-center gap-1.5 text-gray-400">
+                          <span className="inline-block w-6 border-t border-dashed border-gray-400" />
+                          ∑ {totalSum.toFixed(0)} EUR ≈ {rollingAvgSavings.toFixed(0)} EUR/yr
+                        </span>
+                      </div>
+                    </>
+                  )
+                })()}
+
+                {/* Rolling average methodology */}
+                <div className="bg-gray-50 rounded-xl border border-gray-100 px-3 py-3 space-y-1.5">
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-wider mb-2">
+                    Rolling 365-day average — how the yearly total is derived
+                  </p>
+                  <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-[11px]">
+                    <span className="text-gray-500 font-mono">avg savings / session</span>
+                    <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
+                    <span className="text-gray-500 font-mono">× {scenario.weeklyPlugIns} plug-ins/wk × 52 wk</span>
+                    <span className="tabular-nums font-semibold text-gray-700 text-right">= {sessionsPerYear} sessions</span>
+                    <span className="text-gray-400 font-mono col-span-2 border-t border-gray-200 pt-1.5 mt-0.5 flex justify-between">
+                      <span>{avgDailyEur.toFixed(3)} × {sessionsPerYear}</span>
+                      <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums" />
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-400 pt-1">
+                    ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting · Layer 1 of 5
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+          </div>
+        )
+      })()}
+
+      {/* loading state when sessionCost not yet ready */}
+      {!sessionCost && monthlySavingsData.length === 0 && (
+        <Card className="border-gray-200">
+          <CardContent className="pt-6 pb-6 text-center">
+            <div className="w-10 h-10 border-4 border-[#EA1C0A] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-gray-500">Computing optimal schedule...</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Behavior Heatmap: Mileage × Plug-ins ── */}
+      {heatmapData.length > 0 && (() => {
+        const mileages = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
+        const plugins = [1, 2, 3, 4, 5, 6, 7]
+        const maxSav = Math.max(...heatmapData.map(d => d.savings), 1)
+        const heatColor = (val: number) => {
+          const t = Math.min(val / maxSav, 1)
+          if (t < 0.25) return `rgba(16, 185, 129, ${0.08 + t * 0.5})`
+          if (t < 0.5) return `rgba(16, 185, 129, ${0.2 + (t - 0.25) * 1.2})`
+          if (t < 0.75) return `rgba(234, 28, 10, ${0.15 + (t - 0.5) * 1.0})`
+          return `rgba(234, 28, 10, ${0.4 + (t - 0.75) * 2.4})`
+        }
+        const cellData = (mil: number, pi: number) => heatmapData.find(d => d.mileage === mil && d.plugIns === pi)
+
+        return (
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Savings Sensitivity</CardTitle>
+              <p className="text-sm text-gray-500">
+                Yearly savings (EUR/yr) · mileage vs. charging frequency · adjust plug-in time below
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-5 items-start">
+
+                {/* ── Vertical plug-in time slider — same design as top-right setting ── */}
+                <div className="flex gap-2 shrink-0 select-none" style={{ height: `${mileages.length * 40 + 24}px` }}>
+                  {/* Distribution bars (horizontal, mirroring vertical bars at top) */}
+                  <div className="flex flex-col justify-between py-[2px]" style={{ width: 32 }}>
+                    {PLUGIN_TIME_DIST.map((bin) => {
+                      const widthPct = (bin.pct / MAX_PLUGIN_PCT) * 100
+                      const isActive = bin.hour === scenario.plugInTime
+                      return (
+                        <div key={bin.hour} className="flex items-center justify-end h-full">
+                          <div className="rounded-sm transition-all" style={{
+                            height: 6,
+                            width: `${widthPct}%`,
+                            background: isActive ? 'rgba(234,28,10,0.4)' : 'rgba(0,0,0,0.07)',
+                          }} />
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Vertical range input — same thumb style as top-right */}
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-[10px] text-gray-400 tabular-nums">14</span>
+                    <input
+                      type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
+                      value={scenario.plugInTime}
+                      onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
+                      aria-label={`Plug-in time: ${scenario.plugInTime}:00`}
+                      style={{ writingMode: 'vertical-lr', direction: 'rtl' } as React.CSSProperties}
+                      className="flex-1 w-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer
+                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
+                        [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A]
+                        [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer
+                        [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <span className="text-[10px] text-gray-400 tabular-nums">22</span>
+                  </div>
+
+                  {/* Selected time label */}
+                  <div className="flex flex-col justify-center">
+                    <span className="text-[11px] font-bold text-[#EA1C0A] tabular-nums -rotate-90 whitespace-nowrap origin-center">
+                      {String(scenario.plugInTime).padStart(2,'0')}:00
+                    </span>
+                  </div>
+                </div>
+
+                {/* ── Heatmap table ── */}
+                <div className="flex-1 overflow-x-auto">
+                  <table className="w-full border-collapse text-center">
+                    <thead>
+                      <tr>
+                        <th className="text-[11px] text-gray-500 font-medium p-2 text-left">km/yr ↓ · plug-ins →</th>
+                        {plugins.map(pi => (
+                          <th key={pi} className={`text-[11px] font-semibold p-2 ${pi === scenario.weeklyPlugIns ? 'text-[#EA1C0A]' : 'text-gray-500'}`}>
+                            {pi}x
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {mileages.map(mil => (
+                        <tr key={mil}>
+                          <td className={`text-[11px] font-medium p-2 text-left tabular-nums ${mil === scenario.yearlyMileageKm ? 'text-[#EA1C0A] font-bold' : 'text-gray-600'}`}>
+                            {(mil / 1000).toFixed(0)}k
+                          </td>
+                          {plugins.map(pi => {
+                            const d = cellData(mil, pi)
+                            const isActive = mil === scenario.yearlyMileageKm && pi === scenario.weeklyPlugIns
+                            return (
+                              <td key={pi} className="p-1">
+                                <div
+                                  className={`rounded-md px-1.5 py-2 tabular-nums text-[11px] font-semibold transition-all ${
+                                    isActive ? 'ring-2 ring-[#EA1C0A] ring-offset-1 scale-105' : ''
+                                  }`}
+                                  style={{ background: d ? heatColor(d.savings) : '#f9fafb' }}
+                                  title={d ? `${mil.toLocaleString()} km, ${pi}x/wk, ${d.kwhPerSession} kWh/session → ${d.savings.toFixed(1)} EUR/yr` : ''}>
+                                  <span className={d && d.savings / maxSav > 0.55 ? 'text-white' : 'text-gray-700'}>
+                                    {d ? d.savings.toFixed(0) : '-'}
+                                  </span>
+                                </div>
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="flex justify-end mt-3 px-2">
+                    <span className="text-[10px] text-gray-400">Your profile highlighted · last 12 months</span>
+                  </div>
+                </div>
+
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* Navigation */}
       <div className="flex justify-between items-center pt-4">
