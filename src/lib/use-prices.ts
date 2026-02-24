@@ -210,8 +210,10 @@ export function usePrices(): PriceData {
         setDaily(dailySummaries)
         setMonthly(deriveMonthlyStats(dailySummaries, prices))
 
-        // Default to most recent date
-        if (dailySummaries.length > 0) {
+        // Default to second-to-last date (need t+1 for overnight chart)
+        if (dailySummaries.length > 1) {
+          setSelectedDate(dailySummaries[dailySummaries.length - 2].date)
+        } else if (dailySummaries.length > 0) {
           setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
         }
 
@@ -268,10 +270,10 @@ export function usePrices(): PriceData {
       setDaily(dailySummaries)
       setMonthly(deriveMonthlyStats(dailySummaries, merged))
 
-      // Advance selected date to the latest available (only if user hasn't gone back in time)
-      if (dailySummaries.length > 0) {
-        const latest = dailySummaries[dailySummaries.length - 1].date
-        setSelectedDate(prev => (!prev || latest > prev) ? latest : prev)
+      // Advance selected date to second-to-last (need t+1 for overnight chart)
+      if (dailySummaries.length > 1) {
+        const secondToLast = dailySummaries[dailySummaries.length - 2].date
+        setSelectedDate(prev => (!prev || secondToLast > prev) ? secondToLast : prev)
       }
 
       console.log(`[usePrices] Incremental update: +${unique.length} price points (${startDate} → ${today})`)

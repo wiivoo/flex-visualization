@@ -84,6 +84,9 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
     if (selectedDate) setViewMonth(selectedDate.slice(0, 7))
   }, [selectedDate])
 
+  // Set of all dates that have data — used to check t+1 availability
+  const allDates = useMemo(() => new Set(daily.map(d => d.date)), [daily])
+
   const monthDays = useMemo(() => {
     const [year, month] = viewMonth.split('-').map(Number)
     const firstDay = new Date(year, month - 1, 1)
@@ -141,12 +144,22 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
           if (!day) return <div key={`pad-${i}`} />
           const dayNum = parseInt(day.date.split('-')[2])
           const isSelected = day.date === selectedDate
+          // Check if t+1 data exists (required for overnight chart)
+          const nd = new Date(day.date + 'T12:00:00Z')
+          nd.setUTCDate(nd.getUTCDate() + 1)
+          const nextDateStr = nd.toISOString().slice(0, 10)
+          const hasNextDay = allDates.has(nextDateStr)
           return (
-            <button key={day.date} onClick={() => onSelect(day.date)}
-              className={`relative p-1 rounded text-center transition-all hover:ring-2 hover:ring-[#EA1C0A]/50 ${isSelected ? 'ring-2 ring-[#EA1C0A] bg-[#EA1C0A]/5' : ''}`}
-              title={`${day.date}: Spread ${day.spread.toFixed(0)} EUR/MWh`}>
+            <button key={day.date} onClick={() => hasNextDay && onSelect(day.date)}
+              disabled={!hasNextDay}
+              className={`relative p-1 rounded text-center transition-all ${
+                !hasNextDay
+                  ? 'opacity-30 cursor-not-allowed'
+                  : `hover:ring-2 hover:ring-[#EA1C0A]/50 ${isSelected ? 'ring-2 ring-[#EA1C0A] bg-[#EA1C0A]/5' : ''}`
+              }`}
+              title={hasNextDay ? `${day.date}: Spread ${day.spread.toFixed(0)} EUR/MWh` : `${day.date}: no next-day data`}>
               <div className="text-[10px] text-gray-600">{dayNum}</div>
-              <div className={`w-full h-1.5 rounded-full mt-0.5 ${spreadColor(day.spread)}`} />
+              <div className={`w-full h-1.5 rounded-full mt-0.5 ${hasNextDay ? spreadColor(day.spread) : 'bg-gray-200'}`} />
             </button>
           )
         })}
@@ -195,6 +208,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
+  const [heatmapUnit, setHeatmapUnit] = useState<'eur' | 'ct'>('eur')
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
 
   const date1 = prices.selectedDate
@@ -495,12 +509,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const windows = heatmapOvernightWindows.filter(w => last12Months.has(w.month))
     const mileages = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
     const plugins = [1, 2, 3, 4, 5, 6, 7]
-    const grid: { mileage: number; plugIns: number; savings: number; kwhPerSession: number }[] = []
+    const grid: { mileage: number; plugIns: number; savings: number; spreadCt: number; kwhPerSession: number }[] = []
     for (const mil of mileages) {
       for (const pi of plugins) {
         const eps = deriveEnergyPerSession(mil, pi)
         const hoursNeeded = Math.ceil(eps / DEFAULT_CHARGE_POWER_KW)
-        let totalSav = 0, days = 0
+        let totalSav = 0, totalSpread = 0, days = 0
         for (const w of windows) {
           if (w.prices.length < hoursNeeded) continue
           const bH = w.prices.slice(0, hoursNeeded)
@@ -508,12 +522,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           const bA = bH.reduce((s, p) => s + p.priceCtKwh, 0) / bH.length
           const oA = oH.reduce((s, p) => s + p.priceCtKwh, 0) / oH.length
           totalSav += (bA - oA) * eps / 100
+          totalSpread += bA - oA
           days++
         }
         const avgPerSession = days > 0 ? totalSav / days : 0
+        const avgSpreadCt = days > 0 ? Math.round((totalSpread / days) * 100) / 100 : 0
         const plugDaysPerMonth = (pi / 7) * 30.44
         const yearlySav = Math.round(avgPerSession * plugDaysPerMonth * 12 * 100) / 100
-        grid.push({ mileage: mil, plugIns: pi, savings: yearlySav, kwhPerSession: eps })
+        grid.push({ mileage: mil, plugIns: pi, savings: yearlySav, spreadCt: avgSpreadCt, kwhPerSession: eps })
       }
     }
     return grid
@@ -930,6 +946,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               )}
             </div>
 
+            {/* SMARD source link */}
+            {date1 && (() => {
+              const d = new Date(date1 + 'T12:00:00Z')
+              const day = d.getUTCDay()
+              const mondayOffset = day === 0 ? -6 : 1 - day
+              const monday = new Date(d)
+              monday.setUTCDate(monday.getUTCDate() + mondayOffset)
+              monday.setUTCHours(0, 0, 0, 0)
+              const ts = monday.getTime()
+              const smardPageUrl = `https://www.smard.de/home/marktdaten?marketDataAttributes=%7B%22resolution%22:%22hour%22,%22from%22:${ts},%22to%22:${ts + 7 * 86400000},%22moduleIds%22:%5B8004169%5D,%22selectedCategory%22:null,%22activeChart%22:true,%22style%22:%22color%22,%22categoriesModuleOrder%22:%7B%7D,%22region%22:%22DE%22%7D`
+              return (
+                <div className="flex items-center gap-3 mt-1 px-1 text-[10px] text-gray-400">
+                  <span>Source:</span>
+                  <a href={smardPageUrl} target="_blank" rel="noopener noreferrer"
+                    className="hover:text-gray-600 underline underline-offset-2">
+                    SMARD.de — Day-Ahead Prices
+                  </a>
+                </div>
+              )
+            })()}
+
           </CardContent>
         </Card>
 
@@ -941,6 +978,29 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             </CardHeader>
             <CardContent className="flex-1 overflow-auto">
               <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} />
+
+              {/* Spread: arrival price vs. lowest night price */}
+              {(() => {
+                if (!date1 || chartData.length === 0) return null
+                const arrivalPt = chartData.find(d => d.date === date1 && d.hour === scenario.plugInTime)
+                const windowPts = chartData.filter(d => d.isInWindow)
+                if (!arrivalPt || windowPts.length === 0) return null
+                const lowestPrice = Math.min(...windowPts.map(d => d.price))
+                const spread = Math.round((arrivalPt.price - lowestPrice) * 100) / 100
+                return (
+                  <div className="mt-4 pt-3 border-t border-gray-100">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[11px] text-gray-500 font-medium">Spread</span>
+                      <span className="text-lg font-bold tabular-nums text-[#313131]">
+                        {spread.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1 leading-relaxed">
+                      Arrival ({arrivalPt.price.toFixed(1)} ct) vs. lowest night ({lowestPrice.toFixed(1)} ct)
+                    </p>
+                  </div>
+                )
+              })()}
             </CardContent>
           </Card>
         </div>
@@ -1127,8 +1187,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                         <div className="flex items-center gap-3">
                           {(['winter', 'spring', 'summer', 'autumn'] as const).map(s => (
                             <span key={s} className="flex items-center gap-1 capitalize">
-                              <span className="inline-block w-2.5 h-2.5 rounded-sm border border-black/8" style={{ background: SEASON_BG[s] }} />
-                              <span className="inline-block w-2 h-2 rounded-sm" style={{ background: SEASON_COLORS[s] }} />
+                              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: SEASON_COLORS[s], opacity: 0.75 }} />
                               {s}
                             </span>
                           ))}
@@ -1158,7 +1217,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     </span>
                   </div>
                   <p className="text-[10px] text-gray-400 pt-1">
-                    ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting · Layer 1 of 5
+                    ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting
                   </p>
                 </div>
               </CardContent>
@@ -1182,22 +1241,31 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       {heatmapData.length > 0 && (() => {
         const mileages = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
         const plugins = [1, 2, 3, 4, 5, 6, 7]
-        const maxSav = Math.max(...heatmapData.map(d => d.savings), 1)
+        const maxVal = Math.max(...heatmapData.map(d => heatmapUnit === 'eur' ? d.savings : d.spreadCt), 0.01)
         const heatColor = (val: number) => {
-          const t = Math.min(val / maxSav, 1)
-          if (t < 0.25) return `rgba(16, 185, 129, ${0.08 + t * 0.5})`
-          if (t < 0.5) return `rgba(16, 185, 129, ${0.2 + (t - 0.25) * 1.2})`
-          if (t < 0.75) return `rgba(234, 28, 10, ${0.15 + (t - 0.5) * 1.0})`
-          return `rgba(234, 28, 10, ${0.4 + (t - 0.75) * 2.4})`
+          const t = Math.min(val / maxVal, 1)
+          return `rgba(16, 185, 129, ${0.06 + t * 0.54})`
         }
         const cellData = (mil: number, pi: number) => heatmapData.find(d => d.mileage === mil && d.plugIns === pi)
 
         return (
           <Card className="overflow-hidden shadow-sm border-gray-200/80">
             <CardHeader className="pb-3 border-b border-gray-100">
-              <CardTitle className="text-base font-bold text-[#313131]">Savings Sensitivity</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base font-bold text-[#313131]">Savings Sensitivity</CardTitle>
+                <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
+                  <button onClick={() => setHeatmapUnit('eur')}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${heatmapUnit === 'eur' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    EUR/yr
+                  </button>
+                  <button onClick={() => setHeatmapUnit('ct')}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${heatmapUnit === 'ct' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    ct/kWh
+                  </button>
+                </div>
+              </div>
               <p className="text-[13px] text-gray-500 mt-1">
-                Yearly savings (EUR/yr) · mileage vs. charging frequency · adjust plug-in time below
+                {heatmapUnit === 'eur' ? 'Yearly savings (EUR/yr)' : 'Avg spread (ct/kWh)'} · mileage vs. charging frequency · adjust plug-in time below
               </p>
             </CardHeader>
             <CardContent className="pt-5">
@@ -1206,7 +1274,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 {/* ── Vertical plug-in time slider ── */}
                 <div className="flex gap-2 shrink-0 select-none" style={{ height: `${mileages.length * 40 + 24}px` }}>
                   <div className="flex flex-col items-center gap-1 h-full">
-                    <span className="text-[10px] text-gray-400 tabular-nums">22:00</span>
+                    <span className="text-[10px] text-gray-400 tabular-nums">14:00</span>
                     <input
                       type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
                       value={scenario.plugInTime}
@@ -1218,7 +1286,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                         [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131]
                         [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer
                         [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-                    <span className="text-[10px] text-gray-400 tabular-nums">14:00</span>
+                    <span className="text-[10px] text-gray-400 tabular-nums">22:00</span>
                   </div>
                   {/* Selected time label */}
                   <div className="flex flex-col justify-center">
@@ -1256,10 +1324,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                                   className={`rounded-md px-1.5 py-2 tabular-nums text-[11px] font-semibold transition-all ${
                                     isActive ? 'ring-2 ring-[#EA1C0A] ring-offset-1 scale-105' : ''
                                   }`}
-                                  style={{ background: d ? heatColor(d.savings) : '#f9fafb' }}
-                                  title={d ? `${mil.toLocaleString()} km, ${pi}x/wk, ${d.kwhPerSession} kWh/session → ${d.savings.toFixed(1)} EUR/yr` : ''}>
-                                  <span className={d && d.savings / maxSav > 0.55 ? 'text-white' : 'text-gray-700'}>
-                                    {d ? d.savings.toFixed(0) : '-'}
+                                  style={{ background: d ? heatColor(heatmapUnit === 'eur' ? d.savings : d.spreadCt) : '#f9fafb' }}
+                                  title={d ? `${mil.toLocaleString()} km, ${pi}x/wk, ${d.kwhPerSession} kWh/session → ${d.savings.toFixed(1)} EUR/yr · ${d.spreadCt.toFixed(1)} ct/kWh` : ''}>
+                                  <span className={d && (heatmapUnit === 'eur' ? d.savings : d.spreadCt) / maxVal > 0.7 ? 'text-white' : 'text-gray-700'}>
+                                    {d ? (heatmapUnit === 'eur' ? d.savings.toFixed(0) : d.spreadCt.toFixed(1)) : '-'}
                                   </span>
                                 </div>
                               </td>
