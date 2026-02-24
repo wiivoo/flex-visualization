@@ -81,6 +81,7 @@ export interface HourlyPrice {
   priceEurMwh: number
   priceCtKwh: number
   hour: number       // 0-23
+  minute: number     // 0 for hourly, 0/15/30/45 for quarter-hourly
   date: string       // YYYY-MM-DD
 }
 

@@ -33,25 +33,25 @@ async function fetchWithRetry(url, retries = 3) {
   }
 }
 
-async function getIndex(filter) {
-  const url = `${SMARD_BASE}/${filter}/DE/index_hour.json`
+async function getIndex(filter, resolution = 'hour') {
+  const url = `${SMARD_BASE}/${filter}/DE/index_${resolution}.json`
   const res = await fetchWithRetry(url)
-  if (!res) throw new Error(`Index not found for filter ${filter}`)
+  if (!res) throw new Error(`Index not found for filter ${filter} (${resolution})`)
   const data = await res.json()
   return Array.isArray(data) ? data : data.timestamps || []
 }
 
-async function fetchChunk(filter, timestamp) {
-  const url = `${SMARD_BASE}/${filter}/DE/${filter}_DE_hour_${timestamp}.json`
+async function fetchChunk(filter, timestamp, resolution = 'hour') {
+  const url = `${SMARD_BASE}/${filter}/DE/${filter}_DE_${resolution}_${timestamp}.json`
   const res = await fetchWithRetry(url)
   if (!res) return []
   const data = await res.json()
   return (data.series || []).filter(([, val]) => val !== null)
 }
 
-async function downloadFilter(filter, filterName, startMs) {
-  console.log(`\n📥 Downloading ${filterName} (filter ${filter})...`)
-  const timestamps = await getIndex(filter)
+async function downloadFilter(filter, filterName, startMs, resolution = 'hour') {
+  console.log(`\n📥 Downloading ${filterName} (${resolution}, filter ${filter})...`)
+  const timestamps = await getIndex(filter, resolution)
   const relevant = timestamps.filter(ts => ts >= startMs - 7 * 24 * 3600 * 1000)
   console.log(`   ${relevant.length} weekly chunks to fetch`)
 
@@ -61,7 +61,7 @@ async function downloadFilter(filter, filterName, startMs) {
   for (let i = 0; i < relevant.length; i += BATCH_SIZE) {
     const batch = relevant.slice(i, i + BATCH_SIZE)
     const results = await Promise.allSettled(
-      batch.map(ts => fetchChunk(filter, ts))
+      batch.map(ts => fetchChunk(filter, ts, resolution))
     )
 
     for (const result of results) {
@@ -88,8 +88,9 @@ async function main() {
   console.log(`   Range: ${startYear}-01-01 to today`)
   console.log(`   Output: public/data/`)
 
-  // Download prices
-  const prices = await downloadFilter(FILTERS.PRICE, 'Day-Ahead Prices', startMs)
+  // Download prices (hourly + quarter-hourly)
+  const prices = await downloadFilter(FILTERS.PRICE, 'Day-Ahead Prices', startMs, 'hour')
+  const pricesQH = await downloadFilter(FILTERS.PRICE, 'Day-Ahead Prices QH', startMs, 'quarterhour')
 
   // Download generation data
   const solar = await downloadFilter(FILTERS.SOLAR, 'Solar PV', startMs)
@@ -103,6 +104,14 @@ async function main() {
     .map(([ts, price]) => ({
       t: ts,
       p: Math.round(price * 100) / 100, // EUR/MWh, 2 decimals
+    }))
+
+  // Build QH prices JSON
+  const priceQHArray = Array.from(pricesQH.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([ts, price]) => ({
+      t: ts,
+      p: Math.round(price * 100) / 100,
     }))
 
   // Build generation JSON — merge all sources by timestamp
@@ -127,6 +136,11 @@ async function main() {
   const priceSize = (fs.statSync(pricesPath).size / 1024 / 1024).toFixed(1)
   console.log(`\n💾 Prices: ${priceArray.length} points (${priceSize} MB) → ${pricesPath}`)
 
+  const pricesQHPath = path.join(outDir, 'smard-prices-qh.json')
+  fs.writeFileSync(pricesQHPath, JSON.stringify(priceQHArray))
+  const priceQHSize = (fs.statSync(pricesQHPath).size / 1024 / 1024).toFixed(1)
+  console.log(`💾 Prices QH: ${priceQHArray.length} points (${priceQHSize} MB) → ${pricesQHPath}`)
+
   const genPath = path.join(outDir, 'smard-generation.json')
   fs.writeFileSync(genPath, JSON.stringify(genArray))
   const genSize = (fs.statSync(genPath).size / 1024 / 1024).toFixed(1)
@@ -138,12 +152,13 @@ async function main() {
     startDate: new Date(startMs).toISOString().slice(0, 10),
     endDate: new Date().toISOString().slice(0, 10),
     pricePoints: priceArray.length,
+    priceQHPoints: priceQHArray.length,
     generationPoints: genArray.length,
     source: 'smard.de',
   }
   fs.writeFileSync(path.join(outDir, 'smard-meta.json'), JSON.stringify(meta, null, 2))
 
-  console.log(`\n✅ Done! Total: ${priceArray.length} price + ${genArray.length} generation points`)
+  console.log(`\n✅ Done! Total: ${priceArray.length} hourly + ${priceQHArray.length} QH prices + ${genArray.length} generation points`)
   console.log('   Run this script periodically to update with latest data.')
 }
 
