@@ -11,6 +11,7 @@ import type { HourlyPrice, DailySummary, MonthlyStats, GenerationData } from '@/
 
 export interface PriceData {
   hourly: HourlyPrice[]
+  hourlyQH: HourlyPrice[]
   daily: DailySummary[]
   monthly: MonthlyStats[]
   loading: boolean
@@ -131,6 +132,7 @@ function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): Month
 
 export function usePrices(): PriceData {
   const [hourly, setHourly] = useState<HourlyPrice[]>([])
+  const [hourlyQH, setHourlyQH] = useState<HourlyPrice[]>([])
   const [daily, setDaily] = useState<DailySummary[]>([])
   const [monthly, setMonthly] = useState<MonthlyStats[]>([])
   const [loading, setLoading] = useState(true)
@@ -150,6 +152,7 @@ export function usePrices(): PriceData {
       priceEurMwh: p.p,
       priceCtKwh: Math.round((p.p / 10) * 100) / 100,
       hour: d.getHours(),
+      minute: d.getMinutes(),
       date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
     }
   }, [])
@@ -176,16 +179,23 @@ export function usePrices(): PriceData {
       setError(null)
 
       try {
-        // Load both static files in parallel
-        const [priceRes, genRes] = await Promise.allSettled([
+        // Load all static files in parallel (hourly prices, QH prices, generation)
+        const [priceRes, priceQHRes, genRes] = await Promise.allSettled([
           fetch('/data/smard-prices.json'),
+          fetch('/data/smard-prices-qh.json'),
           fetch('/data/smard-generation.json'),
         ])
 
-        // Parse prices
+        // Parse hourly prices
         let rawPrices: CompactPrice[] = []
         if (priceRes.status === 'fulfilled' && priceRes.value.ok) {
           rawPrices = await priceRes.value.json()
+        }
+
+        // Parse QH prices (optional — may not exist yet)
+        let rawQHPrices: CompactPrice[] = []
+        if (priceQHRes.status === 'fulfilled' && priceQHRes.value.ok) {
+          rawQHPrices = await priceQHRes.value.json()
         }
 
         // Parse generation (keep in ref for on-demand day lookups)
@@ -199,13 +209,16 @@ export function usePrices(): PriceData {
 
         // Convert compact format to HourlyPrice
         let prices: HourlyPrice[] = rawPrices.map(toHourlyPrice)
+        let qhPrices: HourlyPrice[] = rawQHPrices.map(toHourlyPrice)
 
         // Determine the last date in static data
         const lastStaticDate = prices[prices.length - 1].date
+        const lastStaticQHDate = qhPrices.length > 0 ? qhPrices[qhPrices.length - 1].date : lastStaticDate
         const today = todayStr()
 
         // Show static data immediately (fast first paint)
         setHourly(prices)
+        if (qhPrices.length > 0) setHourlyQH(qhPrices)
         const dailySummaries = deriveDailySummaries(prices)
         setDaily(dailySummaries)
         setMonthly(deriveMonthlyStats(dailySummaries, prices))
@@ -221,6 +234,7 @@ export function usePrices(): PriceData {
         // Always run — even if static is current, tomorrow's prices may already be on SMARD
         const tomorrow = nextDay(today)
         fetchIncremental(lastStaticDate, tomorrow, prices)
+        fetchIncrementalQH(lastStaticQHDate, tomorrow, qhPrices)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load prices')
       } finally {
@@ -254,6 +268,7 @@ export function usePrices(): PriceData {
           priceEurMwh: eurMwh,
           priceCtKwh: p.price_ct_kwh,
           hour: d.getHours(),
+          minute: d.getMinutes(),
           date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
         }
       })
@@ -279,6 +294,46 @@ export function usePrices(): PriceData {
       console.log(`[usePrices] Incremental update: +${unique.length} price points (${startDate} → ${today})`)
     } catch (e) {
       console.warn('[usePrices] Incremental fetch failed (non-fatal):', e)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /** Fetch new QH prices from SMARD via batch API and merge into state */
+  const fetchIncrementalQH = useCallback(async (lastStaticDate: string, today: string, existingQH: HourlyPrice[]) => {
+    try {
+      const startDate = nextDay(lastStaticDate)
+      if (startDate > today) return
+
+      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}&resolution=quarterhour`)
+      if (!res.ok) return
+
+      const data = await res.json()
+      const newPoints: { timestamp: string; price_ct_kwh: number }[] = data.prices || []
+      if (newPoints.length === 0) return
+
+      const newQH: HourlyPrice[] = newPoints.map(p => {
+        const d = new Date(p.timestamp)
+        const eurMwh = p.price_ct_kwh * 10
+        return {
+          timestamp: d.getTime(),
+          priceEurMwh: eurMwh,
+          priceCtKwh: p.price_ct_kwh,
+          hour: d.getHours(),
+          minute: d.getMinutes(),
+          date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+        }
+      })
+
+      const existingTs = new Set(existingQH.map(p => p.timestamp))
+      const unique = newQH.filter(p => !existingTs.has(p.timestamp))
+      if (unique.length === 0) return
+
+      const merged = [...existingQH, ...unique].sort((a, b) => a.timestamp - b.timestamp)
+      setHourlyQH(merged)
+
+      console.log(`[usePrices] QH incremental update: +${unique.length} points (${startDate} → ${today})`)
+    } catch (e) {
+      console.warn('[usePrices] QH incremental fetch failed (non-fatal):', e)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -382,6 +437,7 @@ export function usePrices(): PriceData {
 
   return {
     hourly,
+    hourlyQH,
     daily,
     monthly,
     loading,

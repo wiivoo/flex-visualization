@@ -46,6 +46,7 @@ const CHART_MARGIN = { top: 42, right: 15, bottom: 25, left: 50 }
 
 interface PriceData {
   hourly: HourlyPrice[]
+  hourlyQH: HourlyPrice[]
   daily: DailySummary[]
   monthly: MonthlyStats[]
   selectedDate: string
@@ -186,6 +187,41 @@ function fmtDateShort(dateStr: string): string {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+/**
+ * Compute baseline vs optimized average price for a charging window.
+ * Supports both hourly (slotsPerHour=1) and QH (slotsPerHour=4) modes.
+ * In QH mode with hourly data, each hour counts as 4 slots at the same price,
+ * allowing partial-hour charging (e.g. 6 slots = 1.5 hours at 7 kW = 10.5 kWh).
+ */
+function computeWindowSavings(
+  windowPrices: HourlyPrice[],
+  energyPerSession: number,
+  kwhPerSlot: number,
+  slotsPerHour: number,
+): { bAvg: number; oAvg: number; savingsEur: number } {
+  const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
+  // Baseline: first N slots chronologically (each hour = slotsPerHour slots)
+  let bSum = 0, bCount = 0
+  for (const p of windowPrices) {
+    const take = Math.min(slotsPerHour, slotsNeeded - bCount)
+    if (take <= 0) break
+    bSum += p.priceCtKwh * take
+    bCount += take
+  }
+  // Optimized: cheapest N slots (sort by price, each hour = slotsPerHour slots)
+  const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+  let oSum = 0, oCount = 0
+  for (const p of sorted) {
+    const take = Math.min(slotsPerHour, slotsNeeded - oCount)
+    if (take <= 0) break
+    oSum += p.priceCtKwh * take
+    oCount += take
+  }
+  const bAvg = bCount > 0 ? bSum / bCount : 0
+  const oAvg = oCount > 0 ? oSum / oCount : 0
+  return { bAvg, oAvg, savingsEur: (bAvg - oAvg) * energyPerSession / 100 }
+}
+
 
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) {
@@ -209,6 +245,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
   const [heatmapUnit, setHeatmapUnit] = useState<'eur' | 'ct'>('eur')
+  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
 
   const date1 = prices.selectedDate
@@ -222,18 +259,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   const deferredEnergyPerSession = useDeferredValue(energyPerSession)
 
 
+  // ── Active price source for the chart (hourly or quarter-hourly) ──
+  // SMARD filter 4169 provides real 15-min day-ahead prices; hourly = avg of 4 QH values
+  const isQH = resolution === 'quarterhour'
+  const chartPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+
   // ── Build two-day overnight chart data ──
   const { chartData, sessionCost, rollingAvgSavings, monthlySavings } = useMemo(() => {
-    if (prices.hourly.length === 0 || !date1) {
+    if (chartPrices.length === 0 || !date1) {
       return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
     }
 
-    const day1Prices = prices.hourly.filter(p => p.date === date1 && p.hour >= 14)
-    const day2Prices = prices.hourly.filter(p => p.date === date2 && p.hour <= 10)
+    const day1Prices = chartPrices.filter(p => p.date === date1 && p.hour >= 14)
+    const day2Prices = chartPrices.filter(p => p.date === date2 && p.hour <= 10)
     const merged = [...day1Prices, ...day2Prices]
     if (merged.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
 
-    const hoursNeeded = Math.ceil(energyPerSession / DEFAULT_CHARGE_POWER_KW)
+    // Each slot delivers: hourly = chargerKW * 1h, QH = chargerKW * 0.25h (=1.75 kWh at 7kW)
+    const kwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
 
     // Charging window prices
     const windowPrices = merged.filter(p => {
@@ -242,23 +286,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       return false
     })
 
-    // Baseline: first N hours from plug-in
-    const baselineKeys = new Set(windowPrices.slice(0, hoursNeeded).map(p => `${p.date}-${p.hour}`))
-    // Optimized: cheapest N hours in window
+    // Baseline: first N slots from plug-in
+    const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+    // Optimized: cheapest N slots in window
     const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-    const optimizedKeys = new Set(sortedByPrice.slice(0, hoursNeeded).map(p => `${p.date}-${p.hour}`))
+    const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
 
     let idx = 0
     const data = merged.map(p => {
-      const key = `${p.date}-${p.hour}`
+      const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
       const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
       const isInWindow = (p.date === date1 && p.hour >= scenario.plugInTime) ||
                          (p.date === date2 && p.hour < scenario.departureTime)
+      const min = p.minute ?? 0
       return {
         idx: idx++,
         hour: p.hour,
+        minute: min,
         date: p.date,
-        label: `${String(p.hour).padStart(2, '0')}:00`,
+        label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
         price: ct,
         baselinePrice: baselineKeys.has(key) ? ct : null,
         optimizedPrice: optimizedKeys.has(key) ? ct : null,
@@ -280,20 +326,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       kwh: energyPerSession,
       baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
       optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
-      // Individual charged hours — for transparent derivation display
-      baselineHours: windowPrices.slice(0, hoursNeeded).map(p => ({
-        label: `${String(p.hour).padStart(2, '0')}:00`,
+      baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
+        label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
         ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
       })),
-      optimizedHours: [...sortedByPrice.slice(0, hoursNeeded)]
-        .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour - b.hour)
+      optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
+        .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
         .map(p => ({
-          label: `${String(p.hour).padStart(2, '0')}:00`,
+          label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
           ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
         })),
     }
 
-    // 365-day rolling average
+    // 365-day rolling average — uses hourly data with resolution-aware slot logic
+    const rollKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const rollSlotsPerHour = isQH ? 4 : 1
+    const rollMinHours = Math.ceil(energyPerSession / DEFAULT_CHARGE_POWER_KW)
     let totalSavings = 0, daysOk = 0
     const endDate = date1
     const startRoll = new Date(new Date(endDate + 'T12:00:00Z').getTime() - 365 * 86400000).toISOString().slice(0, 10)
@@ -312,12 +360,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       const eve = dPrices.filter(p => p.hour >= scenario.plugInTime)
       const morn = nPrices.filter(p => p.hour < scenario.departureTime)
       const win = [...eve, ...morn]
-      if (win.length < hoursNeeded) continue
-      const bH = win.slice(0, hoursNeeded)
-      const oH = [...win].sort((a, b) => a.priceEurMwh - b.priceEurMwh).slice(0, hoursNeeded)
-      const bA = bH.reduce((s, p) => s + p.priceCtKwh, 0) / bH.length
-      const oA = oH.reduce((s, p) => s + p.priceCtKwh, 0) / oH.length
-      totalSavings += (bA - oA) * energyPerSession / 100
+      if (win.length < rollMinHours) continue
+      const { savingsEur } = computeWindowSavings(win, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
+      totalSavings += savingsEur
       daysOk++
     }
     const avgDaily = daysOk > 0 ? totalSavings / daysOk : 0
@@ -326,7 +371,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const rollSav = Math.round(avgDaily * scenario.weeklyPlugIns * 52 * 100) / 100
 
     return { chartData: data, sessionCost: cost, rollingAvgSavings: rollSav, monthlySavings: mSav }
-  }, [prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.weeklyPlugIns])
+  }, [chartPrices, prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.weeklyPlugIns, isQH])
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -446,15 +491,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // ── Monthly savings breakdown for yearly chart ──
   const monthlySavingsData = useMemo(() => {
     if (overnightWindows.length === 0) return []
-    const hoursNeeded = Math.ceil(deferredEnergyPerSession / DEFAULT_CHARGE_POWER_KW)
+    const mKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const mSlotsPerHour = isQH ? 4 : 1
+    const minHours = Math.ceil(deferredEnergyPerSession / DEFAULT_CHARGE_POWER_KW)
     const monthMap = new Map<string, { totalSavings: number; days: number }>()
     for (const w of overnightWindows) {
-      if (w.prices.length < hoursNeeded) continue
-      const bH = w.prices.slice(0, hoursNeeded)
-      const oH = w.sorted.slice(0, hoursNeeded)
-      const bA = bH.reduce((s, p) => s + p.priceCtKwh, 0) / bH.length
-      const oA = oH.reduce((s, p) => s + p.priceCtKwh, 0) / oH.length
-      const savingsEur = (bA - oA) * deferredEnergyPerSession / 100
+      if (w.prices.length < minHours) continue
+      const { savingsEur } = computeWindowSavings(w.prices, deferredEnergyPerSession, mKwhPerSlot, mSlotsPerHour)
       const entry = monthMap.get(w.month) || { totalSavings: 0, days: 0 }
       entry.totalSavings += savingsEur
       entry.days++
@@ -473,7 +516,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           mNum <= 2 || mNum === 12 ? 'winter' : mNum <= 5 ? 'spring' : mNum <= 8 ? 'summer' : 'autumn'
         return { month, label, savings: monthlySav, season, year: y }
       })
-  }, [overnightWindows, deferredEnergyPerSession, deferredWeeklyPlugIns])
+  }, [overnightWindows, deferredEnergyPerSession, deferredWeeklyPlugIns, isQH])
 
   // ── Separate overnight windows for heatmap (uses its own plug-in time slider) ──
   const heatmapOvernightWindows = useMemo(() => {
@@ -503,6 +546,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // Uses the same last-12-month window as the monthly savings chart for consistency
   const heatmapData = useMemo(() => {
     if (heatmapOvernightWindows.length === 0) return []
+    const hKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const hSlotsPerHour = isQH ? 4 : 1
     // Identify the same 12 months shown in the savings chart
     const allMonths = [...new Set(heatmapOvernightWindows.map(w => w.month))].sort()
     const last12Months = new Set(allMonths.slice(-12))
@@ -513,16 +558,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     for (const mil of mileages) {
       for (const pi of plugins) {
         const eps = deriveEnergyPerSession(mil, pi)
-        const hoursNeeded = Math.ceil(eps / DEFAULT_CHARGE_POWER_KW)
+        const minHours = Math.ceil(eps / DEFAULT_CHARGE_POWER_KW)
         let totalSav = 0, totalSpread = 0, days = 0
         for (const w of windows) {
-          if (w.prices.length < hoursNeeded) continue
-          const bH = w.prices.slice(0, hoursNeeded)
-          const oH = w.sorted.slice(0, hoursNeeded)
-          const bA = bH.reduce((s, p) => s + p.priceCtKwh, 0) / bH.length
-          const oA = oH.reduce((s, p) => s + p.priceCtKwh, 0) / oH.length
-          totalSav += (bA - oA) * eps / 100
-          totalSpread += bA - oA
+          if (w.prices.length < minHours) continue
+          const { bAvg, oAvg, savingsEur } = computeWindowSavings(w.prices, eps, hKwhPerSlot, hSlotsPerHour)
+          totalSav += savingsEur
+          totalSpread += bAvg - oAvg
           days++
         }
         const avgPerSession = days > 0 ? totalSav / days : 0
@@ -533,7 +575,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       }
     }
     return grid
-  }, [heatmapOvernightWindows])
+  }, [heatmapOvernightWindows, isQH])
 
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
@@ -560,17 +602,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const { x, y, payload } = props
     const pt = chartData[payload.value]
     if (!pt) return <g />
-    // Small tick line at every hour, label text every 2 hours
-    const showLabel = pt.hour % 2 === 0
+    // For QH: tick line at every :00, label every 2 hours; for hourly: same as before
+    const isOnHour = pt.minute === 0
+    const showTick = isQH ? isOnHour : true
+    const showLabel = isOnHour && pt.hour % 2 === 0
+    if (!showTick) return <g />
     return (
       <g transform={`translate(${x},${y})`}>
         <line x1={0} y1={0} x2={0} y2={showLabel ? 6 : 4} stroke="#D1D5DB" strokeWidth={1} />
         {showLabel && (
-          <text x={0} y={0} dy={18} textAnchor="middle" fill="#6B7280" fontSize={12} fontWeight={500}>{pt.label}</text>
+          <text x={0} y={0} dy={18} textAnchor="middle" fill="#6B7280" fontSize={12} fontWeight={500}>
+            {`${String(pt.hour).padStart(2, '0')}:00`}
+          </text>
         )}
       </g>
     )
-  }, [chartData])
+  }, [chartData, isQH])
 
   return (
     <div className="space-y-8">
@@ -698,7 +745,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         {/* Chart (3/4) */}
         <Card className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
           <CardHeader className="pb-2 border-b border-gray-100">
-            <CardTitle className="text-base font-bold text-[#313131]">Overnight Price Curve</CardTitle>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base font-bold text-[#313131]">Overnight Price Curve</CardTitle>
+                <p className="text-[11px] text-gray-400 mt-0.5">
+                  {isQH ? 'Day-Ahead 15-min Auction' : 'Day-Ahead Hourly Auction'}
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
+                <button onClick={() => setResolution('hour')}
+                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                  60 min
+                </button>
+                <button onClick={() => setResolution('quarterhour')}
+                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                  15 min
+                </button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {/* ── Chart container ── */}
@@ -759,16 +823,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
                   {/* Base price curve — subtle gray */}
                   <Area type="monotone" dataKey="price" fill="url(#priceGrad)" stroke="none" />
-                  <Line type="monotone" dataKey="price" stroke="#94A3B8" strokeWidth={1.5} dot={false} connectNulls />
+                  <Line type="monotone" dataKey="price" stroke="#94A3B8" strokeWidth={1.5}
+                    dot={isQH ? { r: 1.5, fill: '#94A3B8', stroke: 'none' } : false}
+                    activeDot={isQH ? { r: 4, fill: '#94A3B8', stroke: '#fff', strokeWidth: 2 } : undefined}
+                    connectNulls />
 
                   {/* Baseline dots — red, no connecting line for clarity on non-contiguous hours */}
-                  <Line type="monotone" dataKey="baselinePrice" stroke="#EF4444" strokeWidth={3}
-                    dot={{ r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 }}
+                  <Line type="monotone" dataKey="baselinePrice" stroke="#EF4444" strokeWidth={isQH ? 2 : 3}
+                    dot={isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
                   {/* Optimized dots — green */}
-                  <Line type="monotone" dataKey="optimizedPrice" stroke="#10B981" strokeWidth={3}
-                    dot={{ r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
+                  <Line type="monotone" dataKey="optimizedPrice" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
+                    dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
                   {/* Midnight boundary — subtle solid line */}
@@ -1038,7 +1105,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   {/* Immediate */}
                   <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
                     <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2.5">
-                      Immediate · first {sessionHoursNeeded}h
+                      Immediate · first {isQH ? `${sessionHoursNeeded * 4} × 15 min` : `${sessionHoursNeeded}h`}
                     </p>
                     <div className="space-y-1">
                       {sessionCost.baselineHours.map((h, i) => (
@@ -1057,7 +1124,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   {/* Optimized */}
                   <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
                     <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2.5">
-                      Optimized · cheapest {sessionHoursNeeded}h
+                      Optimized · cheapest {isQH ? `${sessionHoursNeeded * 4} × 15 min` : `${sessionHoursNeeded}h`}
                     </p>
                     <div className="space-y-1">
                       {sessionCost.optimizedHours.map((h, i) => (

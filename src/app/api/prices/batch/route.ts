@@ -41,6 +41,7 @@ const batchQuerySchema = z.object({
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'startDate must be in YYYY-MM-DD format'),
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format'),
   type: z.enum(['day-ahead', 'intraday', 'forward']).default('day-ahead'),
+  resolution: z.enum(['hour', 'quarterhour']).default('hour'),
 })
 
 interface PricePoint {
@@ -53,15 +54,17 @@ interface PricePoint {
 /**
  * Load SMARD index: Returns all available weekly timestamps
  */
-async function fetchSmardIndex(): Promise<number[]> {
-  const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/index_${SMARD_RESOLUTION.HOUR}.json`
+async function fetchSmardIndex(resolution: 'hour' | 'quarterhour' = 'hour'): Promise<number[]> {
+  const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/DE/index_${resolution}.json`
   const response = await fetch(url, { next: { revalidate: 3600 } })
 
   if (!response.ok) {
     throw new Error(`SMARD index request failed: ${response.status}`)
   }
 
-  const timestamps: number[] = await response.json()
+  const data = await response.json()
+  // SMARD returns { timestamps: [...] } dict
+  const timestamps: number[] = Array.isArray(data) ? data : data.timestamps
   if (!timestamps || timestamps.length === 0) {
     throw new Error('No SMARD timestamps available')
   }
@@ -100,8 +103,8 @@ function findOverlappingWeekTimestamps(
 /**
  * Load a single SMARD week
  */
-async function fetchSmardWeek(timestamp: number): Promise<SmardPricePoint[]> {
-  const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/${SMARD_FILTER.PRICE_DE_LU}_${timestamp}_${SMARD_RESOLUTION.HOUR}.json`
+async function fetchSmardWeek(timestamp: number, resolution: 'hour' | 'quarterhour' = 'hour'): Promise<SmardPricePoint[]> {
+  const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/DE/${SMARD_FILTER.PRICE_DE_LU}_DE_${resolution}_${timestamp}.json`
   const response = await fetch(url, { next: { revalidate: 3600 } })
 
   if (!response.ok) {
@@ -125,10 +128,11 @@ async function fetchSmardWeek(timestamp: number): Promise<SmardPricePoint[]> {
  */
 async function fetchSmardBatch(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  resolution: 'hour' | 'quarterhour' = 'hour'
 ): Promise<PricePoint[] | null> {
   try {
-    const index = await fetchSmardIndex()
+    const index = await fetchSmardIndex(resolution)
 
     const startMs = startOfDay(startDate).getTime()
     const endMs = startOfDay(endDate).getTime() + 24 * 60 * 60 * 1000 - 1 // End of day
@@ -141,7 +145,7 @@ async function fetchSmardBatch(
 
     // Load in parallel (max ~52 requests for a year)
     const weekResults = await Promise.allSettled(
-      weekTimestamps.map(ts => fetchSmardWeek(ts))
+      weekTimestamps.map(ts => fetchSmardWeek(ts, resolution))
     )
 
     // Merge all successful results
@@ -386,6 +390,7 @@ export async function GET(request: NextRequest) {
     startDate: searchParams.get('startDate'),
     endDate: searchParams.get('endDate'),
     type: searchParams.get('type') || 'day-ahead',
+    resolution: searchParams.get('resolution') || 'hour',
   })
 
   if (!parseResult.success) {
@@ -398,7 +403,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const { startDate: startDateStr, endDate: endDateStr, type } = parseResult.data
+  const { startDate: startDateStr, endDate: endDateStr, type, resolution } = parseResult.data
 
   const startDate = parseISO(startDateStr)
   const endDate = parseISO(endDateStr)
@@ -458,7 +463,13 @@ export async function GET(request: NextRequest) {
   const uncachedStart = uncachedDays[0]
   const uncachedEnd = uncachedDays[uncachedDays.length - 1]
 
-  if (type === 'day-ahead') {
+  if (type === 'day-ahead' && resolution === 'quarterhour') {
+    // Quarter-hourly: only SMARD has 15-min data
+    fetchedPrices = await fetchSmardBatch(uncachedStart, uncachedEnd, 'quarterhour')
+    if (fetchedPrices && fetchedPrices.length > 0) {
+      source = 'smard'
+    }
+  } else if (type === 'day-ahead') {
     // Step 2a: aWATTar (native range query, fastest source)
     fetchedPrices = await fetchAwattarBatch(uncachedStart, uncachedEnd)
     if (fetchedPrices && fetchedPrices.length > 0) {
