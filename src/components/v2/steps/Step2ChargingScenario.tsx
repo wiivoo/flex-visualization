@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
@@ -263,6 +264,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // SMARD filter 4169 provides real 15-min day-ahead prices; hourly = avg of 4 QH values
   const isQH = resolution === 'quarterhour'
   const chartPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+
+  // Detect whether QH data for the chart window is synthesized (hourly × 4) vs real SMARD QH.
+  // The chart spans TWO days (date1 evening → date2 morning), so both must have real QH data.
+  // Real QH: prices differ across the 4 slots within an hour.
+  // Synthesized: all 4 slots have the same price, OR no QH data exists for that date.
+  const isQHSynthesized = useMemo(() => {
+    if (!date1 || prices.hourlyQH.length === 0) return false
+    function checkDate(d: string): boolean {
+      const dayQH = prices.hourlyQH.filter(p => p.date === d)
+      if (dayQH.length < 4) return true // missing → synthesized
+      const firstHour = dayQH[0].hour
+      const firstHourSlots = dayQH.filter(p => p.hour === firstHour)
+      if (firstHourSlots.length < 4) return false
+      const firstPrice = firstHourSlots[0].priceEurMwh
+      return firstHourSlots.every(p => Math.abs(p.priceEurMwh - firstPrice) < 0.001)
+    }
+    // Badge shows if EITHER day in the overnight window is synthesized
+    return checkDate(date1) || checkDate(date2)
+  }, [prices.hourlyQH, date1, date2])
 
   // ── Build two-day overnight chart data ──
   const { chartData, sessionCost, rollingAvgSavings, monthlySavings } = useMemo(() => {
@@ -749,18 +769,47 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               <div>
                 <CardTitle className="text-base font-bold text-[#313131]">Overnight Price Curve</CardTitle>
                 <p className="text-[11px] text-gray-400 mt-0.5">
-                  {isQH ? 'Day-Ahead 15-min Auction' : 'Day-Ahead Hourly Auction'}
+                  {isQH
+                    ? isQHSynthesized
+                      ? 'Hourly avg (real 15-min not yet published by SMARD)'
+                      : 'Day-Ahead 15-min Auction'
+                    : 'Day-Ahead Hourly Auction'}
                 </p>
               </div>
-              <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
-                <button onClick={() => setResolution('hour')}
-                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                  60 min
-                </button>
-                <button onClick={() => setResolution('quarterhour')}
-                  className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                  15 min
-                </button>
+              <div className="flex items-center gap-1.5">
+                {isQH && isQHSynthesized && (
+                  <TooltipProvider delayDuration={100}>
+                    <UITooltip>
+                      <TooltipTrigger asChild>
+                        <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 cursor-help select-none">
+                          ≈ hourly avg
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-[260px] text-left space-y-1.5 p-3">
+                        <p className="font-semibold text-[12px]">15-min data not yet published</p>
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          SMARD releases quarterhour prices with a 1–2 day delay.
+                          The chart currently shows each hourly price repeated × 4 — no intra-hour variation.
+                        </p>
+                        <p className="text-[11px] text-gray-400 font-mono">
+                          node scripts/download-smard.mjs
+                        </p>
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                )}
+                <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
+                  <button onClick={() => setResolution('hour')}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    60 min
+                  </button>
+                  <button onClick={() => setResolution('quarterhour')}
+                    disabled={prices.hourlyQH.length === 0}
+                    title={prices.hourlyQH.length === 0 ? 'No 15-min data available — run: node scripts/download-smard.mjs' : isQHSynthesized ? 'Showing hourly avg × 4 — SMARD 15-min data not yet published for this day' : '15-minute SMARD resolution'}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+                    15 min
+                  </button>
+                </div>
               </div>
             </div>
           </CardHeader>
@@ -1041,7 +1090,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         <div className="h-full">
           <Card className="h-full flex flex-col shadow-sm border-gray-200/80">
             <CardHeader className="pb-2 border-b border-gray-100">
-              <CardTitle className="text-sm font-bold text-[#313131]">Select a Day</CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-bold text-[#313131]">Select a Day</CardTitle>
+                {(() => {
+                  const latestDate = prices.daily.length > 1
+                    ? prices.daily[prices.daily.length - 2].date
+                    : prices.daily[prices.daily.length - 1]?.date
+                  if (!latestDate || prices.selectedDate === latestDate) return null
+                  return (
+                    <button
+                      onClick={() => prices.setSelectedDate(latestDate)}
+                      className="text-[11px] font-semibold text-[#EA1C0A] hover:text-[#EA1C0A]/80 transition-colors flex items-center gap-1">
+                      <span>↓</span> Latest
+                    </button>
+                  )
+                })()}
+              </div>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto">
               <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} />
@@ -1053,18 +1117,58 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 const windowPts = chartData.filter(d => d.isInWindow)
                 if (!arrivalPt || windowPts.length === 0) return null
                 const lowestPrice = Math.min(...windowPts.map(d => d.price))
+                const lowestPt = windowPts.reduce((m, d) => d.price < m.price ? d : m, windowPts[0])
                 const spread = Math.round((arrivalPt.price - lowestPrice) * 100) / 100
+
+                // Max Spread: find exact hour of max/min across full date1 24h
+                const dailySummary = prices.daily.find(d => d.date === date1)
+                const maxSpreadCt = dailySummary ? Math.round((dailySummary.spread / 10) * 100) / 100 : null
+                const maxPriceCt = dailySummary ? Math.round((dailySummary.maxPrice / 10) * 100) / 100 : null
+                const minPriceCt = dailySummary ? Math.round((dailySummary.minPrice / 10) * 100) / 100 : null
+                const date1Hourly = prices.hourly.filter(p => p.date === date1)
+                const maxHourlyPt = date1Hourly.length > 0
+                  ? date1Hourly.reduce((m, p) => p.priceEurMwh > m.priceEurMwh ? p : m, date1Hourly[0])
+                  : null
+                const minHourlyPt = date1Hourly.length > 0
+                  ? date1Hourly.reduce((m, p) => p.priceEurMwh < m.priceEurMwh ? p : m, date1Hourly[0])
+                  : null
+                const fmtHour = (h: number) => `${String(h).padStart(2, '0')}:00`
+
+                const arrivalLabel = arrivalPt.label  // already HH:MM
+                const lowestLabel = lowestPt.label     // HH:MM of cheapest slot
+                const lowestDateLabel = lowestPt.date === date2 ? fmtDateShort(date2) : fmtDateShort(date1)
+
                 return (
-                  <div className="mt-4 pt-3 border-t border-gray-100">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-[11px] text-gray-500 font-medium">Spread</span>
-                      <span className="text-lg font-bold tabular-nums text-[#313131]">
-                        {spread.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
-                      </span>
+                  <div className="mt-4 pt-3 border-t border-gray-100 space-y-3">
+                    <div title={`Arrival: ${fmtDateShort(date1)} ${arrivalLabel} @ ${arrivalPt.price.toFixed(2)} ct/kWh\nCheapest slot: ${lowestDateLabel} ${lowestLabel} @ ${lowestPrice.toFixed(2)} ct/kWh`}>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-[11px] text-gray-500 font-medium">Overnight Spread</span>
+                        <span className="text-lg font-bold tabular-nums text-[#313131]">
+                          {spread.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-1 leading-relaxed font-mono">
+                        {arrivalLabel} {arrivalPt.price.toFixed(1)} ct → {lowestLabel} {lowestPrice.toFixed(1)} ct
+                        <span className="font-sans ml-1 not-italic">({lowestDateLabel})</span>
+                      </p>
                     </div>
-                    <p className="text-[10px] text-gray-400 mt-1 leading-relaxed">
-                      Arrival ({arrivalPt.price.toFixed(1)} ct) vs. lowest night ({lowestPrice.toFixed(1)} ct)
-                    </p>
+                    {maxSpreadCt !== null && maxPriceCt !== null && minPriceCt !== null && (
+                      <div title={maxHourlyPt && minHourlyPt
+                        ? `High: ${fmtDateShort(date1)} ${fmtHour(maxHourlyPt.hour)} @ ${maxPriceCt.toFixed(2)} ct/kWh\nLow: ${fmtDateShort(date1)} ${fmtHour(minHourlyPt.hour)} @ ${minPriceCt.toFixed(2)} ct/kWh`
+                        : undefined}>
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-[11px] text-gray-500 font-medium">Max Spread</span>
+                          <span className="text-lg font-bold tabular-nums text-[#313131]">
+                            {maxSpreadCt.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-gray-400 mt-1 leading-relaxed font-mono">
+                          {maxHourlyPt ? fmtHour(maxHourlyPt.hour) : '—'} {maxPriceCt.toFixed(1)} ct
+                          {' '}↔{' '}
+                          {minHourlyPt ? fmtHour(minHourlyPt.hour) : '—'} {minPriceCt.toFixed(1)} ct
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )
               })()}
@@ -1184,8 +1288,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   const SEASON_BG: Record<string, string> = {
                     winter: '#EFF6FF', spring: '#F0FDF4', summer: '#FEFCE8', autumn: '#FFF7ED',
                   }
-                  // Last 12 months only (matches rolling 365-day avg)
-                  const last12 = monthlySavingsData.slice(-12).map(d => ({
+                  // Last 12 months up to the selected date (matches rolling 365-day avg ending at date1)
+                  const selectedMonth = date1 ? date1.slice(0, 7) : undefined
+                  const filteredMonths = selectedMonth
+                    ? monthlySavingsData.filter(d => d.month <= selectedMonth)
+                    : monthlySavingsData
+                  const last12 = filteredMonths.slice(-12).map(d => ({
                     ...d,
                     displayLabel: d.label === 'Jan' ? `Jan '${String(d.year).slice(2)}` : d.label,
                   }))
