@@ -247,6 +247,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
   const [heatmapUnit, setHeatmapUnit] = useState<'eur' | 'ct'>('eur')
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
+  const [formulaOpen, setFormulaOpen] = useState(false)
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
 
   const date1 = prices.selectedDate
@@ -538,6 +539,83 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       })
   }, [overnightWindows, deferredEnergyPerSession, deferredWeeklyPlugIns, isQH])
 
+  // ── Quarterly rollup for Outcome Box ──
+  const quarterlyData = useMemo(() => {
+    if (monthlySavingsData.length === 0) return []
+    const qMap = new Map<string, { savings: number; label: string }>()
+    for (const m of monthlySavingsData) {
+      const yr = m.month.slice(0, 4)
+      const mo = parseInt(m.month.slice(5, 7))
+      const q = Math.ceil(mo / 3)
+      const key = `${yr}-Q${q}`
+      const label = `Q${q} '${yr.slice(2)}`
+      const ex = qMap.get(key)
+      qMap.set(key, { savings: (ex?.savings ?? 0) + m.savings, label })
+    }
+    return [...qMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .slice(-4)
+      .map(([, v]) => v)
+  }, [monthlySavingsData])
+
+  // ── Dynamic callouts — only fire when something is genuinely interesting ──
+  const callouts = useMemo(() => {
+    if (!sessionCost || !date1 || prices.daily.length === 0 || chartData.length === 0) return []
+    const results: Array<{ icon: string; text: string; color: 'emerald' | 'amber' | 'blue' | 'red' }> = []
+
+    // 1. Negative prices in the charging window
+    const negSlots = chartData.filter(d => d.isInWindow && d.price < 0)
+    if (negSlots.length > 0) {
+      results.push({ icon: '⚡', color: 'emerald',
+        text: `${negSlots.length} price slot${negSlots.length > 1 ? 's' : ''} in tonight's charging window turned negative — the grid is paying to consume. Maximum flexibility value.` })
+    }
+
+    // 2. Savings vs rolling annual average per session
+    const annualAvgPerSession = sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0
+    if (annualAvgPerSession > 0.05) {
+      const ratio = sessionCost.savingsEur / annualAvgPerSession
+      if (ratio > 1.8) {
+        results.push({ icon: '📈', color: 'emerald',
+          text: `Today's saving of ${sessionCost.savingsEur.toFixed(2)} € is ${Math.round((ratio - 1) * 100)}% above your annual average — exceptional market conditions.` })
+      } else if (ratio < 0.2 && sessionCost.savingsEur < 0.10) {
+        results.push({ icon: '📉', color: 'amber',
+          text: `Very flat prices today — minimal spread between peak and trough. Below-average optimization potential for this charging window.` })
+      }
+    }
+
+    // 3. Full-day spread vs historical percentiles
+    const allSpreads = prices.daily.map(d => d.spread / 10).sort((a, b) => a - b)
+    const p90 = allSpreads[Math.floor(allSpreads.length * 0.9)]
+    const p10 = allSpreads[Math.floor(allSpreads.length * 0.1)]
+    const daySummary = prices.daily.find(d => d.date === date1)
+    const daySpreadCt = daySummary ? daySummary.spread / 10 : 0
+    if (daySpreadCt >= p90 && !results.some(r => r.icon === '📈')) {
+      results.push({ icon: '🏆', color: 'emerald',
+        text: `Full-day spread of ${daySpreadCt.toFixed(1)} ct/kWh puts today in the top 10% of all days in the dataset — prime arbitrage conditions.` })
+    } else if (daySpreadCt > 0 && daySpreadCt <= p10 && !results.some(r => r.icon === '📉')) {
+      results.push({ icon: '😴', color: 'amber',
+        text: `Today's spread (${daySpreadCt.toFixed(1)} ct/kWh) is among the flattest 10% of days — limited arbitrage opportunity.` })
+    }
+
+    // 4. Tight flexibility warning
+    if (flexibilityHours <= 1 && results.length < 2) {
+      results.push({ icon: '⚠️', color: 'red',
+        text: `Only ${flexibilityHours}h of flex in the window — barely enough to shift charging. Consider a later departure time for more optimization headroom.` })
+    }
+
+    // 5. Winter peak — only if spread is notably high and not already covered
+    if (results.length < 2 && daySpreadCt > 0) {
+      const month = parseInt(date1.slice(5, 7))
+      const p75 = allSpreads[Math.floor(allSpreads.length * 0.75)]
+      if ((month <= 2 || month === 12) && daySpreadCt >= p75) {
+        results.push({ icon: '❄️', color: 'blue',
+          text: `Winter pattern: higher demand and lower solar output tend to widen day-ahead spreads. Today confirms the seasonal premium.` })
+      }
+    }
+
+    return results.slice(0, 2)
+  }, [sessionCost, date1, chartData, prices.daily, rollingAvgSavings, sessionsPerYear, flexibilityHours])
+
   // ── Separate overnight windows for heatmap (uses its own plug-in time slider) ──
   const heatmapOvernightWindows = useMemo(() => {
     if (prices.hourly.length === 0) return []
@@ -641,13 +719,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   return (
     <div className="space-y-8">
-      {/* ── Driving Profile ── */}
-      <Card className="overflow-hidden shadow-sm border-gray-200/80">
+      {/* ── Top row: Customer Profile + Outcome Box ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <Card className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
         <CardHeader className="pb-3 bg-gray-50/80 border-b border-gray-100">
-          <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Your Driving Profile</CardTitle>
+          <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Customer Profile</CardTitle>
         </CardHeader>
         <CardContent className="pt-6 pb-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-8">
             {/* Mileage slider — distribution subtly below */}
             <div className="space-y-2.5">
               <div className="flex items-baseline justify-between">
@@ -760,6 +839,61 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         </CardContent>
       </Card>
 
+      {/* ── Outcome Box (Savings Potential) ── */}
+      <Card className="shadow-sm border-gray-200/80 flex flex-col">
+        <CardHeader className="pb-2 border-b border-gray-100">
+          <CardTitle className="text-sm font-bold text-[#313131]">Savings Potential</CardTitle>
+          <p className="text-[11px] text-gray-400 mt-0.5">
+            Rolling 12 months · {sessionsPerYear} sessions/yr
+          </p>
+        </CardHeader>
+        <CardContent className="flex-1 pt-4 space-y-5">
+          {/* Annual EUR */}
+          <div>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Annual Savings</p>
+            <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR" className="text-3xl font-extrabold text-[#EA1C0A] tabular-nums leading-none" />
+            <p className="text-[10px] text-gray-400 mt-0.5">per year</p>
+          </div>
+          {/* Today's ct/kWh */}
+          {sessionCost && (
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Today's Spread</p>
+              <p className="text-xl font-bold text-[#313131] tabular-nums">
+                {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)}
+                <span className="text-xs font-normal text-gray-400 ml-1">ct/kWh</span>
+              </p>
+            </div>
+          )}
+          {/* Quarterly bars */}
+          {quarterlyData.length > 0 && (() => {
+            const maxQ = Math.max(...quarterlyData.map(d => d.savings))
+            return (
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">By Quarter</p>
+                <div className="space-y-2">
+                  {quarterlyData.map((q) => (
+                    <div key={q.label} className="flex items-center gap-2">
+                      <span className="text-[10px] text-gray-400 font-mono w-10 shrink-0">{q.label}</span>
+                      <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                        <div className="bg-[#EA1C0A]/70 h-1.5 rounded-full transition-all duration-500"
+                          style={{ width: `${maxQ > 0 ? (q.savings / maxQ) * 100 : 0}%` }} />
+                      </div>
+                      <span className="text-[10px] text-gray-500 tabular-nums w-10 text-right shrink-0">
+                        {q.savings.toFixed(0)} €
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
+          {rollingAvgSavings === 0 && (
+            <p className="text-[11px] text-gray-400 leading-relaxed">Select a date above to calculate savings.</p>
+          )}
+        </CardContent>
+      </Card>
+      </div>{/* end top row */}
+
       {/* ── Chart + Sidebar ── */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Chart (3/4) */}
@@ -850,7 +984,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                           <p className="font-semibold tabular-nums">{d.price.toFixed(2)} ct/kWh</p>
                           {d.baselinePrice !== null && (
                             <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Immediate charging
+                              <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Unmanaged charging
                             </p>
                           )}
                           {d.optimizedPrice !== null && (
@@ -1104,6 +1238,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     className="hover:text-gray-600 underline underline-offset-2">
                     SMARD.de — Day-Ahead Prices
                   </a>
+                  <span className="text-gray-300">·</span>
+                  <span className="italic">
+                    {date1 && fmtDateShort(date1)} evening (plug-in) → overnight → {date2 && fmtDateShort(date2)} morning (departure)
+                  </span>
                 </div>
               )
             })()}
@@ -1165,9 +1303,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
                 return (
                   <div className="mt-4 pt-3 border-t border-gray-100 space-y-3">
-                    <div title={`Arrival: ${fmtDateShort(date1)} ${arrivalLabel} @ ${arrivalPt.price.toFixed(2)} ct/kWh\nCheapest slot: ${lowestDateLabel} ${lowestLabel} @ ${lowestPrice.toFixed(2)} ct/kWh`}>
+                    <div>
                       <div className="flex items-baseline justify-between">
-                        <span className="text-[11px] text-gray-500 font-medium">Overnight Spread</span>
+                        <TooltipProvider delayDuration={200}>
+                          <UITooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-[11px] text-gray-500 font-medium cursor-help underline decoration-dotted underline-offset-2">Overnight Spread</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="left" className="max-w-[220px] text-left p-3 space-y-1">
+                              <p className="font-semibold text-[12px]">Arrival vs. cheapest window slot</p>
+                              <p className="text-[11px] text-gray-500 leading-relaxed">Price difference between plug-in time and the lowest-price hour in tonight's charging window — the arbitrage available by shifting load.</p>
+                            </TooltipContent>
+                          </UITooltip>
+                        </TooltipProvider>
                         <span className="text-lg font-bold tabular-nums text-[#313131]">
                           {spread.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
                         </span>
@@ -1178,11 +1326,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       </p>
                     </div>
                     {maxSpreadCt !== null && maxPriceCt !== null && minPriceCt !== null && (
-                      <div title={maxHourlyPt && minHourlyPt
-                        ? `High: ${fmtDateShort(date1)} ${fmtHour(maxHourlyPt.hour)} @ ${maxPriceCt.toFixed(2)} ct/kWh\nLow: ${fmtDateShort(date1)} ${fmtHour(minHourlyPt.hour)} @ ${minPriceCt.toFixed(2)} ct/kWh`
-                        : undefined}>
+                      <div>
                         <div className="flex items-baseline justify-between">
-                          <span className="text-[11px] text-gray-500 font-medium">Full Day Spread</span>
+                          <TooltipProvider delayDuration={200}>
+                            <UITooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-[11px] text-gray-500 font-medium cursor-help underline decoration-dotted underline-offset-2">Full Day Spread</span>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="max-w-[220px] text-left p-3 space-y-1">
+                                <p className="font-semibold text-[12px]">24-hour high vs. low</p>
+                                <p className="text-[11px] text-gray-500 leading-relaxed">Maximum price range across all hours of the day — the theoretical maximum arbitrage if charging could be placed at the single cheapest hour.</p>
+                              </TooltipContent>
+                            </UITooltip>
+                          </TooltipProvider>
                           <span className="text-lg font-bold tabular-nums text-[#313131]">
                             {maxSpreadCt.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
                           </span>
@@ -1201,6 +1357,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           </Card>
         </div>
       </div>
+
+      {/* ── Dynamic callouts ── */}
+      {callouts.length > 0 && (
+        <div className="flex flex-col sm:flex-row gap-3">
+          {callouts.map((c, i) => (
+            <div key={i} className={`flex items-start gap-3 rounded-xl px-4 py-3 border flex-1 ${
+              c.color === 'emerald' ? 'bg-emerald-50 border-emerald-200/80 text-emerald-900' :
+              c.color === 'amber'  ? 'bg-amber-50 border-amber-200/80 text-amber-900' :
+              c.color === 'blue'   ? 'bg-blue-50 border-blue-200/80 text-blue-900' :
+                                     'bg-red-50 border-red-200/80 text-red-900'
+            }`}>
+              <span className="text-lg leading-none mt-0.5 shrink-0">{c.icon}</span>
+              <p className="text-[12px] leading-relaxed">{c.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Session Cost Breakdown  +  Monthly Savings Potential ── */}
       {sessionCost && monthlySavingsData.length > 0 && (() => {
@@ -1234,7 +1407,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   {/* Immediate */}
                   <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
                     <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2.5">
-                      Immediate · first {isQH ? `${sessionHoursNeeded * 4} × 15 min` : `${sessionHoursNeeded}h`}
+                      Unmanaged · first {isQH ? `${sessionHoursNeeded * 4} × 15 min` : `${sessionHoursNeeded}h`}
                     </p>
                     <div className="space-y-1">
                       {sessionCost.baselineHours.map((h, i) => (
@@ -1271,32 +1444,42 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 </div>
 
                 {/* Cost formula chain */}
-                <div className="bg-gray-50/80 rounded-lg px-3.5 py-3 text-[11px] space-y-1.5 border border-gray-200/60">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Formula: avg ct x kWh / 100 = EUR</p>
-                  <div className="flex justify-between text-gray-500">
-                    <span className="font-mono">{sessionCost.baselineAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
-                    <span className="font-semibold text-red-600 tabular-nums">{sessionCost.baselineEur.toFixed(2)} EUR</span>
-                  </div>
-                  <div className="flex justify-between text-gray-500">
-                    <span className="font-mono">{sessionCost.optimizedAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
-                    <span className="font-semibold text-emerald-600 tabular-nums">{sessionCost.optimizedEur.toFixed(2)} EUR</span>
-                  </div>
-                  <div className="flex justify-between items-center border-t border-gray-200 pt-1.5 mt-0.5">
-                    <span className="font-mono text-gray-400">
-                      ({sessionCost.baselineAvgCt.toFixed(1)} − {sessionCost.optimizedAvgCt.toFixed(1)}) × {sessionCost.kwh} ÷ 100
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-semibold text-[#EA1C0A]/70 tabular-nums">
-                        {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)} ct/kWh
-                      </span>
-                      <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
+                {/* Cost formula — collapsible */}
+                <div className="border border-gray-200/60 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setFormulaOpen(v => !v)}
+                    className="w-full flex items-center justify-between bg-gray-50/80 px-3.5 py-2 text-left hover:bg-gray-100/60 transition-colors">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Formula: avg ct × kWh ÷ 100 = EUR</span>
+                    <span className="text-[10px] text-gray-400 ml-2">{formulaOpen ? '▲' : '▼'}</span>
+                  </button>
+                  {formulaOpen && (
+                    <div className="px-3.5 py-3 text-[11px] space-y-1.5 bg-gray-50/40">
+                      <div className="flex justify-between text-gray-500">
+                        <span className="font-mono">{sessionCost.baselineAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
+                        <span className="font-semibold text-red-600 tabular-nums">{sessionCost.baselineEur.toFixed(2)} EUR</span>
+                      </div>
+                      <div className="flex justify-between text-gray-500">
+                        <span className="font-mono">{sessionCost.optimizedAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
+                        <span className="font-semibold text-emerald-600 tabular-nums">{sessionCost.optimizedEur.toFixed(2)} EUR</span>
+                      </div>
+                      <div className="flex justify-between items-center border-t border-gray-200 pt-1.5 mt-0.5">
+                        <span className="font-mono text-gray-400">
+                          ({sessionCost.baselineAvgCt.toFixed(1)} − {sessionCost.optimizedAvgCt.toFixed(1)}) × {sessionCost.kwh} ÷ 100
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold text-[#EA1C0A]/70 tabular-nums">
+                            {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)} ct/kWh
+                          </span>
+                          <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Baseline end time note */}
                 <p className="text-[10px] text-gray-400 leading-relaxed">
-                  Immediate: plug-in at{' '}
+                  Unmanaged: plug-in at{' '}
                   <span className="font-mono">{String(scenario.plugInTime).padStart(2, '0')}:00</span> → done by{' '}
                   <span className="font-mono">{String(baselineEndHour).padStart(2, '0')}:00</span>.
                   Optimized shifts the same {sessionHoursNeeded}h to the cheapest slot in the {windowHours}h window.

@@ -16,9 +16,10 @@ export async function middleware(request: NextRequest) {
   const sessionCookie = request.cookies.get(getSessionCookieName())
 
   if (!sessionCookie?.value) {
-    // No session - redirect to login
+    // No session - redirect to login, preserving full path + query string
     const loginUrl = new URL('/login', request.url)
-    loginUrl.searchParams.set('redirect', pathname)
+    const search = request.nextUrl.search
+    loginUrl.searchParams.set('redirect', pathname + search)
     return NextResponse.redirect(loginUrl)
   }
 

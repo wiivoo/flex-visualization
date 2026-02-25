@@ -28,7 +28,8 @@ export default function LoginPage() {
       const data = await response.json()
 
       if (response.ok) {
-        window.location.href = '/'
+        const params = new URLSearchParams(window.location.search)
+        window.location.href = params.get('redirect') || '/v2'
       } else {
         setError(data.error || 'Wrong password')
       }
