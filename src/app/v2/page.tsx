@@ -54,7 +54,7 @@ export default function V2Page() {
       {/* Header */}
       <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-[1440px] mx-auto px-8 py-4">
-          <h1 className="text-lg font-bold text-[#313131]">EV Flex Charging — Load Shifting Calculator</h1>
+          <h1 className="text-lg font-bold text-[#313131]">EV Flex Charging — Load Shifting Visualization</h1>
         </div>
       </header>
 

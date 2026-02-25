@@ -56,7 +56,7 @@ interface PricePoint {
  */
 async function fetchSmardIndex(resolution: 'hour' | 'quarterhour' = 'hour'): Promise<number[]> {
   const url = `${SMARD_BASE_URL}/${SMARD_FILTER.PRICE_DE_LU}/DE/index_${resolution}.json`
-  const response = await fetch(url, { next: { revalidate: 3600 } })
+  const response = await fetch(url, { next: { revalidate: 300 } }) // 5 min: ensures new weekly chunks are picked up quickly
 
   if (!response.ok) {
     throw new Error(`SMARD index request failed: ${response.status}`)
@@ -433,7 +433,11 @@ export async function GET(request: NextRequest) {
   }
 
   // Step 1: Check cache
-  const cachedDays = await getCachedDays(startDate, endDate, type)
+  // QH requests bypass Supabase cache — cache key lacks resolution, so cached hourly data
+  // would be returned for QH requests, giving wrong 24-point instead of 96-point responses.
+  const cachedDays = resolution === 'quarterhour'
+    ? new Map<string, PricePoint[]>()
+    : await getCachedDays(startDate, endDate, type)
   const allDays = eachDayOfInterval({ start: startDate, end: endDate })
   const uncachedDays = allDays.filter(d => !cachedDays.has(format(d, 'yyyy-MM-dd')))
 
@@ -464,10 +468,27 @@ export async function GET(request: NextRequest) {
   const uncachedEnd = uncachedDays[uncachedDays.length - 1]
 
   if (type === 'day-ahead' && resolution === 'quarterhour') {
-    // Quarter-hourly: only SMARD has 15-min data
+    // Quarter-hourly: try SMARD 15-min data first
     fetchedPrices = await fetchSmardBatch(uncachedStart, uncachedEnd, 'quarterhour')
     if (fetchedPrices && fetchedPrices.length > 0) {
       source = 'smard'
+    } else {
+      // Fallback: fetch hourly data and expand each hour into 4 identical QH slots
+      const hourlyPrices = await fetchAwattarBatch(uncachedStart, uncachedEnd)
+        || await fetchSmardBatch(uncachedStart, uncachedEnd)
+        || await fetchEnergyChartsBatch(uncachedStart, uncachedEnd)
+        || await fetchCsvBatch(uncachedStart, uncachedEnd, 'day-ahead')
+      if (hourlyPrices && hourlyPrices.length > 0) {
+        fetchedPrices = hourlyPrices.flatMap(p => {
+          const base = new Date(p.timestamp)
+          return [0, 15, 30, 45].map(min => {
+            const ts = new Date(base)
+            ts.setMinutes(min, 0, 0)
+            return { timestamp: ts.toISOString(), price_ct_kwh: p.price_ct_kwh }
+          })
+        })
+        source = 'csv' // mark as non-demo so it gets cached
+      }
     }
   } else if (type === 'day-ahead') {
     // Step 2a: aWATTar (native range query, fastest source)
@@ -508,8 +529,8 @@ export async function GET(request: NextRequest) {
     source = 'demo'
   }
 
-  // Step 3: Update cache (do not cache demo data)
-  if (source !== 'demo' && fetchedPrices.length > 0) {
+  // Step 3: Update cache (do not cache demo data or quarterhour — no dedicated resolution cache slot)
+  if (source !== 'demo' && fetchedPrices.length > 0 && resolution !== 'quarterhour') {
     try {
       await cachePricesByDay(fetchedPrices, type, source)
     } catch (error) {
