@@ -862,6 +862,31 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       )
                     }} />
 
+                  {/* ── Overnight spread corridor — very subtle background band ── */}
+                  {(() => {
+                    if (arrivalIdx < 0) return null
+                    const windowPts = chartData.filter(d => d.isInWindow)
+                    if (windowPts.length === 0) return null
+                    const arrivalPrice = chartData[arrivalIdx]?.price
+                    const lowestWindowPrice = Math.min(...windowPts.map(d => d.price))
+                    if (arrivalPrice === undefined || arrivalPrice <= lowestWindowPrice) return null
+                    return (
+                      <>
+                        {/* Faint band between arrival price and cheapest window price */}
+                        <ReferenceArea y1={lowestWindowPrice} y2={arrivalPrice}
+                          fill="#F59E0B" fillOpacity={0.04} stroke="none" ifOverflow="hidden" />
+                        {/* Thin dashed line at arrival price */}
+                        <ReferenceLine y={arrivalPrice}
+                          stroke="#EA1C0A" strokeOpacity={0.18} strokeWidth={1} strokeDasharray="4 8"
+                          label={{ value: `${arrivalPrice.toFixed(1)}`, position: 'insideRight', fill: '#EA1C0A', fillOpacity: 0.45, fontSize: 9, dy: -8 }} />
+                        {/* Thin dashed line at cheapest window price */}
+                        <ReferenceLine y={lowestWindowPrice}
+                          stroke="#10B981" strokeOpacity={0.18} strokeWidth={1} strokeDasharray="4 8"
+                          label={{ value: `${lowestWindowPrice.toFixed(1)}`, position: 'insideRight', fill: '#10B981', fillOpacity: 0.45, fontSize: 9, dy: 10 }} />
+                      </>
+                    )
+                  })()}
+
                   {/* Charging hour bands — clear colored backgrounds per block */}
                   {baselineRanges.map((r, i) => (
                     <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
@@ -1120,7 +1145,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 const lowestPt = windowPts.reduce((m, d) => d.price < m.price ? d : m, windowPts[0])
                 const spread = Math.round((arrivalPt.price - lowestPrice) * 100) / 100
 
-                // Max Spread: find exact hour of max/min across full date1 24h
+                // Full Day Spread: find exact hour of max/min across full date1 24h
                 const dailySummary = prices.daily.find(d => d.date === date1)
                 const maxSpreadCt = dailySummary ? Math.round((dailySummary.spread / 10) * 100) / 100 : null
                 const maxPriceCt = dailySummary ? Math.round((dailySummary.maxPrice / 10) * 100) / 100 : null
@@ -1157,7 +1182,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                         ? `High: ${fmtDateShort(date1)} ${fmtHour(maxHourlyPt.hour)} @ ${maxPriceCt.toFixed(2)} ct/kWh\nLow: ${fmtDateShort(date1)} ${fmtHour(minHourlyPt.hour)} @ ${minPriceCt.toFixed(2)} ct/kWh`
                         : undefined}>
                         <div className="flex items-baseline justify-between">
-                          <span className="text-[11px] text-gray-500 font-medium">Max Spread</span>
+                          <span className="text-[11px] text-gray-500 font-medium">Full Day Spread</span>
                           <span className="text-lg font-bold tabular-nums text-[#313131]">
                             {maxSpreadCt.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
                           </span>
@@ -1256,11 +1281,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     <span className="font-mono">{sessionCost.optimizedAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
                     <span className="font-semibold text-emerald-600 tabular-nums">{sessionCost.optimizedEur.toFixed(2)} EUR</span>
                   </div>
-                  <div className="flex justify-between border-t border-gray-200 pt-1.5 mt-0.5">
+                  <div className="flex justify-between items-center border-t border-gray-200 pt-1.5 mt-0.5">
                     <span className="font-mono text-gray-400">
                       ({sessionCost.baselineAvgCt.toFixed(1)} − {sessionCost.optimizedAvgCt.toFixed(1)}) × {sessionCost.kwh} ÷ 100
                     </span>
-                    <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] font-semibold text-[#EA1C0A]/70 tabular-nums">
+                        {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)} ct/kWh
+                      </span>
+                      <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
+                    </div>
                   </div>
                 </div>
 
