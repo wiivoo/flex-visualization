@@ -13,10 +13,18 @@ All scenario parameters are synced to URL search params, making the current view
 |-------|-------------|---------|
 | `date` | Selected date (YYYY-MM-DD) | Second-to-last available |
 | `mileage` | Yearly km | 15000 |
-| `plugins` | Weekly plug-ins | 4 |
+| `plugins_wd` | Weekday plug-ins (Mon–Fri, 0–5) | 3 |
+| `plugins_we` | Weekend plug-ins (Sat–Sun, 0–2) | 1 |
 | `plugin_time` | Plug-in hour | 18 |
 | `departure` | Departure hour | 7 |
 | `mode` | `fullday` or omitted for overnight | overnight |
+| `power` | Wallbox power in kW (only serialized if ≠ 7) | 7 |
+
+## Backward Compatibility
+
+Old `plugins` parameter (single integer 1–7) is automatically converted:
+- `plugins_wd = min(plugins, 5)`
+- `plugins_we = max(0, plugins - 5)`
 
 ## Share Button
 

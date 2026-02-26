@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
 import { runOptimization, type OptimizeResult } from '@/lib/optimizer'
-import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, type ChargingScenario } from '@/lib/v2-config'
+import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, type ChargingScenario } from '@/lib/v2-config'
 import { Step2ChargingScenario } from '@/components/v2/steps/Step2ChargingScenario'
 
 // Parse scenario from URL search params, falling back to defaults
@@ -14,12 +14,26 @@ function parseScenario(params: URLSearchParams): ChargingScenario {
     return isNaN(v) || v === 0 ? fallback : v
   }
   const mode = params.get('mode')
+  // Backward compat: old `plugins` param → split into weekday/weekend
+  const hasNewParams = params.has('plugins_wd') || params.has('plugins_we')
+  let weekdayPlugIns = DEFAULT_SCENARIO.weekdayPlugIns
+  let weekendPlugIns = DEFAULT_SCENARIO.weekendPlugIns
+  if (hasNewParams) {
+    weekdayPlugIns = get('plugins_wd', DEFAULT_SCENARIO.weekdayPlugIns)
+    weekendPlugIns = get('plugins_we', DEFAULT_SCENARIO.weekendPlugIns)
+  } else if (params.has('plugins')) {
+    const old = get('plugins', 4)
+    weekdayPlugIns = Math.min(old, 5)
+    weekendPlugIns = Math.max(0, old - 5)
+  }
   return {
     ...DEFAULT_SCENARIO,
     yearlyMileageKm: get('mileage', DEFAULT_SCENARIO.yearlyMileageKm),
-    weeklyPlugIns:   get('plugins', DEFAULT_SCENARIO.weeklyPlugIns),
+    weekdayPlugIns,
+    weekendPlugIns,
     plugInTime:      get('plugin_time', DEFAULT_SCENARIO.plugInTime),
     departureTime:   get('departure', DEFAULT_SCENARIO.departureTime),
+    chargePowerKw:   get('power', DEFAULT_SCENARIO.chargePowerKw),
     chargingMode:    mode === 'fullday' ? 'fullday' : 'overnight',
   }
 }
@@ -72,9 +86,11 @@ function V2Inner() {
     const p = new URLSearchParams()
     if (prices.selectedDate) p.set('date', prices.selectedDate)
     p.set('mileage',     String(scenario.yearlyMileageKm))
-    p.set('plugins',     String(scenario.weeklyPlugIns))
+    p.set('plugins_wd',  String(scenario.weekdayPlugIns))
+    p.set('plugins_we',  String(scenario.weekendPlugIns))
     p.set('plugin_time', String(scenario.plugInTime))
     p.set('departure',   String(scenario.departureTime))
+    if (scenario.chargePowerKw !== 7) p.set('power', String(scenario.chargePowerKw))
     if (scenario.chargingMode === 'fullday') p.set('mode', 'fullday')
     router.replace(`/v2?${p.toString()}`, { scroll: false })
   }, [scenario, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -94,8 +110,8 @@ function V2Inner() {
 
   // Derive energy per session from mileage + frequency
   const energyPerSession = useMemo(() =>
-    deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weeklyPlugIns),
-    [scenario.yearlyMileageKm, scenario.weeklyPlugIns]
+    deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weekdayPlugIns, scenario.weekendPlugIns),
+    [scenario.yearlyMileageKm, scenario.weekdayPlugIns, scenario.weekendPlugIns]
   )
 
   // Compute start/target levels from energy per session for optimizer compat

@@ -21,6 +21,8 @@
 | PROJ-21 | Savings Sensitivity Heatmap | Deployed | [spec](PROJ-21-savings-heatmap.md) | `components/v2/steps/Step2ChargingScenario.tsx` |
 | PROJ-22 | Savings Potential Box | Deployed | [spec](PROJ-22-savings-potential-box.md) | `components/v2/steps/Step2ChargingScenario.tsx` |
 | PROJ-23 | URL State & Sharing | Deployed | [spec](PROJ-23-url-sharing.md) | `app/v2/page.tsx` |
+| PROJ-24 | Weekday/Weekend Charging Split | Deployed | [spec](PROJ-24-weekday-weekend-split.md) | `lib/v2-config.ts`, `lib/charging-helpers.ts`, `Step2…`, `MiniCalendar…` |
+| PROJ-25 | Fleet Portfolio View | Deployed | [spec](PROJ-25-fleet-portfolio.md) | `components/v2/FleetPortfolioCard.tsx` |
 
 ## Archived Features (v1 — code in `src/_archive/`)
 
@@ -38,7 +40,7 @@
 | PROJ-14 | Portfolio Scale (unbuilt) | [archived](_archive/PROJ-14-v2-portfolio-scale.md) |
 | PROJ-15 | Market Context (unbuilt) | [archived](_archive/PROJ-15-v2-market-context.md) |
 
-## Next Available ID: PROJ-24
+## Next Available ID: PROJ-26
 
 ## Architecture
 
@@ -56,10 +58,15 @@ src/
     v2/
       steps/Step2ChargingScenario.tsx  → all visualizations (1800 lines)
       AnimatedNumber.tsx               → animated number transitions
+      FleetPortfolioCard.tsx           → fleet portfolio analysis card
+      MiniCalendar.tsx                 → date picker with weekend styling
+      MonthlySavingsCard.tsx           → monthly savings bar chart
+      SavingsHeatmap.tsx               → mileage × frequency sensitivity matrix
     ui/                   → shadcn/ui primitives
   lib/
     use-prices.ts         → price data hook (static JSON + incremental API)
-    v2-config.ts          → types, constants, defaults
+    v2-config.ts          → types, constants, defaults (ChargingScenario, weekday/weekend split)
+    charging-helpers.ts   → overnight window builder, savings computation
     optimizer.ts          → baseline vs optimized charging algorithm
     grid-fees.ts          → §14a Module 3 grid fee schedule
     config.ts             → shared types (PricePoint, ChargingBlock)
