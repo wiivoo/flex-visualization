@@ -64,10 +64,11 @@ interface Props {
 }
 
 /* ────── MiniCalendar ────── */
-function MiniCalendar({ daily, selectedDate, onSelect }: {
+function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = true }: {
   daily: DailySummary[]
   selectedDate: string
   onSelect: (date: string) => void
+  requireNextDay?: boolean
 }) {
   const dataRange = useMemo(() => {
     if (daily.length === 0) return { firstMonth: '', lastMonth: '' }
@@ -150,7 +151,7 @@ function MiniCalendar({ daily, selectedDate, onSelect }: {
           const nd = new Date(day.date + 'T12:00:00Z')
           nd.setUTCDate(nd.getUTCDate() + 1)
           const nextDateStr = nd.toISOString().slice(0, 10)
-          const hasNextDay = allDates.has(nextDateStr)
+          const hasNextDay = requireNextDay ? allDates.has(nextDateStr) : true
           return (
             <button key={day.date} onClick={() => hasNextDay && onSelect(day.date)}
               disabled={!hasNextDay}
@@ -286,85 +287,146 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     return checkDate(date1) || checkDate(date2)
   }, [prices.hourlyQH, date1, date2])
 
-  // ── Build two-day overnight chart data ──
+  const isFullDay = scenario.chargingMode === 'fullday'
+
+  // ── Build chart data (overnight two-day or full-day single) ──
   const { chartData, sessionCost, rollingAvgSavings, monthlySavings } = useMemo(() => {
     if (chartPrices.length === 0 || !date1) {
       return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
     }
 
-    const day1Prices = chartPrices.filter(p => p.date === date1 && p.hour >= 14)
-    const day2Prices = chartPrices.filter(p => p.date === date2 && p.hour <= 10)
-    const merged = [...day1Prices, ...day2Prices]
-    if (merged.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
-
-    // Each slot delivers: hourly = chargerKW * 1h, QH = chargerKW * 0.25h (=1.75 kWh at 7kW)
     const kwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
+    const rollKwhPerSlot = DEFAULT_CHARGE_POWER_KW  // rolling avg always uses hourly
+    const rollSlotsPerHour = 1
+    const rollMinHours = Math.ceil(energyPerSession / DEFAULT_CHARGE_POWER_KW)
 
-    // Charging window prices
-    const windowPrices = merged.filter(p => {
-      if (p.date === date1) return p.hour >= scenario.plugInTime
-      if (p.date === date2) return p.hour < scenario.departureTime
-      return false
-    })
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number; baselinePrice: number | null; optimizedPrice: number | null; isInWindow: boolean }
+    type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
+    let data: ChartPoint[]
+    let cost: CostInfo
 
-    // Baseline: first N slots from plug-in
-    const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
-    // Optimized: cheapest N slots in window
-    const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-    const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+    if (isFullDay) {
+      // ── Full Day: single calendar day 0:00–23:59 ──
+      const dayPrices = [...chartPrices.filter(p => p.date === date1)]
+        .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+      if (dayPrices.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
 
-    let idx = 0
-    const data = merged.map(p => {
-      const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
-      const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
-      const isInWindow = (p.date === date1 && p.hour >= scenario.plugInTime) ||
-                         (p.date === date2 && p.hour < scenario.departureTime)
-      const min = p.minute ?? 0
-      return {
-        idx: idx++,
-        hour: p.hour,
-        minute: min,
-        date: p.date,
-        label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
-        price: ct,
-        baselinePrice: baselineKeys.has(key) ? ct : null,
-        optimizedPrice: optimizedKeys.has(key) ? ct : null,
-        isInWindow,
-      }
-    })
+      // Baseline: N slots starting from plugInTime, then wrap midnight
+      const baselineOrdered = [
+        ...dayPrices.filter(p => p.hour >= scenario.plugInTime),
+        ...dayPrices.filter(p => p.hour < scenario.plugInTime),
+      ]
+      const baselineKeys = new Set(baselineOrdered.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+      // Optimized: cheapest N slots from full 24h
+      const sortedByPrice = [...dayPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+      const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
 
-    // Compute costs
-    const bPts = data.filter(d => d.baselinePrice !== null)
-    const oPts = data.filter(d => d.optimizedPrice !== null)
-    const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.price, 0) / bPts.length : 0
-    const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.price, 0) / oPts.length : 0
-    const cost = {
-      baselineAvgCt: Math.round(bAvg * 100) / 100,
-      optimizedAvgCt: Math.round(oAvg * 100) / 100,
-      baselineEur: Math.round(bAvg * energyPerSession) / 100,
-      optimizedEur: Math.round(oAvg * energyPerSession) / 100,
-      savingsEur: Math.round((bAvg - oAvg) * energyPerSession) / 100,
-      kwh: energyPerSession,
-      baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
-      optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
-      baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
-        label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
-        ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
-      })),
-      optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
-        .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
-        .map(p => ({
+      let idx = 0
+      data = dayPrices.map(p => {
+        const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
+        const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
+        const min = p.minute ?? 0
+        return {
+          idx: idx++,
+          hour: p.hour,
+          minute: min,
+          date: p.date,
+          label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+          price: ct,
+          baselinePrice: baselineKeys.has(key) ? ct : null,
+          optimizedPrice: optimizedKeys.has(key) ? ct : null,
+          isInWindow: true,
+        }
+      })
+
+      const bPts = data.filter(d => d.baselinePrice !== null)
+      const oPts = data.filter(d => d.optimizedPrice !== null)
+      const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.price, 0) / bPts.length : 0
+      const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.price, 0) / oPts.length : 0
+      cost = {
+        baselineAvgCt: Math.round(bAvg * 100) / 100,
+        optimizedAvgCt: Math.round(oAvg * 100) / 100,
+        baselineEur: Math.round(bAvg * energyPerSession) / 100,
+        optimizedEur: Math.round(oAvg * energyPerSession) / 100,
+        savingsEur: Math.round((bAvg - oAvg) * energyPerSession) / 100,
+        kwh: energyPerSession,
+        baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
+        optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
+        baselineHours: baselineOrdered.slice(0, slotsNeeded).map(p => ({
           label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
           ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
         })),
+        optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
+          .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+          .map(p => ({
+            label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
+            ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+          })),
+      }
+    } else {
+      // ── Overnight: two-day window day1 14:00 → day2 10:00 ──
+      const day1Prices = chartPrices.filter(p => p.date === date1 && p.hour >= 14)
+      const day2Prices = chartPrices.filter(p => p.date === date2 && p.hour <= 10)
+      const merged = [...day1Prices, ...day2Prices]
+      if (merged.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
+
+      const windowPrices = merged.filter(p => {
+        if (p.date === date1) return p.hour >= scenario.plugInTime
+        if (p.date === date2) return p.hour < scenario.departureTime
+        return false
+      })
+      const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+      const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+      const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+
+      let idx = 0
+      data = merged.map(p => {
+        const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
+        const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
+        const isInWindow = (p.date === date1 && p.hour >= scenario.plugInTime) ||
+                           (p.date === date2 && p.hour < scenario.departureTime)
+        const min = p.minute ?? 0
+        return {
+          idx: idx++,
+          hour: p.hour,
+          minute: min,
+          date: p.date,
+          label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+          price: ct,
+          baselinePrice: baselineKeys.has(key) ? ct : null,
+          optimizedPrice: optimizedKeys.has(key) ? ct : null,
+          isInWindow,
+        }
+      })
+
+      const bPts = data.filter(d => d.baselinePrice !== null)
+      const oPts = data.filter(d => d.optimizedPrice !== null)
+      const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.price, 0) / bPts.length : 0
+      const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.price, 0) / oPts.length : 0
+      cost = {
+        baselineAvgCt: Math.round(bAvg * 100) / 100,
+        optimizedAvgCt: Math.round(oAvg * 100) / 100,
+        baselineEur: Math.round(bAvg * energyPerSession) / 100,
+        optimizedEur: Math.round(oAvg * energyPerSession) / 100,
+        savingsEur: Math.round((bAvg - oAvg) * energyPerSession) / 100,
+        kwh: energyPerSession,
+        baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
+        optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
+        baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
+          label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
+          ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+        })),
+        optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
+          .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+          .map(p => ({
+            label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
+            ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+          })),
+      }
     }
 
-    // 365-day rolling average — uses hourly data with resolution-aware slot logic
-    const rollKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
-    const rollSlotsPerHour = isQH ? 4 : 1
-    const rollMinHours = Math.ceil(energyPerSession / DEFAULT_CHARGE_POWER_KW)
-    let totalSavings = 0, daysOk = 0
+    // ── 365-day rolling average ──
     const endDate = date1
     const startRoll = new Date(new Date(endDate + 'T12:00:00Z').getTime() - 365 * 86400000).toISOString().slice(0, 10)
     const byDate = new Map<string, HourlyPrice[]>()
@@ -375,17 +437,32 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         byDate.set(p.date, arr)
       }
     }
-    for (const [dDate, dPrices] of byDate) {
-      const nd = nextDayStr(dDate)
-      const nPrices = byDate.get(nd)
-      if (!nPrices || nPrices.length === 0) continue
-      const eve = dPrices.filter(p => p.hour >= scenario.plugInTime)
-      const morn = nPrices.filter(p => p.hour < scenario.departureTime)
-      const win = [...eve, ...morn]
-      if (win.length < rollMinHours) continue
-      const { savingsEur } = computeWindowSavings(win, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
-      totalSavings += savingsEur
-      daysOk++
+    let totalSavings = 0, daysOk = 0
+    if (isFullDay) {
+      for (const [, dPrices] of byDate) {
+        if (dPrices.length < rollMinHours) continue
+        // Baseline starts from plugInTime, wraps midnight
+        const baselineFirst = [
+          ...dPrices.filter(p => p.hour >= scenario.plugInTime),
+          ...dPrices.filter(p => p.hour < scenario.plugInTime),
+        ]
+        const { savingsEur } = computeWindowSavings(baselineFirst, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
+        totalSavings += savingsEur
+        daysOk++
+      }
+    } else {
+      for (const [dDate, dPrices] of byDate) {
+        const nd = nextDayStr(dDate)
+        const nPrices = byDate.get(nd)
+        if (!nPrices || nPrices.length === 0) continue
+        const eve = dPrices.filter(p => p.hour >= scenario.plugInTime)
+        const morn = nPrices.filter(p => p.hour < scenario.departureTime)
+        const win = [...eve, ...morn]
+        if (win.length < rollMinHours) continue
+        const { savingsEur } = computeWindowSavings(win, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
+        totalSavings += savingsEur
+        daysOk++
+      }
     }
     const avgDaily = daysOk > 0 ? totalSavings / daysOk : 0
     const plugDaysMonth = (scenario.weeklyPlugIns / 7) * 30.44
@@ -393,7 +470,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const rollSav = Math.round(avgDaily * scenario.weeklyPlugIns * 52 * 100) / 100
 
     return { chartData: data, sessionCost: cost, rollingAvgSavings: rollSav, monthlySavings: mSav }
-  }, [chartPrices, prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.weeklyPlugIns, isQH])
+  }, [chartPrices, prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.weeklyPlugIns, scenario.chargingMode, isQH, isFullDay])
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -436,7 +513,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
     if (isDragging === 'arrival' && point.date === date1 && point.hour >= 14 && point.hour <= 23) {
       setScenario({ ...scenario, plugInTime: point.hour })
-    } else if (isDragging === 'departure' && point.date === date2 && point.hour >= 4 && point.hour <= 10) {
+    } else if (!isFullDay && isDragging === 'departure' && point.date === date2 && point.hour >= 4 && point.hour <= 10) {
       setScenario({ ...scenario, departureTime: point.hour })
     }
   }, [isDragging, chartData, date1, date2, scenario, setScenario, plotArea])
@@ -791,7 +868,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         <CardHeader className="pb-2 border-b border-gray-100">
           <CardTitle className="text-sm font-bold text-[#313131]">Savings Potential</CardTitle>
           <p className="text-[11px] text-gray-400 mt-0.5">
-            Rolling 12 months · {sessionsPerYear} sessions/yr
+            {isFullDay ? 'Full day · ' : 'Overnight · '}Rolling 12 months · {sessionsPerYear} sessions/yr
           </p>
         </CardHeader>
         <CardContent className="flex-1 pt-4 space-y-5">
@@ -826,16 +903,32 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           <CardHeader className="pb-2 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle className="text-base font-bold text-[#313131]">Overnight Price Curve</CardTitle>
+                <CardTitle className="text-base font-bold text-[#313131]">
+                  {isFullDay ? 'Full Day Price Curve' : 'Overnight Price Curve'}
+                </CardTitle>
                 <p className="text-[11px] text-gray-400 mt-0.5">
-                  {isQH
-                    ? isQHSynthesized
-                      ? 'Hourly avg (real 15-min not yet published by SMARD)'
-                      : 'Day-Ahead 15-min Auction'
-                    : 'Day-Ahead Hourly Auction'}
+                  {isFullDay
+                    ? 'Optimize at any time — pick cheapest hours across the full 24h day'
+                    : isQH
+                      ? isQHSynthesized
+                        ? 'Hourly avg (real 15-min not yet published by SMARD)'
+                        : 'Day-Ahead 15-min Auction'
+                      : 'Day-Ahead Hourly Auction'}
                 </p>
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-2">
+                {/* Mode toggle */}
+                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                  <button onClick={() => setScenario({ ...scenario, chargingMode: 'overnight' })}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    Overnight
+                  </button>
+                  <button onClick={() => setScenario({ ...scenario, chargingMode: 'fullday' })}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    Full Day
+                  </button>
+                </div>
+                <div className="flex items-center gap-1.5">
                 {isQH && isQHSynthesized && (
                   <TooltipProvider delayDuration={100}>
                     <UITooltip>
@@ -871,6 +964,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 </div>
               </div>
             </div>
+          </div>
           </CardHeader>
           <CardContent>
             {/* ── Chart container ── */}
@@ -971,8 +1065,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
-                  {/* Midnight boundary — subtle solid line */}
-                  {midnightIdx >= 0 && (
+                  {/* Midnight boundary — only in overnight mode */}
+                  {!isFullDay && midnightIdx >= 0 && (
                     <ReferenceLine x={midnightIdx} stroke="#D1D5DB" strokeWidth={1.5} strokeDasharray="" />
                   )}
 
@@ -982,8 +1076,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       strokeWidth={isDragging === 'arrival' ? 4 : 3}
                       strokeOpacity={isDragging === 'arrival' ? 1 : 0.6} />
                   )}
-                  {/* Departure reference line */}
-                  {departureIdx >= 0 && (
+                  {/* Departure reference line — only in overnight mode */}
+                  {!isFullDay && departureIdx >= 0 && (
                     <ReferenceLine x={departureIdx} stroke="#2563EB"
                       strokeWidth={isDragging === 'departure' ? 4 : 3}
                       strokeOpacity={isDragging === 'departure' ? 1 : 0.6} />
@@ -991,9 +1085,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 </ComposedChart>
               </ResponsiveContainer>
 
-              {/* ── Date labels — centered over each day's half ── */}
+              {/* ── Date labels ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
+                if (isFullDay) {
+                  // Single date centered
+                  return (
+                    <div className="absolute pointer-events-none z-[6] text-[11px] font-semibold text-gray-400"
+                      style={{ left: plotArea.left + plotArea.width / 2, top: plotArea.top + 6, transform: 'translateX(-50%)' }}>
+                      {fmtDateShort(date1)}
+                    </div>
+                  )
+                }
                 const midX = midnightIdx >= 0 ? idxToPx(midnightIdx) : plotArea.left + plotArea.width / 2
                 const day1Center = plotArea.left + (midX - plotArea.left) / 2
                 const day2Center = midX + (plotArea.left + plotArea.width - midX) / 2
@@ -1011,8 +1114,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 )
               })()}
 
-              {/* ── Grey overlays OUTSIDE charging window ── */}
-              {N > 1 && plotArea && (() => {
+              {/* ── Grey overlays OUTSIDE charging window — overnight only ── */}
+              {!isFullDay && N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const aX = arrivalIdx >= 0 ? idxToPx(arrivalIdx) : plotArea.left
                 const dX = departureIdx >= 0 ? idxToPx(departureIdx) : plotArea.left + plotArea.width
@@ -1118,7 +1221,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     </div>
                   </div>
 
-                  {/* DEPARTURE HANDLE */}
+                  {/* DEPARTURE HANDLE — overnight mode only */}
+                  {!isFullDay && (
                   <div className="absolute transition-[left] duration-100 z-20" style={{
                     left: getLeft(departureIdx >= 0 ? departureIdx : N - 1, N),
                     top: 0, height: '100%', transform: 'translateX(-50%)',
@@ -1142,6 +1246,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       </div>
                     </div>
                   </div>
+                  )}
                 </>
               )}
             </div>
@@ -1165,7 +1270,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   </a>
                   <span className="text-gray-300">·</span>
                   <span className="italic">
-                    {date1 && fmtDateShort(date1)} evening (plug-in) → overnight → {date2 && fmtDateShort(date2)} morning (departure)
+                    {isFullDay
+                      ? `${date1 && fmtDateShort(date1)} · full day · baseline from ${arrivalLabel}`
+                      : `${date1 && fmtDateShort(date1)} evening (plug-in) → overnight → ${date2 && fmtDateShort(date2)} morning (departure)`}
                   </span>
                 </div>
               )
@@ -1196,7 +1303,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               </div>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto">
-              <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} />
+              <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={!isFullDay} />
 
               {/* Spread: arrival price vs. lowest night price */}
               {(() => {

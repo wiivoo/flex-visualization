@@ -24,6 +24,7 @@ export interface ChargingScenario {
   targetLevel: number   // percent 50-100
   yearlyMileageKm: number  // 5000-40000
   weeklyPlugIns: number    // 1-7
+  chargingMode: 'overnight' | 'fullday'
 }
 
 export const DEFAULT_SCENARIO: ChargingScenario = {
@@ -34,6 +35,7 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
   targetLevel: 80,
   yearlyMileageKm: 15000,
   weeklyPlugIns: 4,
+  chargingMode: 'overnight',
 }
 
 /** Average EV consumption in kWh per 100 km */
