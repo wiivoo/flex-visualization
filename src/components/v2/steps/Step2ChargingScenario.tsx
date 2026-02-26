@@ -307,25 +307,30 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     let cost: CostInfo
 
     if (isFullDay) {
-      // ── Full Day: single calendar day 0:00–23:59 ──
-      const dayPrices = [...chartPrices.filter(p => p.date === date1)]
+      // ── Full Day: TWO complete days (0:00–23:59 each), max 24h window ──
+      const day1AllPrices = [...chartPrices.filter(p => p.date === date1)]
         .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
-      if (dayPrices.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
+      const day2AllPrices = [...chartPrices.filter(p => p.date === date2)]
+        .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+      const merged = [...day1AllPrices, ...day2AllPrices]
+      if (merged.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
 
-      // Baseline: N slots starting from plugInTime, then wrap midnight
-      const baselineOrdered = [
-        ...dayPrices.filter(p => p.hour >= scenario.plugInTime),
-        ...dayPrices.filter(p => p.hour < scenario.plugInTime),
-      ]
-      const baselineKeys = new Set(baselineOrdered.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
-      // Optimized: cheapest N slots from full 24h
-      const sortedByPrice = [...dayPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+      // Window: plugInTime on day1 → departureTime on day2 (max 24h enforced by departure ≤ plugInTime)
+      const windowPrices = merged.filter(p => {
+        if (p.date === date1) return p.hour >= scenario.plugInTime
+        if (p.date === date2) return p.hour < scenario.departureTime
+        return false
+      })
+      const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+      const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
       const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
 
       let idx = 0
-      data = dayPrices.map(p => {
+      data = merged.map(p => {
         const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
         const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
+        const isInWindow = (p.date === date1 && p.hour >= scenario.plugInTime) ||
+                           (p.date === date2 && p.hour < scenario.departureTime)
         const min = p.minute ?? 0
         return {
           idx: idx++,
@@ -336,7 +341,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           price: ct,
           baselinePrice: baselineKeys.has(key) ? ct : null,
           optimizedPrice: optimizedKeys.has(key) ? ct : null,
-          isInWindow: true,
+          isInWindow,
         }
       })
 
@@ -353,12 +358,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         kwh: energyPerSession,
         baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
         optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
-        baselineHours: baselineOrdered.slice(0, slotsNeeded).map(p => ({
+        baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
           label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
           ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
         })),
         optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
-          .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+          .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
           .map(p => ({
             label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
             ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
@@ -439,14 +444,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     }
     let totalSavings = 0, daysOk = 0
     if (isFullDay) {
-      for (const [, dPrices] of byDate) {
-        if (dPrices.length < rollMinHours) continue
-        // Baseline starts from plugInTime, wraps midnight
-        const baselineFirst = [
-          ...dPrices.filter(p => p.hour >= scenario.plugInTime),
-          ...dPrices.filter(p => p.hour < scenario.plugInTime),
-        ]
-        const { savingsEur } = computeWindowSavings(baselineFirst, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
+      // Full day: two-day window plugInTime(day1) → departureTime(day2), same logic as overnight
+      for (const [dDate, dPrices] of byDate) {
+        const nd = nextDayStr(dDate)
+        const nPrices = byDate.get(nd)
+        if (!nPrices || nPrices.length === 0) continue
+        const eve = dPrices.filter(p => p.hour >= scenario.plugInTime)
+        const morn = nPrices.filter(p => p.hour < scenario.departureTime)
+        const win = [...eve, ...morn]
+        if (win.length < rollMinHours) continue
+        const { savingsEur } = computeWindowSavings(win, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
         totalSavings += savingsEur
         daysOk++
       }
@@ -511,10 +518,29 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const point = chartData[dataIdx]
     if (!point) return
 
-    if (isDragging === 'arrival' && point.date === date1 && point.hour >= 14 && point.hour <= 23) {
-      setScenario({ ...scenario, plugInTime: point.hour })
-    } else if (!isFullDay && isDragging === 'departure' && point.date === date2 && point.hour >= 4 && point.hour <= 10) {
-      setScenario({ ...scenario, departureTime: point.hour })
+    if (isDragging === 'arrival') {
+      if (isFullDay) {
+        if (point.date === date1) {
+          // Clamp departure to ≤ new plugInTime to enforce max 24h window
+          const newDeparture = Math.min(scenario.departureTime, point.hour)
+          setScenario({ ...scenario, plugInTime: point.hour, departureTime: newDeparture })
+        }
+      } else {
+        if (point.date === date1 && point.hour >= 14 && point.hour <= 23) {
+          setScenario({ ...scenario, plugInTime: point.hour })
+        }
+      }
+    } else if (isDragging === 'departure') {
+      if (isFullDay) {
+        // Max 24h: departure must be ≤ plugInTime on day2
+        if (point.date === date2 && point.hour <= scenario.plugInTime) {
+          setScenario({ ...scenario, departureTime: point.hour })
+        }
+      } else {
+        if (point.date === date2 && point.hour >= 4 && point.hour <= 10) {
+          setScenario({ ...scenario, departureTime: point.hour })
+        }
+      }
     }
   }, [isDragging, chartData, date1, date2, scenario, setScenario, plotArea])
 
@@ -817,14 +843,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Plug-in Time</span>
                 <span className="text-2xl font-bold text-[#313131] tabular-nums">{String(scenario.plugInTime).padStart(2, '0')}<span className="text-xs font-normal text-gray-400 ml-0.5">:00</span></span>
               </div>
-              <input type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
+              <input type="range"
+                min={isFullDay ? 0 : PLUGIN_HOUR_MIN}
+                max={isFullDay ? 23 : PLUGIN_HOUR_MAX}
+                step={1}
                 value={scenario.plugInTime}
-                onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
+                onChange={(e) => {
+                  const newPlugIn = Number(e.target.value)
+                  // In full day mode, clamp departure to ≤ plugInTime (max 24h window)
+                  const newDeparture = isFullDay ? Math.min(scenario.departureTime, newPlugIn) : scenario.departureTime
+                  setScenario({ ...scenario, plugInTime: newPlugIn, departureTime: newDeparture })
+                }}
                 aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
                 className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
               <div className="flex justify-between text-[10px] text-gray-400">
-                <span>14:00</span>
-                <span>22:00</span>
+                <span>{isFullDay ? '00:00' : '14:00'}</span>
+                <span>{isFullDay ? '23:00' : '22:00'}</span>
               </div>
               {/* Plug-in time distribution bars (reference: typical German EV driver) */}
               <div className="relative h-6 mt-0.5 flex items-end gap-px">
@@ -908,7 +942,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 </CardTitle>
                 <p className="text-[11px] text-gray-400 mt-0.5">
                   {isFullDay
-                    ? 'Optimize at any time — pick cheapest hours across the full 24h day'
+                    ? `Two days · plug-in ${arrivalLabel} → departure ${departureLabel} · max 24h window`
                     : isQH
                       ? isQHSynthesized
                         ? 'Hourly avg (real 15-min not yet published by SMARD)'
@@ -919,11 +953,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               <div className="flex items-center gap-2">
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-                  <button onClick={() => setScenario({ ...scenario, chargingMode: 'overnight' })}
+                  <button onClick={() => {
+                    // Clamp plug-in and departure to overnight-valid ranges when switching back
+                    const newPlugIn = Math.max(PLUGIN_HOUR_MIN, Math.min(PLUGIN_HOUR_MAX, scenario.plugInTime))
+                    const newDeparture = Math.max(4, Math.min(10, scenario.departureTime))
+                    setScenario({ ...scenario, chargingMode: 'overnight', plugInTime: newPlugIn, departureTime: newDeparture })
+                  }}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     Overnight
                   </button>
-                  <button onClick={() => setScenario({ ...scenario, chargingMode: 'fullday' })}
+                  <button onClick={() => {
+                    // Ensure departure ≤ plugInTime (max 24h window) when switching to full day
+                    const newDeparture = Math.min(scenario.departureTime, scenario.plugInTime)
+                    setScenario({ ...scenario, chargingMode: 'fullday', departureTime: newDeparture })
+                  }}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     Full Day
                   </button>
@@ -1065,8 +1108,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
-                  {/* Midnight boundary — only in overnight mode */}
-                  {!isFullDay && midnightIdx >= 0 && (
+                  {/* Midnight boundary — both modes (overnight and full day both span two days) */}
+                  {midnightIdx >= 0 && (
                     <ReferenceLine x={midnightIdx} stroke="#D1D5DB" strokeWidth={1.5} strokeDasharray="" />
                   )}
 
@@ -1076,8 +1119,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       strokeWidth={isDragging === 'arrival' ? 4 : 3}
                       strokeOpacity={isDragging === 'arrival' ? 1 : 0.6} />
                   )}
-                  {/* Departure reference line — only in overnight mode */}
-                  {!isFullDay && departureIdx >= 0 && (
+                  {/* Departure reference line — both modes */}
+                  {departureIdx >= 0 && (
                     <ReferenceLine x={departureIdx} stroke="#2563EB"
                       strokeWidth={isDragging === 'departure' ? 4 : 3}
                       strokeOpacity={isDragging === 'departure' ? 1 : 0.6} />
@@ -1088,15 +1131,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               {/* ── Date labels ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
-                if (isFullDay) {
-                  // Single date centered
-                  return (
-                    <div className="absolute pointer-events-none z-[6] text-[11px] font-semibold text-gray-400"
-                      style={{ left: plotArea.left + plotArea.width / 2, top: plotArea.top + 6, transform: 'translateX(-50%)' }}>
-                      {fmtDateShort(date1)}
-                    </div>
-                  )
-                }
                 const midX = midnightIdx >= 0 ? idxToPx(midnightIdx) : plotArea.left + plotArea.width / 2
                 const day1Center = plotArea.left + (midX - plotArea.left) / 2
                 const day2Center = midX + (plotArea.left + plotArea.width - midX) / 2
@@ -1114,8 +1148,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 )
               })()}
 
-              {/* ── Grey overlays OUTSIDE charging window — overnight only ── */}
-              {!isFullDay && N > 1 && plotArea && (() => {
+              {/* ── Grey overlays OUTSIDE charging window ── */}
+              {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const aX = arrivalIdx >= 0 ? idxToPx(arrivalIdx) : plotArea.left
                 const dX = departureIdx >= 0 ? idxToPx(departureIdx) : plotArea.left + plotArea.width
@@ -1221,8 +1255,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     </div>
                   </div>
 
-                  {/* DEPARTURE HANDLE — overnight mode only */}
-                  {!isFullDay && (
+                  {/* DEPARTURE HANDLE — both modes */}
+                  {(
                   <div className="absolute transition-[left] duration-100 z-20" style={{
                     left: getLeft(departureIdx >= 0 ? departureIdx : N - 1, N),
                     top: 0, height: '100%', transform: 'translateX(-50%)',
@@ -1271,7 +1305,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   <span className="text-gray-300">·</span>
                   <span className="italic">
                     {isFullDay
-                      ? `${date1 && fmtDateShort(date1)} · full day · baseline from ${arrivalLabel}`
+                      ? `${date1 && fmtDateShort(date1)} plug-in ${arrivalLabel} → ${date2 && fmtDateShort(date2)} departure ${departureLabel}`
                       : `${date1 && fmtDateShort(date1)} evening (plug-in) → overnight → ${date2 && fmtDateShort(date2)} morning (departure)`}
                   </span>
                 </div>
@@ -1303,7 +1337,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               </div>
             </CardHeader>
             <CardContent className="flex-1 overflow-auto">
-              <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={!isFullDay} />
+              <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={true} />
 
               {/* Spread: arrival price vs. lowest night price */}
               {(() => {
