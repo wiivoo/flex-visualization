@@ -164,7 +164,7 @@ export function MonthlySavingsCard({
                 <span className="text-gray-400 font-mono">avg savings / session</span>
                 <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
                 <span className="text-gray-400 font-mono">× {sessionsPerYear} sessions/yr</span>
-                <AnimatedNumber value={rollingAvgSavings} decimals={0} prefix="≈ " suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums text-right" />
+                <AnimatedNumber value={rollingAvgSavings} decimals={0} prefix="≈ " suffix=" EUR/yr" className="font-bold text-emerald-700 tabular-nums text-right" />
               </div>
             </div>
           )}
