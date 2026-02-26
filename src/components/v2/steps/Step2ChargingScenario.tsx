@@ -248,6 +248,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   const [heatmapUnit, setHeatmapUnit] = useState<'eur' | 'ct'>('eur')
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
   const [formulaOpen, setFormulaOpen] = useState(false)
+  const [methodologyOpen, setMethodologyOpen] = useState(false)
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
 
   const date1 = prices.selectedDate
@@ -554,67 +555,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     }
     return [...qMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-4)
+      .slice(-5) // 5 quarters = covers full trailing 365 days when current Q is partial
       .map(([, v]) => v)
   }, [monthlySavingsData])
-
-  // ── Dynamic callouts — only fire when something is genuinely interesting ──
-  const callouts = useMemo(() => {
-    if (!sessionCost || !date1 || prices.daily.length === 0 || chartData.length === 0) return []
-    const results: Array<{ icon: string; text: string; color: 'emerald' | 'amber' | 'blue' | 'red' }> = []
-
-    // 1. Negative prices in the charging window
-    const negSlots = chartData.filter(d => d.isInWindow && d.price < 0)
-    if (negSlots.length > 0) {
-      results.push({ icon: '⚡', color: 'emerald',
-        text: `${negSlots.length} price slot${negSlots.length > 1 ? 's' : ''} in tonight's charging window turned negative — the grid is paying to consume. Maximum flexibility value.` })
-    }
-
-    // 2. Savings vs rolling annual average per session
-    const annualAvgPerSession = sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0
-    if (annualAvgPerSession > 0.05) {
-      const ratio = sessionCost.savingsEur / annualAvgPerSession
-      if (ratio > 1.8) {
-        results.push({ icon: '📈', color: 'emerald',
-          text: `Today's saving of ${sessionCost.savingsEur.toFixed(2)} € is ${Math.round((ratio - 1) * 100)}% above your annual average — exceptional market conditions.` })
-      } else if (ratio < 0.2 && sessionCost.savingsEur < 0.10) {
-        results.push({ icon: '📉', color: 'amber',
-          text: `Very flat prices today — minimal spread between peak and trough. Below-average optimization potential for this charging window.` })
-      }
-    }
-
-    // 3. Full-day spread vs historical percentiles
-    const allSpreads = prices.daily.map(d => d.spread / 10).sort((a, b) => a - b)
-    const p90 = allSpreads[Math.floor(allSpreads.length * 0.9)]
-    const p10 = allSpreads[Math.floor(allSpreads.length * 0.1)]
-    const daySummary = prices.daily.find(d => d.date === date1)
-    const daySpreadCt = daySummary ? daySummary.spread / 10 : 0
-    if (daySpreadCt >= p90 && !results.some(r => r.icon === '📈')) {
-      results.push({ icon: '🏆', color: 'emerald',
-        text: `Full-day spread of ${daySpreadCt.toFixed(1)} ct/kWh puts today in the top 10% of all days in the dataset — prime arbitrage conditions.` })
-    } else if (daySpreadCt > 0 && daySpreadCt <= p10 && !results.some(r => r.icon === '📉')) {
-      results.push({ icon: '😴', color: 'amber',
-        text: `Today's spread (${daySpreadCt.toFixed(1)} ct/kWh) is among the flattest 10% of days — limited arbitrage opportunity.` })
-    }
-
-    // 4. Tight flexibility warning
-    if (flexibilityHours <= 1 && results.length < 2) {
-      results.push({ icon: '⚠️', color: 'red',
-        text: `Only ${flexibilityHours}h of flex in the window — barely enough to shift charging. Consider a later departure time for more optimization headroom.` })
-    }
-
-    // 5. Winter peak — only if spread is notably high and not already covered
-    if (results.length < 2 && daySpreadCt > 0) {
-      const month = parseInt(date1.slice(5, 7))
-      const p75 = allSpreads[Math.floor(allSpreads.length * 0.75)]
-      if ((month <= 2 || month === 12) && daySpreadCt >= p75) {
-        results.push({ icon: '❄️', color: 'blue',
-          text: `Winter pattern: higher demand and lower solar output tend to widen day-ahead spreads. Today confirms the seasonal premium.` })
-      }
-    }
-
-    return results.slice(0, 2)
-  }, [sessionCost, date1, chartData, prices.daily, rollingAvgSavings, sessionsPerYear, flexibilityHours])
 
   // ── Separate overnight windows for heatmap (uses its own plug-in time slider) ──
   const heatmapOvernightWindows = useMemo(() => {
@@ -826,14 +769,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               </p>
             </div>
 
-            {/* Derived stats */}
-            <div className="flex flex-col justify-center items-center p-5 bg-gray-50/80 rounded-xl border border-gray-200/60">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-widest mb-3">Per Session</p>
-              <p className="text-4xl font-extrabold text-[#313131] tabular-nums leading-none">~{energyPerSession}</p>
-              <p className="text-sm font-medium text-gray-500 mt-1">kWh</p>
-              <div className="w-10 h-px bg-gray-200 my-3" />
-              <p className="text-sm text-gray-600 font-medium">~{kmPerCharge} km range</p>
-              <p className="text-xs text-gray-400 mt-1.5">{sessionsPerYear} sessions/year</p>
+            {/* Derived stats — compact */}
+            <div className="flex flex-col justify-center gap-2 p-4 bg-gray-50/80 rounded-xl border border-gray-200/60">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Per Session</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-xl font-bold text-[#313131] tabular-nums">~{energyPerSession}</span>
+                <span className="text-xs text-gray-400">kWh</span>
+              </div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-sm font-medium text-gray-600">~{kmPerCharge}</span>
+                <span className="text-xs text-gray-400">km range</span>
+              </div>
+              <p className="text-[11px] text-gray-400">{sessionsPerYear} sessions/yr</p>
             </div>
           </div>
         </CardContent>
@@ -848,45 +795,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           </p>
         </CardHeader>
         <CardContent className="flex-1 pt-4 space-y-5">
-          {/* Annual EUR */}
+          {/* Annual EUR — hero number */}
           <div>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Annual Savings</p>
-            <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR" className="text-3xl font-extrabold text-[#EA1C0A] tabular-nums leading-none" />
+            <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR" className="text-4xl font-extrabold text-emerald-700 tabular-nums leading-none" />
             <p className="text-[10px] text-gray-400 mt-0.5">per year</p>
           </div>
-          {/* Today's ct/kWh */}
-          {sessionCost && (
+          {/* Rolling avg ct/kWh spread — consistent with annual EUR */}
+          {sessionsPerYear > 0 && energyPerSession > 0 && rollingAvgSavings > 0 && (
             <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Today's Spread</p>
-              <p className="text-xl font-bold text-[#313131] tabular-nums">
-                {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)}
-                <span className="text-xs font-normal text-gray-400 ml-1">ct/kWh</span>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Avg Spread</p>
+              <p className="text-2xl font-bold text-emerald-800 tabular-nums">
+                {((rollingAvgSavings / sessionsPerYear) / energyPerSession * 100).toFixed(1)}
+                <span className="text-sm font-normal text-gray-400 ml-1">ct/kWh</span>
               </p>
+              <p className="text-[10px] text-gray-400 mt-0.5">12-month rolling avg</p>
             </div>
           )}
-          {/* Quarterly bars */}
-          {quarterlyData.length > 0 && (() => {
-            const maxQ = Math.max(...quarterlyData.map(d => d.savings))
-            return (
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">By Quarter</p>
-                <div className="space-y-2">
-                  {quarterlyData.map((q) => (
-                    <div key={q.label} className="flex items-center gap-2">
-                      <span className="text-[10px] text-gray-400 font-mono w-10 shrink-0">{q.label}</span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-1.5">
-                        <div className="bg-[#EA1C0A]/70 h-1.5 rounded-full transition-all duration-500"
-                          style={{ width: `${maxQ > 0 ? (q.savings / maxQ) * 100 : 0}%` }} />
-                      </div>
-                      <span className="text-[10px] text-gray-500 tabular-nums w-10 text-right shrink-0">
-                        {q.savings.toFixed(0)} €
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          })()}
           {rollingAvgSavings === 0 && (
             <p className="text-[11px] text-gray-400 leading-relaxed">Select a date above to calculate savings.</p>
           )}
@@ -1358,23 +1283,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         </div>
       </div>
 
-      {/* ── Dynamic callouts ── */}
-      {callouts.length > 0 && (
-        <div className="flex flex-col sm:flex-row gap-3">
-          {callouts.map((c, i) => (
-            <div key={i} className={`flex items-start gap-3 rounded-xl px-4 py-3 border flex-1 ${
-              c.color === 'emerald' ? 'bg-emerald-50 border-emerald-200/80 text-emerald-900' :
-              c.color === 'amber'  ? 'bg-amber-50 border-amber-200/80 text-amber-900' :
-              c.color === 'blue'   ? 'bg-blue-50 border-blue-200/80 text-blue-900' :
-                                     'bg-red-50 border-red-200/80 text-red-900'
-            }`}>
-              <span className="text-lg leading-none mt-0.5 shrink-0">{c.icon}</span>
-              <p className="text-[12px] leading-relaxed">{c.text}</p>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* ── Session Cost Breakdown  +  Monthly Savings Potential ── */}
       {sessionCost && monthlySavingsData.length > 0 && (() => {
         const SEASON_COLORS: Record<string, string> = {
@@ -1539,7 +1447,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                                 fill={SEASON_BG[b.season] || '#F9FAFB'} fillOpacity={1} ifOverflow="hidden" />
                             ))}
                             <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                            <XAxis dataKey="displayLabel" tick={{ fontSize: 11, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} />
+                            <XAxis dataKey="displayLabel" tick={{ fontSize: 10, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} interval={0} />
                             <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
                               label={{ value: 'EUR/mo', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
                             <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
@@ -1589,24 +1497,31 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   )
                 })()}
 
-                {/* Rolling average methodology */}
-                <div className="bg-gray-50/80 rounded-lg border border-gray-200/60 px-3.5 py-3 space-y-1.5">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">
-                    Rolling 365-day average — how the yearly total is derived
-                  </p>
-                  <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-[11px]">
-                    <span className="text-gray-500 font-mono">avg savings / session</span>
-                    <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
-                    <span className="text-gray-500 font-mono">× {scenario.weeklyPlugIns} plug-ins/wk × 52 wk</span>
-                    <span className="tabular-nums font-semibold text-gray-700 text-right">= {sessionsPerYear} sessions</span>
-                    <span className="text-gray-400 font-mono col-span-2 border-t border-gray-200 pt-1.5 mt-0.5 flex justify-between">
-                      <span>{avgDailyEur.toFixed(3)} × {sessionsPerYear}</span>
-                      <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums" />
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-gray-400 pt-1">
-                    ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting
-                  </p>
+                {/* Rolling average methodology — collapsible */}
+                <div className="border border-gray-200/60 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => setMethodologyOpen(v => !v)}
+                    className="w-full flex items-center justify-between bg-gray-50/80 px-3.5 py-2 text-left hover:bg-gray-100/60 transition-colors">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Methodology: rolling 365-day average</span>
+                    <span className="text-[10px] text-gray-400 ml-2">{methodologyOpen ? '▲' : '▼'}</span>
+                  </button>
+                  {methodologyOpen && (
+                    <div className="px-3.5 py-3 text-[11px] space-y-1.5 bg-gray-50/40">
+                      <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
+                        <span className="text-gray-500 font-mono">avg savings / session</span>
+                        <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
+                        <span className="text-gray-500 font-mono">× {scenario.weeklyPlugIns} plug-ins/wk × 52 wk</span>
+                        <span className="tabular-nums font-semibold text-gray-700 text-right">= {sessionsPerYear} sessions</span>
+                        <span className="text-gray-400 font-mono col-span-2 border-t border-gray-200 pt-1.5 mt-0.5 flex justify-between">
+                          <span>{avgDailyEur.toFixed(3)} × {sessionsPerYear}</span>
+                          <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums" />
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-gray-400 pt-1">
+                        ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting
+                      </p>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>

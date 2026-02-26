@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS price_cache (
   date TEXT NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('day-ahead', 'intraday', 'forward')),
   cached_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  source TEXT NOT NULL CHECK (source IN ('smard', 'csv', 'demo')),
+  source TEXT NOT NULL CHECK (source IN ('smard', 'csv', 'demo', 'awattar', 'energy-charts')),
   prices_json JSONB NOT NULL,
 
   PRIMARY KEY (date, type)
@@ -26,22 +26,22 @@ CREATE POLICY "Allow public read access"
   TO public
   USING (true);
 
--- Service role write access (only server can write)
-CREATE POLICY "Allow service role write access"
+-- Allow anon role to write (app uses anon key for cache writes)
+CREATE POLICY "Allow anon write access"
   ON price_cache FOR INSERT
-  TO service_role
+  TO anon
   WITH CHECK (true);
 
-CREATE POLICY "Allow service role update access"
+CREATE POLICY "Allow anon update access"
   ON price_cache FOR UPDATE
-  TO service_role
+  TO anon
   USING (true);
 
-CREATE POLICY "Allow service role delete access"
+CREATE POLICY "Allow anon delete access"
   ON price_cache FOR DELETE
-  TO service_role
+  TO anon
   USING (true);
 
--- Grant usage to anon role for reads
+-- Grant usage to anon role
 GRANT USAGE ON SCHEMA public TO anon;
-GRANT SELECT ON price_cache TO anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON price_cache TO anon;

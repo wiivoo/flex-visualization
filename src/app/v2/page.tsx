@@ -22,6 +22,25 @@ function parseScenario(params: URLSearchParams): ChargingScenario {
   }
 }
 
+function fallbackCopy(text: string, setCopied: (v: boolean) => void) {
+  try {
+    const el = document.createElement('textarea')
+    el.value = text
+    el.style.position = 'fixed'
+    el.style.opacity = '0'
+    document.body.appendChild(el)
+    el.focus()
+    el.select()
+    document.execCommand('copy')
+    document.body.removeChild(el)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  } catch {
+    // last resort: open prompt so user can copy manually
+    window.prompt('Copy this link:', text)
+  }
+}
+
 export default function V2Page() {
   return <Suspense><V2Inner /></Suspense>
 }
@@ -58,11 +77,17 @@ function V2Inner() {
   }, [scenario, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleShare = useCallback(() => {
-    navigator.clipboard.writeText(window.location.href).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    })
+    const url = window.location.href
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 2000)
+      }).catch(() => fallbackCopy(url, setCopied))
+    } else {
+      fallbackCopy(url, setCopied)
+    }
   }, [])
+
 
   // Derive energy per session from mileage + frequency
   const energyPerSession = useMemo(() =>
