@@ -746,10 +746,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const { x, y, payload } = props
     const pt = chartData[payload.value]
     if (!pt) return <g />
-    // For QH: tick line at every :00, label every 2 hours; for hourly: same as before
+    // For QH: tick line at every :00, label every 2h (overnight) or 4h (full day)
+    // Full day spans 48 data points → label every 4h gives 12 labels total (readable)
     const isOnHour = pt.minute === 0
     const showTick = isQH ? isOnHour : true
-    const showLabel = isOnHour && pt.hour % 2 === 0
+    const labelInterval = isFullDay ? 4 : 2
+    const showLabel = isOnHour && pt.hour % labelInterval === 0
     if (!showTick) return <g />
     return (
       <g transform={`translate(${x},${y})`}>
@@ -761,7 +763,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         )}
       </g>
     )
-  }, [chartData, isQH])
+  }, [chartData, isQH, isFullDay])
 
   return (
     <div className="space-y-8">
