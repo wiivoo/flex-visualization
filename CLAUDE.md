@@ -1,66 +1,57 @@
-# AI Coding Starter Kit
+# FlexMon Dashboard — Claude Code Instructions
 
-> A Next.js template with an AI-powered development workflow using specialized skills for Requirements, Architecture, Frontend, Backend, QA, and Deployment.
+## Project Overview
+
+B2C Flex Monetization Dashboard — single-page interactive visualization of EV charging load shifting value using real German day-ahead electricity prices (SMARD).
 
 ## Tech Stack
 
 - **Framework:** Next.js 16 (App Router), TypeScript
-- **Styling:** Tailwind CSS + shadcn/ui (copy-paste components)
-- **Backend:** Supabase (PostgreSQL + Auth + Storage) - optional
+- **Styling:** Tailwind CSS + shadcn/ui
+- **Charts:** Recharts (ComposedChart, Line, Area, Bar, ReferenceArea)
+- **Prices:** SMARD API + static JSON + Supabase cache + CSV fallback
+- **Auth:** JWT (jose), password in DASHBOARD_PASSWORD env var
 - **Deployment:** Vercel
-- **Validation:** Zod + react-hook-form
-- **State:** React useState / Context API
 
-## Project Structure
+## Active Source Structure
 
 ```
-src/
-  app/              Pages (Next.js App Router)
-  components/
-    ui/             shadcn/ui components (NEVER recreate these)
-  hooks/            Custom React hooks
-  lib/              Utilities (supabase.ts, utils.ts)
-features/           Feature specifications (PROJ-X-name.md)
-  INDEX.md          Feature status overview
-docs/
-  PRD.md            Product Requirements Document
-  production/       Production guides (Sentry, security, performance)
+src/app/v2/page.tsx                     Main dashboard page
+src/components/v2/steps/Step2*.tsx       Core visualization (~1270 lines)
+src/components/v2/MiniCalendar.tsx       Date picker with spread colors
+src/components/v2/SessionCostCard.tsx    Baseline vs. optimized cost
+src/components/v2/MonthlySavingsCard.tsx 12-month savings chart
+src/components/v2/SavingsHeatmap.tsx     Mileage x frequency matrix
+src/lib/v2-config.ts                    Types, constants, defaults
+src/lib/use-prices.ts                   Price data hook
+src/lib/optimizer.ts                    Optimization algorithm
+src/lib/charging-helpers.ts             Shared computation helpers
+src/lib/grid-fees.ts                    Module 3 grid fees (10 DSOs)
 ```
-
-## Development Workflow
-
-1. `/requirements` - Create feature spec from idea
-2. `/architecture` - Design tech architecture (PM-friendly, no code)
-3. `/frontend` - Build UI components (shadcn/ui first!)
-4. `/backend` - Build APIs, database, RLS policies
-5. `/qa` - Test against acceptance criteria + security audit
-6. `/deploy` - Deploy to Vercel + production-ready checks
-
-## Feature Tracking
-
-All features tracked in `features/INDEX.md`. Every skill reads it at start and updates it when done. Feature specs live in `features/PROJ-X-name.md`.
 
 ## Key Conventions
 
-- **Feature IDs:** PROJ-1, PROJ-2, etc. (sequential)
+- **UI text:** English
 - **Commits:** `feat(PROJ-X): description`, `fix(PROJ-X): description`
-- **Single Responsibility:** One feature per spec file
-- **shadcn/ui first:** NEVER create custom versions of installed shadcn components
-- **Human-in-the-loop:** All workflows have user approval checkpoints
+- **Feature specs:** `features/PROJ-X-name.md`, tracked in `features/INDEX.md`
+- **shadcn/ui first:** Only 6 components kept (alert, button, card, input, label, tooltip)
+- **Archive:** Unused code lives in `src/_archive/` (excluded from builds via tsconfig)
+- **Prices:** EUR/MWh from SMARD, convert to ct/kWh by dividing by 10
 
-## Build & Test Commands
+## Build & Test
 
 ```bash
-npm run dev        # Development server (localhost:3000)
+npm run dev        # Development (localhost:3000)
 npm run build      # Production build
 npm run lint       # ESLint
-npm run start      # Production server
 ```
 
-## Product Context
+## Deployment
 
-@docs/PRD.md
+- Production: web.lhdus.dpdns.org (port 8080)
+- Platform: Vercel
+- SMARD data auto-updated via GitHub Actions (.github/workflows/update-smard-data.yml)
 
 ## Feature Overview
 
-@features/INDEX.md
+See `features/INDEX.md` for complete feature tracking.
