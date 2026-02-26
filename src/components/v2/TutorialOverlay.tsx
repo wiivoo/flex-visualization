@@ -25,7 +25,7 @@ const STEPS: TutorialStep[] = [
   {
     targetId: 'tour-price-chart',
     title: 'The Price Curve',
-    description: 'Real day-ahead electricity prices from SMARD.de. Red dots = unmanaged charging (starts immediately at plug-in). Green dots = optimized (shifted to the cheapest hours). Drag the red/blue lines to change arrival and departure times directly on the chart.',
+    description: 'Real day-ahead electricity prices from SMARD.de. Red dots = unmanaged charging (starts immediately). Green dots = optimized (cheapest hours). Drag the red/blue lines to change arrival and departure times. Toggle "Renewable" to see solar + wind generation share as a subtle overlay.',
     position: 'bottom',
   },
   {

@@ -51,7 +51,7 @@ export function SavingsHeatmap({ heatmapData, scenario, setScenario, hasProjecte
             </button>
           </div>
         </div>
-        <p className="text-[13px] text-gray-500 mt-1">
+        <p className="text-[11px] text-gray-500 mt-1">
           {heatmapUnit === 'eur' ? 'Yearly savings (EUR/yr)' : 'Avg spread (ct/kWh)'} · mileage vs. charging frequency · adjust plug-in time below{hasProjectedData ? ' (includes projected prices)' : ''}
         </p>
       </CardHeader>

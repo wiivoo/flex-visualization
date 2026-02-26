@@ -357,9 +357,9 @@ export function FleetPortfolioCard({
             </div>
             <div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Per EV (avg)</p>
-              <AnimatedNumber value={fleetData.perEvSavings} decimals={0} suffix=" EUR/yr" className="text-lg font-bold text-emerald-800 tabular-nums" />
+              <AnimatedNumber value={fleetData.perEvSavings} decimals={0} suffix=" EUR/yr" className="text-lg font-bold text-emerald-700 tabular-nums" />
               {coreData?.avgEnergy && (
-                <p className="text-[9px] text-gray-400 mt-0.5">
+                <p className="text-[10px] text-gray-400 mt-0.5">
                   ~{coreData.avgEnergy.toFixed(1)} kWh/session avg
                 </p>
               )}
@@ -371,7 +371,7 @@ export function FleetPortfolioCard({
                   {fleetData.portfolioEffect > 0 ? '+' : ''}{fleetData.portfolioEffect.toFixed(1)}%
                   <span className="text-[10px] font-normal text-gray-400 ml-1">vs. single arrival</span>
                 </p>
-                <p className="text-[9px] text-gray-400 mt-0.5">
+                <p className="text-[10px] text-gray-400 mt-0.5">
                   Diversification: {Math.round((1 - Math.exp(-fleetSize / 150)) * 100)}% realized
                 </p>
               </div>
@@ -406,18 +406,22 @@ export function FleetPortfolioCard({
             <div>
               <div className="flex items-center gap-2 mb-2">
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Mileage Distribution</p>
-                <button
-                  onClick={() => setDistributeMileage(!distributeMileage)}
-                  className={`text-[9px] font-medium px-2 py-0.5 rounded-full border transition-colors ${
-                    distributeMileage
-                      ? 'bg-[#313131] text-white border-[#313131]'
-                      : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  {distributeMileage ? 'Distributed' : 'Uniform'}
-                </button>
-                <span className="text-[9px] text-gray-400">
-                  {distributeMileage ? 'Fleet uses KBA mileage mix' : `All EVs at ${yearlyMileageKm.toLocaleString()} km/yr`}
+                <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
+                  <button
+                    onClick={() => setDistributeMileage(true)}
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${
+                      distributeMileage ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                  >Distributed</button>
+                  <button
+                    onClick={() => setDistributeMileage(false)}
+                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${
+                      !distributeMileage ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                  >Uniform</button>
+                </div>
+                <span className="text-[10px] text-gray-400">
+                  {distributeMileage ? 'KBA mileage mix' : `All at ${yearlyMileageKm.toLocaleString()} km/yr`}
                 </span>
               </div>
               {distributeMileage && (
@@ -430,7 +434,7 @@ export function FleetPortfolioCard({
                       <div key={label} className="flex items-center gap-2">
                         <span className="text-[10px] text-gray-500 tabular-nums w-10 text-right">{label}</span>
                         <div className="flex-1 h-3.5 bg-gray-50 rounded overflow-hidden">
-                          <div className="h-full rounded transition-all bg-gray-300"
+                          <div className="h-full rounded transition-all bg-[#313131]/20"
                             style={{ width: `${barPct}%` }} />
                         </div>
                         <span className="text-[10px] text-gray-400 tabular-nums w-8 text-right">{pct}%</span>

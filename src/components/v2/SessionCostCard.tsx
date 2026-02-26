@@ -111,10 +111,10 @@ export function SessionCostCard({
                   ({sessionCost.baselineAvgCt.toFixed(1)} − {sessionCost.optimizedAvgCt.toFixed(1)}) × {sessionCost.kwh} ÷ 100
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold text-[#EA1C0A]/70 tabular-nums">
+                  <span className="text-[11px] font-semibold text-emerald-600/70 tabular-nums">
                     {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)} ct/kWh
                   </span>
-                  <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
+                  <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-emerald-700 tabular-nums" />
                 </div>
               </div>
             </div>
