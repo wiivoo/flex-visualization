@@ -632,7 +632,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     <div className="space-y-8">
       {/* ── Top row: Customer Profile + Outcome Box ── */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      <Card className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
+      <Card id="tour-customer-profile" className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
         <CardHeader className="pb-3 bg-gray-50/80 border-b border-gray-100">
           <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Customer Profile</CardTitle>
         </CardHeader>
@@ -800,7 +800,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       </Card>
 
       {/* ── Outcome Box (Savings Potential) ── */}
-      <Card className="shadow-sm border-gray-200/80 flex flex-col">
+      <Card id="tour-savings-potential" className="shadow-sm border-gray-200/80 flex flex-col">
         <CardHeader className="pb-2 border-b border-gray-100">
           <CardTitle className="text-sm font-bold text-[#313131]">Savings Potential</CardTitle>
           <p className="text-[11px] text-gray-400 mt-0.5">
@@ -835,7 +835,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       {/* ── Chart + Sidebar ── */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Chart (3/4) */}
-        <Card className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
+        <Card id="tour-price-chart" className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
           <CardHeader className="pb-2 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <div>
@@ -1219,7 +1219,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
         {/* ── Sidebar ── */}
         <div className="h-full">
-          <Card className="h-full flex flex-col shadow-sm border-gray-200/80">
+          <Card id="tour-day-selector" className="h-full flex flex-col shadow-sm border-gray-200/80">
             <CardHeader className="pb-2 border-b border-gray-100">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-bold text-[#313131]">Select a Day</CardTitle>
@@ -1346,7 +1346,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
       {/* ── Monthly Savings (3/4) + Yearly Savings (1/4) ── */}
       {monthlySavingsData.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6">
+        <div id="tour-monthly-savings" className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6">
           <MonthlySavingsCard
             monthlySavingsData={monthlySavingsData}
             weeklyPlugIns={weeklyPlugIns}
