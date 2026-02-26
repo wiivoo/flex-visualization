@@ -4,13 +4,15 @@ import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } f
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
-import { deriveEnergyPerSession, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
+import { deriveEnergyPerSession, totalWeeklyPlugIns, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows } from '@/lib/charging-helpers'
 import { MiniCalendar } from '@/components/v2/MiniCalendar'
 import { SessionCostCard } from '@/components/v2/SessionCostCard'
 import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
 import { SavingsHeatmap } from '@/components/v2/SavingsHeatmap'
+import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
+import { FleetPortfolioCard } from '@/components/v2/FleetPortfolioCard'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
@@ -58,6 +60,7 @@ interface PriceData {
   setSelectedDate: (date: string) => void
   selectedDayPrices: HourlyPrice[]
   yearRange: { start: string; end: string }
+  lastRealDate: string
 }
 
 interface Props {
@@ -69,11 +72,13 @@ interface Props {
 
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) {
-  const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weeklyPlugIns)
-  const kmPerCharge = Math.round(scenario.yearlyMileageKm / (scenario.weeklyPlugIns * 52))
-  const sessionsPerYear = scenario.weeklyPlugIns * 52
+  const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
+  const weeklyPlugIns = Math.max(1, totalWeeklyPlugIns(scenario))
+  const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weekdayPlugIns, scenario.weekendPlugIns)
+  const kmPerCharge = Math.round(scenario.yearlyMileageKm / (weeklyPlugIns * 52))
+  const sessionsPerYear = weeklyPlugIns * 52
   const kwhPerYear = Math.round(energyPerSession * sessionsPerYear)
-  const sessionDurationHExact = energyPerSession / DEFAULT_CHARGE_POWER_KW
+  const sessionDurationHExact = energyPerSession / chargePowerKw
   const sessionHoursNeeded = Math.ceil(sessionDurationHExact)
   const sessionMinutes = Math.round(sessionDurationHExact * 60)
   const sessionH = Math.floor(sessionMinutes / 60)
@@ -98,7 +103,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // so they don't block the UI during handle dragging
   const deferredPlugInTime = useDeferredValue(scenario.plugInTime)
   const deferredDepartureTime = useDeferredValue(scenario.departureTime)
-  const deferredWeeklyPlugIns = useDeferredValue(scenario.weeklyPlugIns)
+  const deferredWeekdayPlugIns = useDeferredValue(scenario.weekdayPlugIns)
+  const deferredWeekendPlugIns = useDeferredValue(scenario.weekendPlugIns)
+  const deferredWeeklyPlugIns = useDeferredValue(weeklyPlugIns)
   const deferredEnergyPerSession = useDeferredValue(energyPerSession)
 
 
@@ -134,11 +141,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
     }
 
-    const kwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    const rollKwhPerSlot = DEFAULT_CHARGE_POWER_KW  // rolling avg always uses hourly
+    const rollKwhPerSlot = chargePowerKw  // rolling avg always uses hourly
     const rollSlotsPerHour = 1
-    const rollMinHours = Math.ceil(energyPerSession / DEFAULT_CHARGE_POWER_KW)
+    const rollMinHours = Math.ceil(energyPerSession / chargePowerKw)
 
     type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number; baselinePrice: number | null; optimizedPrice: number | null; isInWindow: boolean }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
@@ -311,12 +318,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       }
     }
     const avgDaily = daysOk > 0 ? totalSavings / daysOk : 0
-    const plugDaysMonth = (scenario.weeklyPlugIns / 7) * 30.44
+    const plugDaysMonth = (weeklyPlugIns / 7) * 30.44
     const mSav = Math.round(avgDaily * plugDaysMonth * 100) / 100
-    const rollSav = Math.round(avgDaily * scenario.weeklyPlugIns * 52 * 100) / 100
+    const rollSav = Math.round(avgDaily * weeklyPlugIns * 52 * 100) / 100
 
     return { chartData: data, sessionCost: cost, rollingAvgSavings: rollSav, monthlySavings: mSav }
-  }, [chartPrices, prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.weeklyPlugIns, scenario.chargingMode, isQH, isFullDay])
+  }, [chartPrices, prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, weeklyPlugIns, scenario.chargingMode, isQH, isFullDay, chargePowerKw])
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -435,34 +442,50 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   }, [prices.hourly, deferredPlugInTime, deferredDepartureTime])
 
   // ── Monthly savings breakdown for yearly chart ──
+  // Split weekday vs weekend savings for accurate weighting
   const monthlySavingsData = useMemo(() => {
     if (overnightWindows.length === 0) return []
-    const mKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const mKwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const mSlotsPerHour = isQH ? 4 : 1
-    const minHours = Math.ceil(deferredEnergyPerSession / DEFAULT_CHARGE_POWER_KW)
-    const monthMap = new Map<string, { totalSavings: number; days: number }>()
+    const minHours = Math.ceil(deferredEnergyPerSession / chargePowerKw)
+    // weekdayScale: fraction of weekdays user plugs in (e.g. 3/5 = 60%)
+    const weekdayScale = deferredWeekdayPlugIns / 5
+    const weekendScale = deferredWeekendPlugIns / 2
+    const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number }>()
     for (const w of overnightWindows) {
       if (w.prices.length < minHours) continue
       const { savingsEur } = computeWindowSavings(w.prices, deferredEnergyPerSession, mKwhPerSlot, mSlotsPerHour)
-      const entry = monthMap.get(w.month) || { totalSavings: 0, days: 0 }
-      entry.totalSavings += savingsEur
-      entry.days++
+      const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0 }
+      if (w.isWeekend) {
+        entry.weSavings += savingsEur
+        entry.weDays++
+      } else {
+        entry.wdSavings += savingsEur
+        entry.wdDays++
+      }
       monthMap.set(w.month, entry)
     }
-    const plugDaysPerMonth = (deferredWeeklyPlugIns / 7) * 30.44
     return [...monthMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, data]) => {
-        const avgPerSession = data.days > 0 ? data.totalSavings / data.days : 0
-        const monthlySav = Math.round(avgPerSession * plugDaysPerMonth * 100) / 100
+        // Weighted savings: avg weekday savings × weekday scale × weekdays/month + same for weekend
+        const wdAvg = data.wdDays > 0 ? data.wdSavings / data.wdDays : 0
+        const weAvg = data.weDays > 0 ? data.weSavings / data.weDays : 0
+        const wdMonthly = wdAvg * weekdayScale * 21.74  // ~21.74 weekdays/month
+        const weMonthly = weAvg * weekendScale * 8.70    // ~8.70 weekend days/month
+        const monthlySav = Math.round((wdMonthly + weMonthly) * 100) / 100
         const [y, m] = month.split('-').map(Number)
         const label = new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'short' })
         const mNum = m
         const season: 'winter' | 'spring' | 'summer' | 'autumn' =
           mNum <= 2 || mNum === 12 ? 'winter' : mNum <= 5 ? 'spring' : mNum <= 8 ? 'summer' : 'autumn'
-        return { month, label, savings: monthlySav, season, year: y }
+        return {
+          month, label, savings: monthlySav, season, year: y,
+          weekdaySavings: Math.round(wdMonthly * 100) / 100,
+          weekendSavings: Math.round(weMonthly * 100) / 100,
+        }
       })
-  }, [overnightWindows, deferredEnergyPerSession, deferredWeeklyPlugIns, isQH])
+  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, isQH, chargePowerKw])
 
   // ── Quarterly rollup for Outcome Box ──
   const quarterlyData = useMemo(() => {
@@ -487,7 +510,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // Uses the same last-12-month window as the monthly savings chart for consistency
   const heatmapData = useMemo(() => {
     if (overnightWindows.length === 0) return []
-    const hKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
+    const hKwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const hSlotsPerHour = isQH ? 4 : 1
     // Identify the same 12 months shown in the savings chart
     const allMonths = [...new Set(overnightWindows.map(w => w.month))].sort()
@@ -498,8 +521,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const grid: { mileage: number; plugIns: number; savings: number; spreadCt: number; kwhPerSession: number }[] = []
     for (const mil of mileages) {
       for (const pi of plugins) {
-        const eps = deriveEnergyPerSession(mil, pi)
-        const minHours = Math.ceil(eps / DEFAULT_CHARGE_POWER_KW)
+        const eps = deriveEnergyPerSession(mil, pi, 0)
+        const minHours = Math.ceil(eps / chargePowerKw)
         let totalSav = 0, totalSpread = 0, days = 0
         for (const w of windows) {
           if (w.prices.length < minHours) continue
@@ -516,7 +539,50 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       }
     }
     return grid
-  }, [overnightWindows, isQH])
+  }, [overnightWindows, isQH, chargePowerKw])
+
+  // ── Yearly savings data (2022-2030) ──
+  const yearlySavingsData = useMemo((): YearlySavingsEntry[] => {
+    if (overnightWindows.length === 0) return []
+    const yKwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
+    const ySlotsPerHour = isQH ? 4 : 1
+    const minHours = Math.ceil(deferredEnergyPerSession / chargePowerKw)
+    const weekdayScale = deferredWeekdayPlugIns / 5
+    const weekendScale = deferredWeekendPlugIns / 2
+
+    // Group windows by year, split weekday/weekend
+    const yearMap = new Map<number, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; months: Set<string> }>()
+    for (const w of overnightWindows) {
+      if (w.prices.length < minHours) continue
+      const yr = parseInt(w.date.slice(0, 4))
+      const entry = yearMap.get(yr) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, months: new Set<string>() }
+      const { savingsEur } = computeWindowSavings(w.prices, deferredEnergyPerSession, yKwhPerSlot, ySlotsPerHour)
+      if (w.isWeekend) { entry.weSavings += savingsEur; entry.weDays++ }
+      else { entry.wdSavings += savingsEur; entry.wdDays++ }
+      entry.months.add(w.month)
+      yearMap.set(yr, entry)
+    }
+
+    return [...yearMap.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([year, data]) => {
+        const monthsCovered = data.months.size
+        const wdAvg = data.wdDays > 0 ? data.wdSavings / data.wdDays : 0
+        const weAvg = data.weDays > 0 ? data.weSavings / data.weDays : 0
+        const wdYearly = wdAvg * weekdayScale * 21.74 * monthsCovered
+        const weYearly = weAvg * weekendScale * 8.70 * monthsCovered
+        const yearlySav = Math.round((wdYearly + weYearly) * 100) / 100
+        const plugDaysPerMonth = (deferredWeeklyPlugIns / 7) * 30.44
+        return {
+          year,
+          savings: yearlySav,
+          sessionsCount: Math.round(plugDaysPerMonth * monthsCovered),
+          isProjected: false,
+          isPartial: monthsCovered < 12,
+          monthsCovered,
+        }
+      })
+  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, deferredWeeklyPlugIns, isQH, chargePowerKw])
 
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
@@ -571,24 +637,26 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Customer Profile</CardTitle>
         </CardHeader>
         <CardContent className="pt-6 pb-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-8">
-            {/* Mileage slider — distribution subtly below */}
-            <div className="space-y-2.5">
-              <div className="flex items-baseline justify-between">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-8 items-start">
+            {/* Mileage slider */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-baseline justify-between h-8">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Yearly Mileage</span>
                 <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.yearlyMileageKm.toLocaleString('en-US')}<span className="text-xs font-normal text-gray-400 ml-1">km</span></span>
               </div>
-              <input type="range" min={SLIDER_MIN} max={SLIDER_MAX} step={1000}
-                value={scenario.yearlyMileageKm}
-                onChange={(e) => setScenario({ ...scenario, yearlyMileageKm: Number(e.target.value) })}
-                aria-label={`Yearly mileage: ${scenario.yearlyMileageKm} km`}
-                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-              <div className="flex justify-between text-[10px] text-gray-400">
-                <span>5,000 km</span>
-                <span>40,000 km</span>
+              <div>
+                <input type="range" min={SLIDER_MIN} max={SLIDER_MAX} step={1000}
+                  value={scenario.yearlyMileageKm}
+                  onChange={(e) => setScenario({ ...scenario, yearlyMileageKm: Number(e.target.value) })}
+                  aria-label={`Yearly mileage: ${scenario.yearlyMileageKm} km`}
+                  className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>5,000 km</span>
+                  <span>40,000 km</span>
+                </div>
               </div>
               {/* Mileage distribution bars */}
-              <div className="relative h-6 mt-0.5">
+              <div className="relative h-6">
                 {MILEAGE_DIST.map((bin, i) => {
                   const leftPct = ((bin.lo - SLIDER_MIN) / SLIDER_RANGE) * 100
                   const widthPct = ((bin.hi - bin.lo) / SLIDER_RANGE) * 100
@@ -606,61 +674,92 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[8px] text-gray-400 font-medium whitespace-nowrap">avg</span>
                 </div>
               </div>
-              <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+              <p className="text-[10px] text-gray-400 text-center">
                 {kwhPerYear.toLocaleString('en-US')} kWh/yr · {AVG_CONSUMPTION_KWH_PER_100KM} kWh/100km
               </p>
             </div>
 
-            {/* Weekly plug-ins */}
-            <div className="space-y-2.5">
-              <div className="flex items-baseline justify-between">
+            {/* Weekly plug-ins — weekday/weekend split */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-baseline justify-between h-8">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Weekly Plug-ins</span>
-                <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.weeklyPlugIns}<span className="text-xs font-normal text-gray-400 ml-1">x / week</span></span>
+                <span className="text-2xl font-bold text-[#313131] tabular-nums">{weeklyPlugIns}<span className="text-xs font-normal text-gray-400 ml-1">x / wk</span></span>
               </div>
-              <input type="range" min={1} max={7} step={1} value={scenario.weeklyPlugIns}
-                onChange={(e) => setScenario({ ...scenario, weeklyPlugIns: Number(e.target.value) })}
-                aria-label={`Weekly plug-ins: ${scenario.weeklyPlugIns}`}
-                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-              <div className="flex justify-between text-[10px] text-gray-400">
-                <span>1x</span>
-                <span>daily</span>
+              {/* Weekday slider */}
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[10px] font-medium text-gray-500">Mon – Fri</span>
+                  <span className="text-[10px] font-bold text-[#313131] tabular-nums">{scenario.weekdayPlugIns}x</span>
+                </div>
+                <input type="range" min={0} max={5} step={1} value={scenario.weekdayPlugIns}
+                  onChange={(e) => setScenario({ ...scenario, weekdayPlugIns: Number(e.target.value) })}
+                  aria-label={`Weekday plug-ins: ${scenario.weekdayPlugIns}`}
+                  className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
               </div>
-              {/* Spacer to align with distribution bars in other columns */}
-              <div className="h-6 mt-0.5 flex items-center justify-center gap-0.5">
-                {Array.from({ length: 7 }, (_, i) => (
-                  <div key={i} className={`h-4 flex-1 rounded-sm transition-colors ${i < scenario.weeklyPlugIns ? 'bg-[#313131]/20' : 'bg-gray-100'}`} />
+              {/* Weekend slider */}
+              <div>
+                <div className="flex items-center justify-between mb-0.5">
+                  <span className="text-[10px] font-medium text-gray-400">Sat – Sun</span>
+                  <span className="text-[10px] font-bold text-[#313131] tabular-nums">{scenario.weekendPlugIns}x</span>
+                </div>
+                <input type="range" min={0} max={2} step={1} value={scenario.weekendPlugIns}
+                  onChange={(e) => setScenario({ ...scenario, weekendPlugIns: Number(e.target.value) })}
+                  aria-label={`Weekend plug-ins: ${scenario.weekendPlugIns}`}
+                  className="w-full h-1.5 bg-gray-300 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-500 [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+              </div>
+              {/* Day blocks visual */}
+              <div className="flex items-end justify-center gap-0.5">
+                {['Mo','Tu','We','Th','Fr'].map((d, i) => (
+                  <div key={d} className="flex flex-col items-center gap-0.5 flex-1">
+                    <div className={`h-3 w-full rounded-sm transition-colors ${i < scenario.weekdayPlugIns ? 'bg-[#313131]/20' : 'bg-gray-100'}`} />
+                    <span className="text-[7px] text-gray-400 leading-none">{d}</span>
+                  </div>
+                ))}
+                <div className="w-px h-3.5 bg-gray-200 mx-0.5" />
+                {['Sa','Su'].map((d, i) => (
+                  <div key={d} className="flex flex-col items-center gap-0.5 flex-1">
+                    <div className={`h-3 w-full rounded-sm transition-colors ${i < scenario.weekendPlugIns ? 'bg-gray-400/30' : 'bg-gray-100'}`} />
+                    <span className="text-[7px] text-gray-400 leading-none">{d}</span>
+                  </div>
                 ))}
               </div>
-              <p className="text-[11px] text-gray-400 text-center leading-relaxed">
-                ~{sessionLabel} per session · {DEFAULT_CHARGE_POWER_KW} kW wallbox
-              </p>
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="text-[10px] text-gray-400">~{sessionLabel}/session ·</span>
+                <button
+                  onClick={() => setScenario({ ...scenario, chargePowerKw: chargePowerKw === 7 ? 11 : 7 })}
+                  className="text-[9px] font-medium px-2 py-0.5 rounded-full border transition-colors bg-[#313131] text-white border-[#313131]"
+                >
+                  {chargePowerKw} kW
+                </button>
+              </div>
             </div>
 
-            {/* Typical Plug-in Time — with distribution */}
-            <div className="space-y-2.5">
-              <div className="flex items-baseline justify-between">
+            {/* Typical Plug-in Time */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-baseline justify-between h-8">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Plug-in Time</span>
                 <span className="text-2xl font-bold text-[#313131] tabular-nums">{String(scenario.plugInTime).padStart(2, '0')}<span className="text-xs font-normal text-gray-400 ml-0.5">:00</span></span>
               </div>
-              <input type="range"
-                min={isFullDay ? 0 : PLUGIN_HOUR_MIN}
-                max={isFullDay ? 23 : PLUGIN_HOUR_MAX}
-                step={1}
-                value={scenario.plugInTime}
-                onChange={(e) => {
-                  const newPlugIn = Number(e.target.value)
-                  // In full day mode, clamp departure to ≤ plugInTime (max 24h window)
-                  const newDeparture = isFullDay ? Math.min(scenario.departureTime, newPlugIn) : scenario.departureTime
-                  setScenario({ ...scenario, plugInTime: newPlugIn, departureTime: newDeparture })
-                }}
-                aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
-                className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-              <div className="flex justify-between text-[10px] text-gray-400">
-                <span>{isFullDay ? '00:00' : '14:00'}</span>
-                <span>{isFullDay ? '23:00' : '22:00'}</span>
+              <div>
+                <input type="range"
+                  min={isFullDay ? 0 : PLUGIN_HOUR_MIN}
+                  max={isFullDay ? 23 : PLUGIN_HOUR_MAX}
+                  step={1}
+                  value={scenario.plugInTime}
+                  onChange={(e) => {
+                    const newPlugIn = Number(e.target.value)
+                    const newDeparture = isFullDay ? Math.min(scenario.departureTime, newPlugIn) : scenario.departureTime
+                    setScenario({ ...scenario, plugInTime: newPlugIn, departureTime: newDeparture })
+                  }}
+                  aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
+                  className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>{isFullDay ? '00:00' : '14:00'}</span>
+                  <span>{isFullDay ? '23:00' : '22:00'}</span>
+                </div>
               </div>
-              {/* Plug-in time distribution bars (reference: typical German EV driver) */}
-              <div className="relative h-6 mt-0.5 flex items-end gap-px">
+              {/* Plug-in time distribution bars */}
+              <div className="relative h-6 flex items-end gap-px">
                 {PLUGIN_TIME_DIST.map((bin) => {
                   const heightPct = (bin.pct / MAX_PLUGIN_PCT) * 100
                   const isActive = bin.hour === scenario.plugInTime
@@ -674,23 +773,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   )
                 })}
               </div>
-              <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+              <p className="text-[10px] text-gray-400 text-center">
                 Baseline arrival · also draggable on chart
               </p>
             </div>
 
-            {/* Derived stats — compact */}
-            <div className="flex flex-col justify-center gap-2 p-4 bg-gray-50/80 rounded-xl border border-gray-200/60">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">Per Session</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-xl font-bold text-[#313131] tabular-nums">~{energyPerSession}</span>
-                <span className="text-xs text-gray-400">kWh</span>
+            {/* Per Session stats */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-baseline justify-between h-8">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Per Session</span>
               </div>
-              <div className="flex items-baseline gap-1">
-                <span className="text-sm font-medium text-gray-600">~{kmPerCharge}</span>
-                <span className="text-xs text-gray-400">km range</span>
+              <div className="flex flex-col gap-1.5 p-3 bg-gray-50/80 rounded-lg border border-gray-200/60">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-xl font-bold text-[#313131] tabular-nums">~{energyPerSession}</span>
+                  <span className="text-xs text-gray-400">kWh</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-sm font-medium text-gray-600 tabular-nums">~{kmPerCharge}</span>
+                  <span className="text-xs text-gray-400">km range</span>
+                </div>
+                <p className="text-[10px] text-gray-400">{sessionsPerYear} sessions/yr</p>
               </div>
-              <p className="text-[11px] text-gray-400">{sessionsPerYear} sessions/yr</p>
             </div>
           </div>
         </CardContent>
@@ -714,7 +817,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           {/* Rolling avg ct/kWh spread — consistent with annual EUR */}
           {sessionsPerYear > 0 && energyPerSession > 0 && rollingAvgSavings > 0 && (
             <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Avg Spread</p>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Avg Monetizable Spread</p>
               <p className="text-2xl font-bold text-emerald-800 tabular-nums">
                 {((rollingAvgSavings / sessionsPerYear) / energyPerSession * 100).toFixed(1)}
                 <span className="text-sm font-normal text-gray-400 ml-1">ct/kWh</span>
@@ -1121,9 +1224,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               <div className="flex items-center justify-between">
                 <CardTitle className="text-sm font-bold text-[#313131]">Select a Day</CardTitle>
                 {(() => {
-                  const latestDate = prices.daily.length > 1
-                    ? prices.daily[prices.daily.length - 2].date
-                    : prices.daily[prices.daily.length - 1]?.date
+                  // "Today" = yesterday (t-1), because we need t+1 data for the overnight chart
+                  const now = new Date()
+                  now.setDate(now.getDate() - 1)
+                  const yesterdayStr = now.toISOString().slice(0, 10)
+                  const latestDate = prices.daily.find(d => d.date === yesterdayStr)?.date
+                    ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
                   if (!latestDate || prices.selectedDate === latestDate) return null
                   return (
                     <button
@@ -1223,23 +1329,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         </div>
       </div>
 
-      {/* ── Session Cost Breakdown  +  Monthly Savings Potential ── */}
-      {sessionCost && monthlySavingsData.length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <SessionCostCard
-            sessionCost={sessionCost}
-            sessionsPerYear={sessionsPerYear}
-            energyPerSession={energyPerSession}
-            sessionHoursNeeded={sessionHoursNeeded}
-            windowHours={windowHours}
-            flexibilityHours={flexibilityHours}
-            baselineEndHour={baselineEndHour}
-            plugInTime={scenario.plugInTime}
-            isQH={isQH}
-          />
+      {/* ── Session Cost Breakdown (full width) ── */}
+      {sessionCost && (
+        <SessionCostCard
+          sessionCost={sessionCost}
+          sessionsPerYear={sessionsPerYear}
+          energyPerSession={energyPerSession}
+          sessionHoursNeeded={sessionHoursNeeded}
+          windowHours={windowHours}
+          flexibilityHours={flexibilityHours}
+          baselineEndHour={baselineEndHour}
+          plugInTime={scenario.plugInTime}
+          isQH={isQH}
+        />
+      )}
+
+      {/* ── Monthly Savings (3/4) + Yearly Savings (1/4) ── */}
+      {monthlySavingsData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6">
           <MonthlySavingsCard
             monthlySavingsData={monthlySavingsData}
-            weeklyPlugIns={scenario.weeklyPlugIns}
+            weeklyPlugIns={weeklyPlugIns}
             energyPerSession={energyPerSession}
             sessionsPerYear={sessionsPerYear}
             rollingAvgSavings={rollingAvgSavings}
@@ -1247,6 +1357,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             avgDailyEur={sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0}
             selectedDate={date1}
           />
+          {yearlySavingsData.length > 0 && (
+            <YearlySavingsCard
+              yearlySavingsData={yearlySavingsData}
+              weeklyPlugIns={weeklyPlugIns}
+              energyPerSession={energyPerSession}
+            />
+          )}
         </div>
       )}
 
@@ -1263,6 +1380,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       {/* ── Behavior Heatmap: Mileage × Plug-ins ── */}
       {heatmapData.length > 0 && (
         <SavingsHeatmap heatmapData={heatmapData} scenario={scenario} setScenario={setScenario} />
+      )}
+
+      {/* ── Fleet Portfolio View ── */}
+      {prices.hourly.length > 0 && prices.selectedDate && (
+        <FleetPortfolioCard
+          hourlyPrices={prices.hourly}
+          selectedDate={prices.selectedDate}
+          departureTime={scenario.departureTime}
+          yearlyMileageKm={scenario.yearlyMileageKm}
+          weekdayPlugIns={scenario.weekdayPlugIns}
+          weekendPlugIns={scenario.weekendPlugIns}
+          singleEvSavings={rollingAvgSavings}
+        />
       )}
 
     </div>

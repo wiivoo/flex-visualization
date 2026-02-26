@@ -23,8 +23,15 @@ export interface ChargingScenario {
   startLevel: number    // percent 10-80
   targetLevel: number   // percent 50-100
   yearlyMileageKm: number  // 5000-40000
-  weeklyPlugIns: number    // 1-7
+  weekdayPlugIns: number   // 0-5 (Mon-Fri)
+  weekendPlugIns: number   // 0-2 (Sat-Sun)
+  chargePowerKw: number    // 7 or 11
   chargingMode: 'overnight' | 'fullday'
+}
+
+/** Total weekly plug-ins (weekday + weekend) */
+export function totalWeeklyPlugIns(s: ChargingScenario): number {
+  return s.weekdayPlugIns + s.weekendPlugIns
 }
 
 export const DEFAULT_SCENARIO: ChargingScenario = {
@@ -34,7 +41,9 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
   startLevel: 20,
   targetLevel: 80,
   yearlyMileageKm: 15000,
-  weeklyPlugIns: 4,
+  weekdayPlugIns: 3,
+  weekendPlugIns: 1,
+  chargePowerKw: 7,
   chargingMode: 'overnight',
 }
 
@@ -48,8 +57,9 @@ export const DEFAULT_CHARGE_POWER_KW = 7
 export const DEFAULT_BATTERY_KWH = 60
 
 /** Derive energy per session from mileage + frequency */
-export function deriveEnergyPerSession(yearlyMileageKm: number, weeklyPlugIns: number): number {
-  const sessionsPerYear = weeklyPlugIns * 52
+export function deriveEnergyPerSession(yearlyMileageKm: number, weekdayPlugIns: number, weekendPlugIns?: number): number {
+  const weekly = Math.max(1, weekendPlugIns !== undefined ? weekdayPlugIns + weekendPlugIns : weekdayPlugIns)
+  const sessionsPerYear = weekly * 52
   const kmPerSession = yearlyMileageKm / sessionsPerYear
   return Math.round((kmPerSession / 100) * AVG_CONSUMPTION_KWH_PER_100KM * 10) / 10
 }
@@ -85,6 +95,7 @@ export interface HourlyPrice {
   hour: number       // 0-23
   minute: number     // 0 for hourly, 0/15/30/45 for quarter-hourly
   date: string       // YYYY-MM-DD
+  isProjected?: boolean  // true for CSV-based projected prices (not real SMARD data)
 }
 
 /** Daily summary for calendar view */
@@ -101,6 +112,7 @@ export interface DailySummary {
   priceAt18: number    // EUR/MWh price at 18:00 (typical arrival)
   cheapestNightPrice: number // EUR/MWh cheapest hour in 22:00-06:00
   nightSpread: number  // priceAt18 - cheapestNightPrice (the real opportunity)
+  isProjected?: boolean  // true if any hour in this day uses projected prices
 }
 
 /** Monthly stats for volatility analysis */
@@ -113,6 +125,7 @@ export interface MonthlyStats {
   negativeHours: number
   totalHours: number
   avgNightSpread: number  // avg cheapest night hour spread
+  isProjected?: boolean   // true if any day in this month uses projected prices
 }
 
 /** Hourly generation data point */

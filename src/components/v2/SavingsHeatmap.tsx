@@ -19,12 +19,13 @@ interface Props {
   heatmapData: HeatmapEntry[]
   scenario: ChargingScenario
   setScenario: (s: ChargingScenario) => void
+  hasProjectedData?: boolean
 }
 
 const MILEAGES = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
 const PLUGINS = [1, 2, 3, 4, 5, 6, 7]
 
-export function SavingsHeatmap({ heatmapData, scenario, setScenario }: Props) {
+export function SavingsHeatmap({ heatmapData, scenario, setScenario, hasProjectedData }: Props) {
   const [heatmapUnit, setHeatmapUnit] = useState<'eur' | 'ct'>('eur')
 
   const maxVal = Math.max(...heatmapData.map(d => heatmapUnit === 'eur' ? d.savings : d.spreadCt), 0.01)
@@ -51,7 +52,7 @@ export function SavingsHeatmap({ heatmapData, scenario, setScenario }: Props) {
           </div>
         </div>
         <p className="text-[13px] text-gray-500 mt-1">
-          {heatmapUnit === 'eur' ? 'Yearly savings (EUR/yr)' : 'Avg spread (ct/kWh)'} · mileage vs. charging frequency · adjust plug-in time below
+          {heatmapUnit === 'eur' ? 'Yearly savings (EUR/yr)' : 'Avg spread (ct/kWh)'} · mileage vs. charging frequency · adjust plug-in time below{hasProjectedData ? ' (includes projected prices)' : ''}
         </p>
       </CardHeader>
       <CardContent className="pt-5">
@@ -88,7 +89,7 @@ export function SavingsHeatmap({ heatmapData, scenario, setScenario }: Props) {
                 <tr>
                   <th className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide p-2 text-left">km/yr</th>
                   {PLUGINS.map(pi => (
-                    <th key={pi} className={`text-[11px] font-bold p-2 transition-colors ${pi === scenario.weeklyPlugIns ? 'text-[#EA1C0A]' : 'text-gray-400'}`}>
+                    <th key={pi} className={`text-[11px] font-bold p-2 transition-colors ${pi === (scenario.weekdayPlugIns + scenario.weekendPlugIns) ? 'text-[#EA1C0A]' : 'text-gray-400'}`}>
                       {pi}x
                     </th>
                   ))}
@@ -102,7 +103,7 @@ export function SavingsHeatmap({ heatmapData, scenario, setScenario }: Props) {
                     </td>
                     {PLUGINS.map(pi => {
                       const d = cellData(mil, pi)
-                      const isActive = mil === scenario.yearlyMileageKm && pi === scenario.weeklyPlugIns
+                      const isActive = mil === scenario.yearlyMileageKm && pi === (scenario.weekdayPlugIns + scenario.weekendPlugIns)
                       return (
                         <td key={pi} className="p-1">
                           <div

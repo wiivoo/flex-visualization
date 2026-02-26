@@ -25,6 +25,9 @@ export interface MonthlySavingsEntry {
   savings: number
   season: string
   year: number
+  isProjected?: boolean
+  weekdaySavings?: number
+  weekendSavings?: number
 }
 
 interface Props {
@@ -72,7 +75,7 @@ export function MonthlySavingsCard({
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
       <CardHeader className="pb-3 border-b border-gray-100">
-        <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings Potential</CardTitle>
+        <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings — Rolling 365-Day Average</CardTitle>
         <p className="text-[11px] text-gray-500 mt-1">
           {weeklyPlugIns}x/week · {energyPerSession} kWh/session · day-ahead spot shifting
         </p>
@@ -100,6 +103,11 @@ export function MonthlySavingsCard({
                     <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
                       <p className="text-gray-500 text-[10px]">{d.month} · {d.season}</p>
                       <p className="font-semibold tabular-nums" style={{ color }}>{d.savings.toFixed(2)} EUR/mo</p>
+                      {(d.weekdaySavings !== undefined && d.weekendSavings !== undefined) && (
+                        <p className="text-gray-400 tabular-nums text-[10px]">
+                          <span className="text-gray-500">{d.weekdaySavings.toFixed(2)}</span> weekday + <span className="text-gray-500">{d.weekendSavings.toFixed(2)}</span> weekend
+                        </p>
+                      )}
                       <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} EUR so far</p>
                     </div>
                   )
@@ -109,7 +117,12 @@ export function MonthlySavingsCard({
                 shape={((props: any) => {
                   const { x = 0, y = 0, width = 0, height = 0, season = '' } = props as { x: number; y: number; width: number; height: number; season: string }
                   const fill = SEASON_COLORS[season] || '#6B7280'
-                  return <rect x={x} y={y} width={width} height={Math.max(height, 0)} rx={3} ry={3} fill={fill} fillOpacity={0.75} />
+                  const h = Math.max(height, 0)
+                  return (
+                    <g>
+                      <rect x={x} y={y} width={width} height={h} rx={3} ry={3} fill={fill} fillOpacity={0.75} />
+                    </g>
+                  )
                 }) as any} />
               <Line yAxisId="right" dataKey="cumulative" type="monotone"
                 stroke="#374151" strokeWidth={1.5} strokeDasharray="4 3"
@@ -133,29 +146,26 @@ export function MonthlySavingsCard({
           </span>
         </div>
 
-        {/* Rolling average methodology — collapsible */}
+        {/* Methodology — collapsible */}
         <div className="border border-gray-200/60 rounded-lg overflow-hidden">
           <button
             onClick={() => setMethodologyOpen(v => !v)}
             className="w-full flex items-center justify-between bg-gray-50/80 px-3.5 py-2 text-left hover:bg-gray-100/60 transition-colors">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Methodology: rolling 365-day average</span>
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Methodology</span>
             <span className="text-[10px] text-gray-400 ml-2">{methodologyOpen ? '▲' : '▼'}</span>
           </button>
           {methodologyOpen && (
             <div className="px-3.5 py-3 text-[11px] space-y-1.5 bg-gray-50/40">
-              <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
-                <span className="text-gray-500 font-mono">avg savings / session</span>
-                <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
-                <span className="text-gray-500 font-mono">× {weeklyPlugIns} plug-ins/wk × 52 wk</span>
-                <span className="tabular-nums font-semibold text-gray-700 text-right">= {sessionsPerYear} sessions</span>
-                <span className="text-gray-400 font-mono col-span-2 border-t border-gray-200 pt-1.5 mt-0.5 flex justify-between">
-                  <span>{avgDailyEur.toFixed(3)} × {sessionsPerYear}</span>
-                  <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums" />
-                </span>
-              </div>
-              <p className="text-[10px] text-gray-400 pt-1">
-                ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting
+              <p className="text-gray-500">
+                For each day, the optimal vs. baseline charging cost is computed from actual SMARD spot prices.
+                Monthly bars show the sum of daily savings scaled to {weeklyPlugIns} sessions/week.
               </p>
+              <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 border-t border-gray-200 pt-1.5 mt-1">
+                <span className="text-gray-400 font-mono">avg savings / session</span>
+                <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
+                <span className="text-gray-400 font-mono">× {sessionsPerYear} sessions/yr</span>
+                <AnimatedNumber value={rollingAvgSavings} decimals={0} prefix="≈ " suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums text-right" />
+              </div>
             </div>
           )}
         </div>

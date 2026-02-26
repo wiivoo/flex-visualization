@@ -22,6 +22,7 @@ export interface PriceData {
   yearRange: { start: string; end: string }
   generation: GenerationData[]
   generationLoading: boolean
+  lastRealDate: string  // YYYY-MM-DD boundary between real and projected data
 }
 
 function isNightHour(hour: number): boolean {
@@ -87,20 +88,22 @@ function deriveDailySummaries(prices: HourlyPrice[]): DailySummary[] {
       priceAt18: Math.round(priceAt18 * 10) / 10,
       cheapestNightPrice: Math.round(cheapestNight * 10) / 10,
       nightSpread: Math.round((priceAt18 - cheapestNight) * 10) / 10,
+      isProjected: dayPrices.some(p => p.isProjected),
     })
   }
   return summaries.sort((a, b) => a.date.localeCompare(b.date))
 }
 
 function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): MonthlyStats[] {
-  const byMonth = new Map<string, { spreads: number[]; prices: number[]; negHours: number; totalHours: number; nightSpreads: number[] }>()
+  const byMonth = new Map<string, { spreads: number[]; prices: number[]; negHours: number; totalHours: number; nightSpreads: number[]; hasProjected: boolean }>()
 
   for (const d of daily) {
     const month = d.date.slice(0, 7)
-    const entry = byMonth.get(month) || { spreads: [], prices: [], negHours: 0, totalHours: 0, nightSpreads: [] }
+    const entry = byMonth.get(month) || { spreads: [], prices: [], negHours: 0, totalHours: 0, nightSpreads: [], hasProjected: false }
     entry.spreads.push(d.spread)
     entry.negHours += d.negativeHours
     entry.nightSpreads.push(d.nightSpread) // 18:00 vs cheapest night
+    if (d.isProjected) entry.hasProjected = true
     byMonth.set(month, entry)
   }
 
@@ -125,6 +128,7 @@ function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): Month
       negativeHours: data.negHours,
       totalHours: data.totalHours,
       avgNightSpread: Math.round(avg(data.nightSpreads) * 10) / 10,
+      isProjected: data.hasProjected,
     })
   }
   return stats.sort((a, b) => a.month.localeCompare(b.month))
@@ -140,6 +144,7 @@ export function usePrices(): PriceData {
   const [selectedDate, setSelectedDate] = useState<string>('')
   const [generation, setGeneration] = useState<GenerationData[]>([])
   const [generationLoading, setGenerationLoading] = useState(false)
+  const [lastRealDate, setLastRealDate] = useState<string>('')
   const fetched = useRef(false)
   const generationCache = useRef<Map<string, GenerationData[]>>(new Map())
   const allGeneration = useRef<CompactGen[]>([])
@@ -211,8 +216,9 @@ export function usePrices(): PriceData {
         let prices: HourlyPrice[] = rawPrices.map(toHourlyPrice)
         let qhPrices: HourlyPrice[] = rawQHPrices.map(toHourlyPrice)
 
-        // Determine the last date in static data
+        // Determine the last date in static data for incremental fetch boundary
         const lastStaticDate = prices[prices.length - 1].date
+        setLastRealDate(lastStaticDate)
         const lastStaticQHDate = qhPrices.length > 0 ? qhPrices[qhPrices.length - 1].date : lastStaticDate
         const today = todayStr()
 
@@ -284,6 +290,10 @@ export function usePrices(): PriceData {
       const dailySummaries = deriveDailySummaries(merged)
       setDaily(dailySummaries)
       setMonthly(deriveMonthlyStats(dailySummaries, merged))
+
+      // Update lastRealDate to include incremental real data
+      const lastNewDate = unique[unique.length - 1].date
+      setLastRealDate(prev => lastNewDate > prev ? lastNewDate : prev)
 
       // Advance selected date to second-to-last (need t+1 for overnight chart)
       if (dailySummaries.length > 1) {
@@ -448,5 +458,6 @@ export function usePrices(): PriceData {
     yearRange,
     generation,
     generationLoading,
+    lastRealDate,
   }
 }
