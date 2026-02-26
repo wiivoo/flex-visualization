@@ -68,6 +68,13 @@ export function TutorialOverlay({ active, onClose }: Props) {
 
   const currentStep = STEPS[step]
 
+  // Wrap close: reset step and scroll back to top
+  const handleClose = useCallback(() => {
+    setStep(0)
+    onClose()
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [onClose])
+
   const measureTarget = useCallback(() => {
     const el = document.getElementById(currentStep.targetId)
     if (!el) return
@@ -117,16 +124,16 @@ export function TutorialOverlay({ active, onClose }: Props) {
   useEffect(() => {
     if (!active) return
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') handleClose()
       if (e.key === 'ArrowRight' || e.key === 'Enter') {
         if (step < STEPS.length - 1) setStep(s => s + 1)
-        else onClose()
+        else handleClose()
       }
       if (e.key === 'ArrowLeft' && step > 0) setStep(s => s - 1)
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [active, step, onClose])
+  }, [active, step, handleClose])
 
   if (!active) return null
 
@@ -158,7 +165,7 @@ export function TutorialOverlay({ active, onClose }: Props) {
               )`
             : undefined,
         }}
-        onClick={onClose}
+        onClick={handleClose}
       />
 
       {/* Spotlight border highlight */}
@@ -201,7 +208,7 @@ export function TutorialOverlay({ active, onClose }: Props) {
           {/* Navigation */}
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
             >
               Skip
@@ -218,7 +225,7 @@ export function TutorialOverlay({ active, onClose }: Props) {
               <button
                 onClick={() => {
                   if (step < STEPS.length - 1) setStep(s => s + 1)
-                  else onClose()
+                  else handleClose()
                 }}
                 className="text-[11px] font-semibold text-white bg-[#313131] hover:bg-[#1a1a1a] px-4 py-1.5 rounded-lg transition-colors"
               >

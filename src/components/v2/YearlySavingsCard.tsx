@@ -82,8 +82,8 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
                 )}
                 {/* Actual year bar (on top) */}
                 <div
-                  className={`relative h-full rounded-full transition-all ${isCurrent ? 'bg-emerald-500' : 'bg-gray-300'}`}
-                  style={{ width: `${barPct}%`, opacity: isCurrent ? 0.85 : 0.5 }}
+                  className={`relative h-full rounded-full transition-all ${isCurrent ? 'bg-emerald-500' : 'bg-emerald-300'}`}
+                  style={{ width: `${barPct}%`, opacity: isCurrent ? 0.85 : 0.45 }}
                 />
               </div>
               <div className="flex items-center justify-between text-[9px] text-gray-400 mt-0.5 tabular-nums">
