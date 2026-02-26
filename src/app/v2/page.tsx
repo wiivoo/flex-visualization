@@ -6,6 +6,7 @@ import { usePrices } from '@/lib/use-prices'
 import { runOptimization, type OptimizeResult } from '@/lib/optimizer'
 import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, type ChargingScenario } from '@/lib/v2-config'
 import { Step2ChargingScenario } from '@/components/v2/steps/Step2ChargingScenario'
+import { TutorialOverlay } from '@/components/v2/TutorialOverlay'
 
 // Parse scenario from URL search params, falling back to defaults
 function parseScenario(params: URLSearchParams): ChargingScenario {
@@ -67,6 +68,7 @@ function V2Inner() {
 
   const [scenario, setScenario] = useState<ChargingScenario>(() => parseScenario(searchParams))
   const [copied, setCopied] = useState(false)
+  const [showTutorial, setShowTutorial] = useState(false)
 
   const prices = usePrices()
 
@@ -153,25 +155,35 @@ function V2Inner() {
       <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
         <div className="max-w-[1440px] mx-auto px-8 py-4 flex items-center justify-between">
           <h1 className="text-lg font-bold text-[#313131]">EV Flex Charging — Load Shifting Visualization</h1>
-          <button
-            onClick={handleShare}
-            className="flex items-center gap-2 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
-            {copied ? (
-              <>
-                <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-                <span className="text-emerald-600">Copied!</span>
-              </>
-            ) : (
-              <>
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                </svg>
-                Share
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowTutorial(true)}
+              className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Guide
+            </button>
+            <button
+              onClick={handleShare}
+              className="flex items-center gap-2 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
+              {copied ? (
+                <>
+                  <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span className="text-emerald-600">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
+                  </svg>
+                  Share
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -184,6 +196,9 @@ function V2Inner() {
           optimization={optimization}
         />
       </main>
+
+      {/* Tutorial overlay */}
+      <TutorialOverlay active={showTutorial} onClose={() => setShowTutorial(false)} />
     </div>
   )
 }

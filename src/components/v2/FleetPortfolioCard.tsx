@@ -255,7 +255,7 @@ export function FleetPortfolioCard({
   const maxDistPct = Math.max(...PLUGIN_TIME_DIST.map(d => d.pct))
 
   return (
-    <Card className="overflow-hidden shadow-sm border-gray-200/80">
+    <Card id="tour-fleet-portfolio" className="overflow-hidden shadow-sm border-gray-200/80">
       <CardHeader className="pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-bold text-[#313131]">Fleet Portfolio View</CardTitle>
