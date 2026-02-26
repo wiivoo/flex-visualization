@@ -47,7 +47,7 @@ export default function LoginPage() {
           <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-lg bg-[#EA1B0A]">
             <Lock className="h-6 w-6 text-white" />
           </div>
-          <CardTitle className="text-2xl font-bold tracking-tight text-foreground">B2C Flex Monetization</CardTitle>
+          <CardTitle className="text-2xl font-bold tracking-tight text-foreground">EV Flex Charging — Load Shifting Visualization</CardTitle>
           <CardDescription className="text-sm">
             Enter password to access the dashboard
           </CardDescription>
