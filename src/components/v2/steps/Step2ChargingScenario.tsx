@@ -6,10 +6,14 @@ import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger }
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
+import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows } from '@/lib/charging-helpers'
+import { MiniCalendar } from '@/components/v2/MiniCalendar'
+import { SessionCostCard } from '@/components/v2/SessionCostCard'
+import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
+import { SavingsHeatmap } from '@/components/v2/SavingsHeatmap'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
-  Bar
 } from 'recharts'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
@@ -63,168 +67,6 @@ interface Props {
   optimization: OptimizeResult | null
 }
 
-/* ────── MiniCalendar ────── */
-function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = true }: {
-  daily: DailySummary[]
-  selectedDate: string
-  onSelect: (date: string) => void
-  requireNextDay?: boolean
-}) {
-  const dataRange = useMemo(() => {
-    if (daily.length === 0) return { firstMonth: '', lastMonth: '' }
-    const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
-    return { firstMonth: sorted[0].date.slice(0, 7), lastMonth: sorted[sorted.length - 1].date.slice(0, 7) }
-  }, [daily])
-
-  const [viewMonth, setViewMonth] = useState(() => {
-    if (selectedDate) return selectedDate.slice(0, 7)
-    if (dataRange.lastMonth) return dataRange.lastMonth
-    const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-  })
-
-  useEffect(() => {
-    if (selectedDate) setViewMonth(selectedDate.slice(0, 7))
-  }, [selectedDate])
-
-  // Set of all dates that have data — used to check t+1 availability
-  const allDates = useMemo(() => new Set(daily.map(d => d.date)), [daily])
-
-  const monthDays = useMemo(() => {
-    const [year, month] = viewMonth.split('-').map(Number)
-    const firstDay = new Date(year, month - 1, 1)
-    const lastDay = new Date(year, month, 0)
-    const startPad = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1
-    const dailyMap = new Map(daily.map(d => [d.date, d]))
-    const days: (DailySummary | null)[] = []
-    for (let i = 0; i < startPad; i++) days.push(null)
-    for (let d = 1; d <= lastDay.getDate(); d++) {
-      const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-      days.push(dailyMap.get(dateStr) || null)
-    }
-    return days
-  }, [viewMonth, daily])
-
-  const monthLabel = (() => {
-    const [y, m] = viewMonth.split('-').map(Number)
-    return new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-  })()
-
-  const canGoBack = dataRange.firstMonth && viewMonth > dataRange.firstMonth
-  const canGoForward = dataRange.lastMonth && viewMonth < dataRange.lastMonth
-
-  function shiftMonth(delta: number) {
-    const [y, m] = viewMonth.split('-').map(Number)
-    const d = new Date(y, m - 1 + delta, 1)
-    const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    if (dataRange.firstMonth && newMonth < dataRange.firstMonth) return
-    if (dataRange.lastMonth && newMonth > dataRange.lastMonth) return
-    setViewMonth(newMonth)
-  }
-
-  function spreadColor(spread: number): string {
-    if (spread > 200) return 'bg-red-500'
-    if (spread > 150) return 'bg-orange-400'
-    if (spread > 100) return 'bg-yellow-400'
-    if (spread > 50) return 'bg-green-300'
-    return 'bg-green-100'
-  }
-
-  return (
-    <div className="w-full">
-      <div className="flex items-center justify-between mb-3">
-        <button onClick={() => shiftMonth(-1)} disabled={!canGoBack} aria-label="Previous month"
-          className={`px-2 py-1 text-sm rounded ${canGoBack ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}>&larr;</button>
-        <span className="text-sm font-bold text-[#313131]">{monthLabel}</span>
-        <button onClick={() => shiftMonth(1)} disabled={!canGoForward} aria-label="Next month"
-          className={`px-2 py-1 text-sm rounded ${canGoForward ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}>&rarr;</button>
-      </div>
-      <div className="grid grid-cols-7 gap-1 text-xs">
-        {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => (
-          <div key={d} className="text-center text-gray-400 font-medium py-1">{d}</div>
-        ))}
-        {monthDays.map((day, i) => {
-          if (!day) return <div key={`pad-${i}`} />
-          const dayNum = parseInt(day.date.split('-')[2])
-          const isSelected = day.date === selectedDate
-          // Check if t+1 data exists (required for overnight chart)
-          const nd = new Date(day.date + 'T12:00:00Z')
-          nd.setUTCDate(nd.getUTCDate() + 1)
-          const nextDateStr = nd.toISOString().slice(0, 10)
-          const hasNextDay = requireNextDay ? allDates.has(nextDateStr) : true
-          return (
-            <button key={day.date} onClick={() => hasNextDay && onSelect(day.date)}
-              disabled={!hasNextDay}
-              className={`relative p-1 rounded text-center transition-all ${
-                !hasNextDay
-                  ? 'opacity-30 cursor-not-allowed'
-                  : `hover:ring-2 hover:ring-[#EA1C0A]/50 ${isSelected ? 'ring-2 ring-[#EA1C0A] bg-[#EA1C0A]/5' : ''}`
-              }`}
-              title={hasNextDay ? `${day.date}: Spread ${day.spread.toFixed(0)} EUR/MWh` : `${day.date}: no next-day data`}>
-              <div className="text-[10px] text-gray-600">{dayNum}</div>
-              <div className={`w-full h-1.5 rounded-full mt-0.5 ${hasNextDay ? spreadColor(day.spread) : 'bg-gray-200'}`} />
-            </button>
-          )
-        })}
-      </div>
-      <div className="flex items-center gap-2 mt-3 text-[10px] text-gray-500">
-        <span>Spread:</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-2 bg-green-100 rounded" />Low</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-2 bg-yellow-400 rounded" />Med</span>
-        <span className="flex items-center gap-1"><span className="w-3 h-2 bg-red-500 rounded" />High</span>
-      </div>
-    </div>
-  )
-}
-
-/* ────── Helpers ────── */
-function nextDayStr(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00:00Z')
-  d.setUTCDate(d.getUTCDate() + 1)
-  return d.toISOString().slice(0, 10)
-}
-
-function fmtDateShort(dateStr: string): string {
-  const d = new Date(dateStr + 'T12:00:00Z')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-/**
- * Compute baseline vs optimized average price for a charging window.
- * Supports both hourly (slotsPerHour=1) and QH (slotsPerHour=4) modes.
- * In QH mode with hourly data, each hour counts as 4 slots at the same price,
- * allowing partial-hour charging (e.g. 6 slots = 1.5 hours at 7 kW = 10.5 kWh).
- */
-function computeWindowSavings(
-  windowPrices: HourlyPrice[],
-  energyPerSession: number,
-  kwhPerSlot: number,
-  slotsPerHour: number,
-): { bAvg: number; oAvg: number; savingsEur: number } {
-  const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-  // Baseline: first N slots chronologically (each hour = slotsPerHour slots)
-  let bSum = 0, bCount = 0
-  for (const p of windowPrices) {
-    const take = Math.min(slotsPerHour, slotsNeeded - bCount)
-    if (take <= 0) break
-    bSum += p.priceCtKwh * take
-    bCount += take
-  }
-  // Optimized: cheapest N slots (sort by price, each hour = slotsPerHour slots)
-  const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-  let oSum = 0, oCount = 0
-  for (const p of sorted) {
-    const take = Math.min(slotsPerHour, slotsNeeded - oCount)
-    if (take <= 0) break
-    oSum += p.priceCtKwh * take
-    oCount += take
-  }
-  const bAvg = bCount > 0 ? bSum / bCount : 0
-  const oAvg = oCount > 0 ? oSum / oCount : 0
-  return { bAvg, oAvg, savingsEur: (bAvg - oAvg) * energyPerSession / 100 }
-}
-
-
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) {
   const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weeklyPlugIns)
@@ -246,10 +88,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
-  const [heatmapUnit, setHeatmapUnit] = useState<'eur' | 'ct'>('eur')
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
-  const [formulaOpen, setFormulaOpen] = useState(false)
-  const [methodologyOpen, setMethodologyOpen] = useState(false)
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
 
   const date1 = prices.selectedDate
@@ -592,25 +431,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // Uses deferred values so these heavy computations don't block during drag
   const overnightWindows = useMemo(() => {
     if (prices.hourly.length === 0) return []
-    const byDate = new Map<string, HourlyPrice[]>()
-    for (const p of prices.hourly) {
-      const arr = byDate.get(p.date) || []
-      arr.push(p)
-      byDate.set(p.date, arr)
-    }
-    const windows: { date: string; month: string; prices: HourlyPrice[]; sorted: HourlyPrice[] }[] = []
-    for (const [dDate, dPrices] of byDate) {
-      const nd = nextDayStr(dDate)
-      const nPrices = byDate.get(nd)
-      if (!nPrices || nPrices.length === 0) continue
-      const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
-      const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
-      const win = [...eve, ...morn]
-      if (win.length === 0) continue
-      const sorted = [...win].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-      windows.push({ date: dDate, month: dDate.slice(0, 7), prices: win, sorted })
-    }
-    return windows
+    return buildOvernightWindows(prices.hourly, deferredPlugInTime, deferredDepartureTime)
   }, [prices.hourly, deferredPlugInTime, deferredDepartureTime])
 
   // ── Monthly savings breakdown for yearly chart ──
@@ -662,40 +483,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       .map(([, v]) => v)
   }, [monthlySavingsData])
 
-  // ── Separate overnight windows for heatmap (uses its own plug-in time slider) ──
-  const heatmapOvernightWindows = useMemo(() => {
-    if (prices.hourly.length === 0) return []
-    const byDate = new Map<string, HourlyPrice[]>()
-    for (const p of prices.hourly) {
-      const arr = byDate.get(p.date) || []
-      arr.push(p)
-      byDate.set(p.date, arr)
-    }
-    const windows: { date: string; month: string; prices: HourlyPrice[]; sorted: HourlyPrice[] }[] = []
-    for (const [dDate, dPrices] of byDate) {
-      const nd = nextDayStr(dDate)
-      const nPrices = byDate.get(nd)
-      if (!nPrices || nPrices.length === 0) continue
-      const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
-      const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
-      const win = [...eve, ...morn]
-      if (win.length === 0) continue
-      const sorted = [...win].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-      windows.push({ date: dDate, month: dDate.slice(0, 7), prices: win, sorted })
-    }
-    return windows
-  }, [prices.hourly, deferredPlugInTime, deferredDepartureTime])
-
   // ── Heatmap data: savings for different mileage × plug-in combinations ──
   // Uses the same last-12-month window as the monthly savings chart for consistency
   const heatmapData = useMemo(() => {
-    if (heatmapOvernightWindows.length === 0) return []
+    if (overnightWindows.length === 0) return []
     const hKwhPerSlot = isQH ? DEFAULT_CHARGE_POWER_KW * 0.25 : DEFAULT_CHARGE_POWER_KW
     const hSlotsPerHour = isQH ? 4 : 1
     // Identify the same 12 months shown in the savings chart
-    const allMonths = [...new Set(heatmapOvernightWindows.map(w => w.month))].sort()
+    const allMonths = [...new Set(overnightWindows.map(w => w.month))].sort()
     const last12Months = new Set(allMonths.slice(-12))
-    const windows = heatmapOvernightWindows.filter(w => last12Months.has(w.month))
+    const windows = overnightWindows.filter(w => last12Months.has(w.month))
     const mileages = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
     const plugins = [1, 2, 3, 4, 5, 6, 7]
     const grid: { mileage: number; plugIns: number; savings: number; spreadCt: number; kwhPerSession: number }[] = []
@@ -719,7 +516,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       }
     }
     return grid
-  }, [heatmapOvernightWindows, isQH])
+  }, [overnightWindows, isQH])
 
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
@@ -1427,251 +1224,31 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       </div>
 
       {/* ── Session Cost Breakdown  +  Monthly Savings Potential ── */}
-      {sessionCost && monthlySavingsData.length > 0 && (() => {
-        const SEASON_COLORS: Record<string, string> = {
-          winter: '#7EB8E8',
-          spring: '#6AC09A',
-          summer: '#E8C94A',
-          autumn: '#E8A066',
-        }
-        // Derive avg-per-session from rolling annual figure for methodology display
-        const avgDailyEur = sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0
-        return (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-            {/* ── LEFT: Session Cost Breakdown ── */}
-            <Card className="shadow-sm border-gray-200/80 flex flex-col">
-              <CardHeader className="pb-3 border-b border-gray-100">
-                <CardTitle className="text-base font-bold text-[#313131]">Session Cost Breakdown</CardTitle>
-                <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
-                  {sessionsPerYear} sessions/yr · {energyPerSession} kWh · {sessionHoursNeeded}h charge ·{' '}
-                  {windowHours}h window ·{' '}
-                  <span className={`font-semibold ${flexibilityHours > 3 ? 'text-emerald-600' : flexibilityHours > 0 ? 'text-amber-600' : 'text-red-500'}`}>
-                    {flexibilityHours}h flex
-                  </span>
-                </p>
-              </CardHeader>
-              <CardContent className="pt-5 space-y-4 flex-1">
-
-                {/* Hour-by-hour price table */}
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Immediate */}
-                  <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
-                    <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2.5">
-                      Unmanaged · first {isQH ? `${sessionHoursNeeded * 4} × 15 min` : `${sessionHoursNeeded}h`}
-                    </p>
-                    <div className="space-y-1">
-                      {sessionCost.baselineHours.map((h, i) => (
-                        <div key={i} className="flex justify-between text-[12px] leading-snug">
-                          <span className="font-mono text-gray-500">{h.label}</span>
-                          <span className="tabular-nums font-semibold text-red-700">{h.ct.toFixed(1)} ct</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="border-t border-red-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
-                      <span className="text-gray-500 font-medium">avg</span>
-                      <span className="font-bold text-red-700 tabular-nums">{sessionCost.baselineAvgCt.toFixed(1)} ct/kWh</span>
-                    </div>
-                  </div>
-
-                  {/* Optimized */}
-                  <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
-                    <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2.5">
-                      Optimized · cheapest {isQH ? `${sessionHoursNeeded * 4} × 15 min` : `${sessionHoursNeeded}h`}
-                    </p>
-                    <div className="space-y-1">
-                      {sessionCost.optimizedHours.map((h, i) => (
-                        <div key={i} className="flex justify-between text-[12px] leading-snug">
-                          <span className="font-mono text-gray-500">{h.label}</span>
-                          <span className="tabular-nums font-semibold text-emerald-700">{h.ct.toFixed(1)} ct</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="border-t border-emerald-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
-                      <span className="text-gray-500 font-medium">avg</span>
-                      <span className="font-bold text-emerald-700 tabular-nums">{sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Cost formula chain */}
-                {/* Cost formula — collapsible */}
-                <div className="border border-gray-200/60 rounded-lg overflow-hidden">
-                  <button
-                    onClick={() => setFormulaOpen(v => !v)}
-                    className="w-full flex items-center justify-between bg-gray-50/80 px-3.5 py-2 text-left hover:bg-gray-100/60 transition-colors">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Formula: avg ct × kWh ÷ 100 = EUR</span>
-                    <span className="text-[10px] text-gray-400 ml-2">{formulaOpen ? '▲' : '▼'}</span>
-                  </button>
-                  {formulaOpen && (
-                    <div className="px-3.5 py-3 text-[11px] space-y-1.5 bg-gray-50/40">
-                      <div className="flex justify-between text-gray-500">
-                        <span className="font-mono">{sessionCost.baselineAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
-                        <span className="font-semibold text-red-600 tabular-nums">{sessionCost.baselineEur.toFixed(2)} EUR</span>
-                      </div>
-                      <div className="flex justify-between text-gray-500">
-                        <span className="font-mono">{sessionCost.optimizedAvgCt.toFixed(1)} ct × {sessionCost.kwh} kWh ÷ 100</span>
-                        <span className="font-semibold text-emerald-600 tabular-nums">{sessionCost.optimizedEur.toFixed(2)} EUR</span>
-                      </div>
-                      <div className="flex justify-between items-center border-t border-gray-200 pt-1.5 mt-0.5">
-                        <span className="font-mono text-gray-400">
-                          ({sessionCost.baselineAvgCt.toFixed(1)} − {sessionCost.optimizedAvgCt.toFixed(1)}) × {sessionCost.kwh} ÷ 100
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold text-[#EA1C0A]/70 tabular-nums">
-                            {(sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt).toFixed(1)} ct/kWh
-                          </span>
-                          <AnimatedNumber value={sessionCost.savingsEur} decimals={2} suffix=" EUR" className="font-bold text-[#EA1C0A] tabular-nums" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Baseline end time note */}
-                <p className="text-[10px] text-gray-400 leading-relaxed">
-                  Unmanaged: plug-in at{' '}
-                  <span className="font-mono">{String(scenario.plugInTime).padStart(2, '0')}:00</span> → done by{' '}
-                  <span className="font-mono">{String(baselineEndHour).padStart(2, '0')}:00</span>.
-                  Optimized shifts the same {sessionHoursNeeded}h to the cheapest slot in the {windowHours}h window.
-                </p>
-              </CardContent>
-            </Card>
-
-            {/* ── RIGHT: Monthly Savings Potential + rolling avg methodology ── */}
-            <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
-              <CardHeader className="pb-3 border-b border-gray-100">
-                <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings Potential</CardTitle>
-                <p className="text-[11px] text-gray-500 mt-1">
-                  {scenario.weeklyPlugIns}x/week · {energyPerSession} kWh/session · day-ahead spot shifting
-                </p>
-              </CardHeader>
-              <CardContent className="pt-5 space-y-4 flex-1 flex flex-col">
-                {/* Bar chart — last 12 months of rolling window + cumulative line */}
-                {(() => {
-                  const SEASON_BG: Record<string, string> = {
-                    winter: '#EFF6FF', spring: '#F0FDF4', summer: '#FEFCE8', autumn: '#FFF7ED',
-                  }
-                  // Last 12 months up to the selected date (matches rolling 365-day avg ending at date1)
-                  const selectedMonth = date1 ? date1.slice(0, 7) : undefined
-                  const filteredMonths = selectedMonth
-                    ? monthlySavingsData.filter(d => d.month <= selectedMonth)
-                    : monthlySavingsData
-                  const last12 = filteredMonths.slice(-12).map(d => ({
-                    ...d,
-                    displayLabel: d.label === 'Jan' ? `Jan '${String(d.year).slice(2)}` : d.label,
-                  }))
-                  // Add running cumulative sum for double-check line
-                  let runSum = 0
-                  const last12c = last12.map(d => { runSum += d.savings; return { ...d, cumulative: Math.round(runSum * 10) / 10 } })
-
-                  // Season background bands
-                  const bands: { x1: string; x2: string; season: string }[] = []
-                  let cur = '', start = ''
-                  for (let i = 0; i < last12c.length; i++) {
-                    const d = last12c[i]
-                    if (d.season !== cur) {
-                      if (cur && start) bands.push({ x1: start, x2: last12c[i - 1].displayLabel, season: cur })
-                      cur = d.season; start = d.displayLabel
-                    }
-                  }
-                  if (cur && start) bands.push({ x1: start, x2: last12c[last12c.length - 1].displayLabel, season: cur })
-
-                  const totalSum = last12c[last12c.length - 1]?.cumulative ?? 0
-
-                  return (
-                    <>
-                      <div className="flex-1 min-h-[180px]">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <ComposedChart data={last12c} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
-                            {/* Season background overlays */}
-                            {bands.map((b, i) => (
-                              <ReferenceArea key={i} x1={b.x1} x2={b.x2}
-                                fill={SEASON_BG[b.season] || '#F9FAFB'} fillOpacity={1} ifOverflow="hidden" />
-                            ))}
-                            <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                            <XAxis dataKey="displayLabel" tick={{ fontSize: 10, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} interval={0} />
-                            <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                              label={{ value: 'EUR/mo', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
-                            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                              label={{ value: 'EUR cumul.', angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#9CA3AF' } }} />
-                            <Tooltip
-                              content={({ active, payload }) => {
-                                if (!active || !payload?.length) return null
-                                const d = payload[0].payload as (typeof last12c)[number]
-                                const color = SEASON_COLORS[d.season] || '#6B7280'
-                                return (
-                                  <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
-                                    <p className="text-gray-500 text-[10px]">{d.month} · {d.season}</p>
-                                    <p className="font-semibold tabular-nums" style={{ color }}>{d.savings.toFixed(2)} EUR/mo</p>
-                                    <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} EUR so far</p>
-                                  </div>
-                                )
-                              }} />
-                            <Bar yAxisId="left" dataKey="savings" radius={[3, 3, 0, 0]} maxBarSize={28}
-                              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                              shape={((props: any) => {
-                                const { x = 0, y = 0, width = 0, height = 0, season = '' } = props as { x: number; y: number; width: number; height: number; season: string }
-                                const fill = SEASON_COLORS[season] || '#6B7280'
-                                return <rect x={x} y={y} width={width} height={Math.max(height, 0)} rx={3} ry={3} fill={fill} fillOpacity={0.75} />
-                              }) as any} />
-                            <Line yAxisId="right" dataKey="cumulative" type="monotone"
-                              stroke="#374151" strokeWidth={1.5} strokeDasharray="4 3"
-                              dot={false} activeDot={{ r: 3, fill: '#374151' }} />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                      </div>
-                      {/* Season legend + cumulative note */}
-                      <div className="flex items-center justify-between text-[10px] text-gray-500 flex-wrap gap-2">
-                        <div className="flex items-center gap-3">
-                          {(['winter', 'spring', 'summer', 'autumn'] as const).map(s => (
-                            <span key={s} className="flex items-center gap-1 capitalize">
-                              <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: SEASON_COLORS[s], opacity: 0.75 }} />
-                              {s}
-                            </span>
-                          ))}
-                        </div>
-                        <span className="flex items-center gap-1.5 text-gray-400">
-                          <span className="inline-block w-6 border-t border-dashed border-gray-400" />
-                          ∑ {totalSum.toFixed(0)} EUR ≈ {rollingAvgSavings.toFixed(0)} EUR/yr
-                        </span>
-                      </div>
-                    </>
-                  )
-                })()}
-
-                {/* Rolling average methodology — collapsible */}
-                <div className="border border-gray-200/60 rounded-lg overflow-hidden">
-                  <button
-                    onClick={() => setMethodologyOpen(v => !v)}
-                    className="w-full flex items-center justify-between bg-gray-50/80 px-3.5 py-2 text-left hover:bg-gray-100/60 transition-colors">
-                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Methodology: rolling 365-day average</span>
-                    <span className="text-[10px] text-gray-400 ml-2">{methodologyOpen ? '▲' : '▼'}</span>
-                  </button>
-                  {methodologyOpen && (
-                    <div className="px-3.5 py-3 text-[11px] space-y-1.5 bg-gray-50/40">
-                      <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1">
-                        <span className="text-gray-500 font-mono">avg savings / session</span>
-                        <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
-                        <span className="text-gray-500 font-mono">× {scenario.weeklyPlugIns} plug-ins/wk × 52 wk</span>
-                        <span className="tabular-nums font-semibold text-gray-700 text-right">= {sessionsPerYear} sessions</span>
-                        <span className="text-gray-400 font-mono col-span-2 border-t border-gray-200 pt-1.5 mt-0.5 flex justify-between">
-                          <span>{avgDailyEur.toFixed(3)} × {sessionsPerYear}</span>
-                          <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR/yr" className="font-bold text-[#EA1C0A] tabular-nums" />
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-gray-400 pt-1">
-                        ~{monthlySavings.toFixed(1)} EUR/month · day-ahead load shifting
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-          </div>
-        )
-      })()}
+      {sessionCost && monthlySavingsData.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <SessionCostCard
+            sessionCost={sessionCost}
+            sessionsPerYear={sessionsPerYear}
+            energyPerSession={energyPerSession}
+            sessionHoursNeeded={sessionHoursNeeded}
+            windowHours={windowHours}
+            flexibilityHours={flexibilityHours}
+            baselineEndHour={baselineEndHour}
+            plugInTime={scenario.plugInTime}
+            isQH={isQH}
+          />
+          <MonthlySavingsCard
+            monthlySavingsData={monthlySavingsData}
+            weeklyPlugIns={scenario.weeklyPlugIns}
+            energyPerSession={energyPerSession}
+            sessionsPerYear={sessionsPerYear}
+            rollingAvgSavings={rollingAvgSavings}
+            monthlySavings={monthlySavings}
+            avgDailyEur={sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0}
+            selectedDate={date1}
+          />
+        </div>
+      )}
 
       {/* loading state when sessionCost not yet ready */}
       {!sessionCost && monthlySavingsData.length === 0 && (
@@ -1684,115 +1261,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       )}
 
       {/* ── Behavior Heatmap: Mileage × Plug-ins ── */}
-      {heatmapData.length > 0 && (() => {
-        const mileages = [5000, 10000, 15000, 20000, 25000, 30000, 35000, 40000]
-        const plugins = [1, 2, 3, 4, 5, 6, 7]
-        const maxVal = Math.max(...heatmapData.map(d => heatmapUnit === 'eur' ? d.savings : d.spreadCt), 0.01)
-        const heatColor = (val: number) => {
-          const t = Math.min(val / maxVal, 1)
-          return `rgba(16, 185, 129, ${0.06 + t * 0.54})`
-        }
-        const cellData = (mil: number, pi: number) => heatmapData.find(d => d.mileage === mil && d.plugIns === pi)
-
-        return (
-          <Card className="overflow-hidden shadow-sm border-gray-200/80">
-            <CardHeader className="pb-3 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-bold text-[#313131]">Savings Sensitivity</CardTitle>
-                <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
-                  <button onClick={() => setHeatmapUnit('eur')}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${heatmapUnit === 'eur' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                    EUR/yr
-                  </button>
-                  <button onClick={() => setHeatmapUnit('ct')}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${heatmapUnit === 'ct' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                    ct/kWh
-                  </button>
-                </div>
-              </div>
-              <p className="text-[13px] text-gray-500 mt-1">
-                {heatmapUnit === 'eur' ? 'Yearly savings (EUR/yr)' : 'Avg spread (ct/kWh)'} · mileage vs. charging frequency · adjust plug-in time below
-              </p>
-            </CardHeader>
-            <CardContent className="pt-5">
-              <div className="flex gap-5 items-start">
-
-                {/* ── Vertical plug-in time slider ── */}
-                <div className="flex gap-2 shrink-0 select-none" style={{ height: `${mileages.length * 40 + 24}px` }}>
-                  <div className="flex flex-col items-center gap-1 h-full">
-                    <span className="text-[10px] text-gray-400 tabular-nums">14:00</span>
-                    <input
-                      type="range" min={PLUGIN_HOUR_MIN} max={PLUGIN_HOUR_MAX} step={1}
-                      value={scenario.plugInTime}
-                      onChange={(e) => setScenario({ ...scenario, plugInTime: Number(e.target.value) })}
-                      aria-label={`Plug-in time: ${scenario.plugInTime}:00`}
-                      style={{ writingMode: 'vertical-lr' } as React.CSSProperties}
-                      className="flex-1 w-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer
-                        [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:h-5
-                        [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131]
-                        [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer
-                        [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-                    <span className="text-[10px] text-gray-400 tabular-nums">22:00</span>
-                  </div>
-                  {/* Selected time label */}
-                  <div className="flex flex-col justify-center">
-                    <span className="text-[11px] font-bold text-[#313131] tabular-nums -rotate-90 whitespace-nowrap origin-center">
-                      {String(scenario.plugInTime).padStart(2,'0')}:00
-                    </span>
-                  </div>
-                </div>
-
-                {/* ── Heatmap table ── */}
-                <div className="flex-1 overflow-x-auto">
-                  <table className="w-full border-collapse text-center">
-                    <thead>
-                      <tr>
-                        <th className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide p-2 text-left">km/yr</th>
-                        {plugins.map(pi => (
-                          <th key={pi} className={`text-[11px] font-bold p-2 transition-colors ${pi === scenario.weeklyPlugIns ? 'text-[#EA1C0A]' : 'text-gray-400'}`}>
-                            {pi}x
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {mileages.map(mil => (
-                        <tr key={mil}>
-                          <td className={`text-[11px] font-semibold p-2 text-left tabular-nums transition-colors ${mil === scenario.yearlyMileageKm ? 'text-[#EA1C0A] font-bold' : 'text-gray-500'}`}>
-                            {(mil / 1000).toFixed(0)}k
-                          </td>
-                          {plugins.map(pi => {
-                            const d = cellData(mil, pi)
-                            const isActive = mil === scenario.yearlyMileageKm && pi === scenario.weeklyPlugIns
-                            return (
-                              <td key={pi} className="p-1">
-                                <div
-                                  className={`rounded-md px-1.5 py-2 tabular-nums text-[11px] font-semibold transition-all ${
-                                    isActive ? 'ring-2 ring-[#EA1C0A] ring-offset-1 scale-105' : ''
-                                  }`}
-                                  style={{ background: d ? heatColor(heatmapUnit === 'eur' ? d.savings : d.spreadCt) : '#f9fafb' }}
-                                  title={d ? `${mil.toLocaleString()} km, ${pi}x/wk, ${d.kwhPerSession} kWh/session → ${d.savings.toFixed(1)} EUR/yr · ${d.spreadCt.toFixed(1)} ct/kWh` : ''}>
-                                  <span className={d && (heatmapUnit === 'eur' ? d.savings : d.spreadCt) / maxVal > 0.7 ? 'text-white' : 'text-gray-700'}>
-                                    {d ? (heatmapUnit === 'eur' ? d.savings.toFixed(0) : d.spreadCt.toFixed(1)) : '-'}
-                                  </span>
-                                </div>
-                              </td>
-                            )
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="flex justify-end mt-4 px-2">
-                    <span className="text-[10px] text-gray-400 font-medium">Your profile highlighted · last 12 months</span>
-                  </div>
-                </div>
-
-              </div>
-            </CardContent>
-          </Card>
-        )
-      })()}
+      {heatmapData.length > 0 && (
+        <SavingsHeatmap heatmapData={heatmapData} scenario={scenario} setScenario={setScenario} />
+      )}
 
     </div>
   )
