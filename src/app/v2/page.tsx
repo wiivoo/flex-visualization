@@ -13,12 +13,14 @@ function parseScenario(params: URLSearchParams): ChargingScenario {
     const v = Number(params.get(key))
     return isNaN(v) || v === 0 ? fallback : v
   }
+  const mode = params.get('mode')
   return {
     ...DEFAULT_SCENARIO,
     yearlyMileageKm: get('mileage', DEFAULT_SCENARIO.yearlyMileageKm),
     weeklyPlugIns:   get('plugins', DEFAULT_SCENARIO.weeklyPlugIns),
     plugInTime:      get('plugin_time', DEFAULT_SCENARIO.plugInTime),
     departureTime:   get('departure', DEFAULT_SCENARIO.departureTime),
+    chargingMode:    mode === 'fullday' ? 'fullday' : 'overnight',
   }
 }
 
@@ -73,6 +75,7 @@ function V2Inner() {
     p.set('plugins',     String(scenario.weeklyPlugIns))
     p.set('plugin_time', String(scenario.plugInTime))
     p.set('departure',   String(scenario.departureTime))
+    if (scenario.chargingMode === 'fullday') p.set('mode', 'fullday')
     router.replace(`/v2?${p.toString()}`, { scroll: false })
   }, [scenario, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
 
