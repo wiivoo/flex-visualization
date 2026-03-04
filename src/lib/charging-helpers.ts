@@ -11,7 +11,7 @@ export function nextDayStr(dateStr: string): string {
 
 export function fmtDateShort(dateStr: string): string {
   const d = new Date(dateStr + 'T12:00:00Z')
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 /**
@@ -45,6 +45,74 @@ export function computeWindowSavings(
   const bAvg = bCount > 0 ? bSum / bCount : 0
   const oAvg = oCount > 0 ? oSum / oCount : 0
   return { bAvg, oAvg, savingsEur: (bAvg - oAvg) * energyPerSession / 100 }
+}
+
+/* ── Spread Indicator Types & Helpers ── */
+
+export interface SpreadResult {
+  marketSpreadCtKwh: number       // max − min in ct/kWh
+  capturableSavingsCtKwh: number  // baseline avg − optimized avg in ct/kWh
+  capturableSavingsEur: number    // baseline cost − optimized cost (EUR)
+  minPriceCtKwh: number
+  maxPriceCtKwh: number
+  cheapestHour: string            // "HH:00" label of cheapest slot
+  expensiveHour: string           // "HH:00" label of most expensive slot
+  cheapestDate?: string           // YYYY-MM-DD (for multi-day windows)
+  expensiveDate?: string          // YYYY-MM-DD (for multi-day windows)
+  hoursInWindow: number
+}
+
+/** Compute market spread + capturable savings for a price window */
+export function computeSpread(
+  windowPrices: HourlyPrice[],
+  energyPerSession: number,
+  chargePowerKw: number,
+): SpreadResult | null {
+  if (windowPrices.length < 2) return null
+  const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+  const cheapest = sorted[0]
+  const expensive = sorted[sorted.length - 1]
+  const { bAvg, oAvg, savingsEur } = computeWindowSavings(windowPrices, energyPerSession, chargePowerKw, 1)
+  return {
+    marketSpreadCtKwh: Math.round((expensive.priceCtKwh - cheapest.priceCtKwh) * 100) / 100,
+    capturableSavingsCtKwh: Math.round((bAvg - oAvg) * 100) / 100,
+    capturableSavingsEur: Math.round(savingsEur * 1000) / 1000,
+    minPriceCtKwh: cheapest.priceCtKwh,
+    maxPriceCtKwh: expensive.priceCtKwh,
+    cheapestHour: `${String(cheapest.hour).padStart(2, '0')}:00`,
+    expensiveHour: `${String(expensive.hour).padStart(2, '0')}:00`,
+    cheapestDate: cheapest.date,
+    expensiveDate: expensive.date,
+    hoursInWindow: windowPrices.length,
+  }
+}
+
+/** Build multi-day price window from hourlyPrices between startDate plugInTime → endDate departureTime */
+export function buildMultiDayWindow(
+  hourlyPrices: HourlyPrice[],
+  startDate: string,
+  endDate: string,
+  plugInTime: number,
+  departureTime: number,
+): HourlyPrice[] {
+  return hourlyPrices.filter(p => {
+    if (p.date === startDate) return p.hour >= plugInTime
+    if (p.date === endDate) return p.hour < departureTime
+    if (p.date > startDate && p.date < endDate) return true
+    return false
+  })
+}
+
+/** Add N days to a date string */
+export function addDaysStr(dateStr: string, days: number): string {
+  const d = new Date(dateStr + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+/** Get day-of-week for a date string (0=Sun, 5=Fri, 6=Sat) */
+export function getDow(dateStr: string): number {
+  return new Date(dateStr + 'T12:00:00Z').getUTCDay()
 }
 
 /** Build overnight window prices for a given date pair */

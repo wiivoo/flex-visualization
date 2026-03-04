@@ -6,13 +6,12 @@ import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger }
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, totalWeeklyPlugIns, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
-import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows } from '@/lib/charging-helpers'
+import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr } from '@/lib/charging-helpers'
 import { MiniCalendar } from '@/components/v2/MiniCalendar'
 import { SessionCostCard } from '@/components/v2/SessionCostCard'
 import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
-import { SavingsHeatmap } from '@/components/v2/SavingsHeatmap'
+// Disabled for performance: SavingsHeatmap, FleetPortfolioCard, SpreadIndicatorsCard, FlexibilityDemoChart
 import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
-import { FleetPortfolioCard } from '@/components/v2/FleetPortfolioCard'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
@@ -46,10 +45,10 @@ const PLUGIN_TIME_DIST = [
 ]
 const MAX_PLUGIN_PCT = 27
 const PLUGIN_HOUR_MIN = 14
-const PLUGIN_HOUR_MAX = 22
+const PLUGIN_HOUR_MAX = 23
 
 // Chart margins — passed to Recharts (actual plot area measured from DOM)
-const CHART_MARGIN = { top: 42, right: 15, bottom: 25, left: 50 }
+const CHART_MARGIN = { top: 42, right: 30, bottom: 25, left: 50 }
 
 interface PriceData {
   hourly: HourlyPrice[]
@@ -84,10 +83,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   const sessionH = Math.floor(sessionMinutes / 60)
   const sessionM = sessionMinutes % 60
   const sessionLabel = sessionH > 0 ? `${sessionH}h ${sessionM > 0 ? `${sessionM}m` : ''}` : `${sessionM}m`
-  // Overnight window: spans midnight (plugInTime evening → departureTime morning)
-  const windowHours = scenario.plugInTime < scenario.departureTime
-    ? scenario.departureTime - scenario.plugInTime
-    : (24 - scenario.plugInTime) + scenario.departureTime
+  // Window duration depends on mode
+  const windowHours = scenario.chargingMode === 'threeday'
+    ? (24 - scenario.plugInTime) + 48 + scenario.departureTime  // day1 remaining + 2 full days + day3 until departure
+    : scenario.chargingMode === 'fullday'
+      ? (24 - scenario.plugInTime) + scenario.departureTime  // day1 remaining + day2 until departure
+      : scenario.plugInTime < scenario.departureTime
+        ? scenario.departureTime - scenario.plugInTime
+        : (24 - scenario.plugInTime) + scenario.departureTime
   const flexibilityHours = windowHours - sessionHoursNeeded
   const baselineEndHour = (scenario.plugInTime + sessionHoursNeeded) % 24
 
@@ -100,11 +103,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   const date1 = prices.selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
+  const date3 = date2 ? nextDayStr(date2) : ''
+  const date4 = date3 ? nextDayStr(date3) : ''
+  const isThreeDay = scenario.chargingMode === 'threeday'
 
   // ── Fetch renewable generation share when date changes ──
   useEffect(() => {
     if (!date1) return
-    const dates = [date1, nextDayStr(date1)]
+    const dates = isThreeDay
+      ? [date1, date2, date3, date4].filter(Boolean)
+      : [date1, date2].filter(Boolean)
     const controller = new AbortController()
     Promise.all(
       dates.map(d =>
@@ -139,6 +147,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // SMARD filter 4169 provides real 15-min day-ahead prices; hourly = avg of 4 QH values
   const isQH = resolution === 'quarterhour'
   const chartPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+  const hasDate3Data = date3 ? chartPrices.some(p => p.date === date3) : false
+
+  // ── Auto-fallback: if 3-day mode but no date3 data, switch to fullday ──
+  useEffect(() => {
+    if (isThreeDay && !hasDate3Data && chartPrices.length > 0) {
+      setScenario({ ...scenario, chargingMode: 'fullday', departureTime: scenario.plugInTime })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isThreeDay, hasDate3Data, chartPrices.length])
 
   // Detect whether QH data for the chart window is synthesized (hourly × 4) vs real SMARD QH.
   // The chart spans TWO days (date1 evening → date2 morning), so both must have real QH data.
@@ -159,10 +176,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     return checkDate(date1) || checkDate(date2)
   }, [prices.hourlyQH, date1, date2])
 
-  const isFullDay = scenario.chargingMode === 'fullday'
+  const isFullDay = scenario.chargingMode === 'fullday' || scenario.chargingMode === 'threeday'
 
   // ── Build chart data (overnight two-day or full-day single) ──
-  const { chartData, sessionCost, rollingAvgSavings, monthlySavings } = useMemo(() => {
+  const { chartData, sessionCost } = useMemo(() => {
     if (chartPrices.length === 0 || !date1) {
       return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
     }
@@ -173,139 +190,146 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const rollSlotsPerHour = 1
     const rollMinHours = Math.ceil(energyPerSession / chargePowerKw)
 
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number; baselinePrice: number | null; optimizedPrice: number | null; isInWindow: boolean; renewableShare?: number }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
 
-    if (isFullDay) {
-      // ── Full Day: TWO complete days (0:00–23:59 each), max 24h window ──
-      const day1AllPrices = [...chartPrices.filter(p => p.date === date1)]
-        .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
-      const day2AllPrices = [...chartPrices.filter(p => p.date === date2)]
-        .sort((a, b) => a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
-      const merged = [...day1AllPrices, ...day2AllPrices]
-      if (merged.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
+    // ── Unified chart data: all modes start at 14:00 of selected date ──
+    // Overnight: 14:00 day1 → 10:00 day2 (~20h)
+    // Full Day:  14:00 day1 → 24:00 day2  (~34h)
+    // 3 Days:    14:00 day1 → 24:00 day4  (~82h)
+    const CHART_START_HOUR = 14
+    const endHour = isFullDay ? 24 : 10 // fullday/3day go to end of last date, overnight ends at 10:00
+    // Last date in the chart window
+    const lastDate = isThreeDay ? date4 : date2
+    // Departure date for optimization window
+    const depDate = isThreeDay ? date4 : date2
+    // All dates that contribute data
+    const allDates = isThreeDay
+      ? [date1, date2, date3, date4]
+      : [date1, date2]
 
-      // Window: plugInTime on day1 → departureTime on day2 (max 24h enforced by departure ≤ plugInTime)
-      const windowPrices = merged.filter(p => {
-        if (p.date === date1) return p.hour >= scenario.plugInTime
-        if (p.date === date2) return p.hour < scenario.departureTime
-        return false
-      })
-      const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
-      const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-      const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+    // Collect price data within the chart window
+    const merged: HourlyPrice[] = []
+    for (const p of chartPrices) {
+      if (!allDates.includes(p.date)) continue
+      if (p.date === date1 && p.hour < CHART_START_HOUR) continue
+      if (p.date === lastDate && p.hour >= endHour) continue
+      merged.push(p)
+    }
+    // Sort by date then time
+    merged.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1
+      return a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0)
+    })
 
-      let idx = 0
-      data = merged.map(p => {
-        const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
-        const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
-        const isInWindow = (p.date === date1 && p.hour >= scenario.plugInTime) ||
-                           (p.date === date2 && p.hour < scenario.departureTime)
-        const min = p.minute ?? 0
-        return {
-          idx: idx++,
-          hour: p.hour,
-          minute: min,
-          date: p.date,
-          label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
-          price: ct,
-          baselinePrice: baselineKeys.has(key) ? ct : null,
-          optimizedPrice: optimizedKeys.has(key) ? ct : null,
-          isInWindow,
-          renewableShare: renewableData.get(`${p.date}-${p.hour}`),
+    // Pad missing slots to ensure equal-width days and smooth curves
+    const step = isQH ? 15 : 60
+    const padded: HourlyPrice[] = []
+    const existingMap = new Map<string, HourlyPrice>()
+    for (const p of merged) existingMap.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p)
+
+    let lastKnown: HourlyPrice | null = null
+    for (const d of allDates) {
+      const startMin = d === date1 ? CHART_START_HOUR * 60 : 0
+      const endMin = d === lastDate ? endHour * 60 : 24 * 60
+      for (let m = startMin; m < endMin; m += step) {
+        const hour = Math.floor(m / 60)
+        const minute = m % 60
+        const key = `${d}-${hour}-${minute}`
+        const found = existingMap.get(key)
+        if (found) {
+          padded.push(found)
+          lastKnown = found
+        } else if (lastKnown) {
+          padded.push({ ...lastKnown, hour, minute, date: d, isProjected: true })
         }
-      })
-
-      const bPts = data.filter(d => d.baselinePrice !== null)
-      const oPts = data.filter(d => d.optimizedPrice !== null)
-      const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.price, 0) / bPts.length : 0
-      const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.price, 0) / oPts.length : 0
-      cost = {
-        baselineAvgCt: Math.round(bAvg * 100) / 100,
-        optimizedAvgCt: Math.round(oAvg * 100) / 100,
-        baselineEur: Math.round(bAvg * energyPerSession) / 100,
-        optimizedEur: Math.round(oAvg * energyPerSession) / 100,
-        savingsEur: Math.round((bAvg - oAvg) * energyPerSession) / 100,
-        kwh: energyPerSession,
-        baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
-        optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
-        baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
-          label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
-          ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
-        })),
-        optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
-          .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
-          .map(p => ({
-            label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
-            ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
-          })),
-      }
-    } else {
-      // ── Overnight: two-day window day1 14:00 → day2 10:00 ──
-      const day1Prices = chartPrices.filter(p => p.date === date1 && p.hour >= 14)
-      const day2Prices = chartPrices.filter(p => p.date === date2 && p.hour <= 10)
-      const merged = [...day1Prices, ...day2Prices]
-      if (merged.length === 0) return { chartData: [], sessionCost: null, rollingAvgSavings: 0, monthlySavings: 0 }
-
-      const windowPrices = merged.filter(p => {
-        if (p.date === date1) return p.hour >= scenario.plugInTime
-        if (p.date === date2) return p.hour < scenario.departureTime
-        return false
-      })
-      const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
-      const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
-      const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
-
-      let idx = 0
-      data = merged.map(p => {
-        const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
-        const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
-        const isInWindow = (p.date === date1 && p.hour >= scenario.plugInTime) ||
-                           (p.date === date2 && p.hour < scenario.departureTime)
-        const min = p.minute ?? 0
-        return {
-          idx: idx++,
-          hour: p.hour,
-          minute: min,
-          date: p.date,
-          label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
-          price: ct,
-          baselinePrice: baselineKeys.has(key) ? ct : null,
-          optimizedPrice: optimizedKeys.has(key) ? ct : null,
-          isInWindow,
-          renewableShare: renewableData.get(`${p.date}-${p.hour}`),
-        }
-      })
-
-      const bPts = data.filter(d => d.baselinePrice !== null)
-      const oPts = data.filter(d => d.optimizedPrice !== null)
-      const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.price, 0) / bPts.length : 0
-      const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.price, 0) / oPts.length : 0
-      cost = {
-        baselineAvgCt: Math.round(bAvg * 100) / 100,
-        optimizedAvgCt: Math.round(oAvg * 100) / 100,
-        baselineEur: Math.round(bAvg * energyPerSession) / 100,
-        optimizedEur: Math.round(oAvg * energyPerSession) / 100,
-        savingsEur: Math.round((bAvg - oAvg) * energyPerSession) / 100,
-        kwh: energyPerSession,
-        baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
-        optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
-        baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
-          label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
-          ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
-        })),
-        optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
-          .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
-          .map(p => ({
-            label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
-            ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
-          })),
       }
     }
 
-    // ── 365-day rolling average ──
+    if (padded.length === 0) return { chartData: [], sessionCost: null }
+
+    // Optimization window: plugInTime on day1 → departureTime on depDate
+    const windowPrices = padded.filter(p => {
+      if (p.date === date1) return p.hour >= scenario.plugInTime
+      if (p.date === depDate) return p.hour < scenario.departureTime
+      if (p.date > date1 && p.date < depDate) return true
+      return false
+    })
+    const baselineKeys = new Set(windowPrices.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+    const sortedByPrice = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+    const optimizedKeys = new Set(sortedByPrice.slice(0, slotsNeeded).map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+
+    let idx = 0
+    data = padded.map(p => {
+      const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
+      const ct = Math.round((p.priceEurMwh / 10) * 100) / 100
+      const isInWindow = windowPrices.length > 0 && (
+        (p.date === date1 && p.hour >= scenario.plugInTime) ||
+        (p.date === depDate && p.hour < scenario.departureTime) ||
+        (p.date > date1 && p.date < depDate)
+      )
+      const min = p.minute ?? 0
+      const projected = !!p.isProjected
+      return {
+        idx: idx++,
+        hour: p.hour,
+        minute: min,
+        date: p.date,
+        label: `${String(p.hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+        price: projected ? null : ct,
+        priceForecast: projected ? ct : null,
+        priceVal: ct,
+        baselinePrice: baselineKeys.has(key) ? ct : null,
+        optimizedPrice: optimizedKeys.has(key) ? ct : null,
+        isInWindow,
+        isProjected: projected,
+        renewableShare: renewableData.get(`${p.date}-${p.hour}`),
+      }
+    })
+    // Bridge: give the last real point a priceForecast value so the dashed line connects seamlessly
+    const firstFcIdx = data.findIndex(d => d.isProjected)
+    if (firstFcIdx > 0 && data[firstFcIdx - 1].price !== null) {
+      data[firstFcIdx - 1].priceForecast = data[firstFcIdx - 1].price
+    }
+
+    const bPts = data.filter(d => d.baselinePrice !== null)
+    const oPts = data.filter(d => d.optimizedPrice !== null)
+    const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.priceVal, 0) / bPts.length : 0
+    const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.priceVal, 0) / oPts.length : 0
+    cost = {
+      baselineAvgCt: Math.round(bAvg * 100) / 100,
+      optimizedAvgCt: Math.round(oAvg * 100) / 100,
+      baselineEur: Math.round(bAvg * energyPerSession) / 100,
+      optimizedEur: Math.round(oAvg * energyPerSession) / 100,
+      savingsEur: Math.round((bAvg - oAvg) * energyPerSession) / 100,
+      kwh: energyPerSession,
+      baselineMidIdx: bPts.length > 0 ? bPts[Math.floor(bPts.length / 2)].idx : 0,
+      optimizedMidIdx: oPts.length > 0 ? oPts[Math.floor(oPts.length / 2)].idx : 0,
+      baselineHours: windowPrices.slice(0, slotsNeeded).map(p => ({
+        label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
+        ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+      })),
+      optimizedHours: [...sortedByPrice.slice(0, slotsNeeded)]
+        .sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+        .map(p => ({
+          label: `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`,
+          ct: Math.round((p.priceEurMwh / 10) * 100) / 100,
+        })),
+    }
+
+    return { chartData: data, sessionCost: cost }
+  }, [chartPrices, date1, date2, date3, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.chargingMode, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData])
+
+  // ── 365-day rolling average — expensive scan over all hourly prices ──
+  // Uses deferred plug-in/departure values so it doesn't block drag interactions
+  const { rollingAvgSavings, monthlySavings } = useMemo(() => {
+    if (!date1 || prices.hourly.length === 0) return { rollingAvgSavings: 0, monthlySavings: 0 }
+    const rollKwhPerSlot = chargePowerKw
+    const rollSlotsPerHour = 1
+    const rollMinHours = Math.ceil(energyPerSession / chargePowerKw)
+
     const endDate = date1
     const startRoll = new Date(new Date(endDate + 'T12:00:00Z').getTime() - 365 * 86400000).toISOString().slice(0, 10)
     const byDate = new Map<string, HourlyPrice[]>()
@@ -316,18 +340,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         byDate.set(p.date, arr)
       }
     }
-    // Separate weekday vs weekend savings for accurate weighting
     let wdSavings = 0, wdDays = 0, weSavings = 0, weDays = 0
     for (const [dDate, dPrices] of byDate) {
       const nd = nextDayStr(dDate)
       const nPrices = byDate.get(nd)
       if (!nPrices || nPrices.length === 0) continue
-      const eve = dPrices.filter(p => p.hour >= scenario.plugInTime)
-      const morn = nPrices.filter(p => p.hour < scenario.departureTime)
+      const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
+      const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
       const win = [...eve, ...morn]
       if (win.length < rollMinHours) continue
       const { savingsEur } = computeWindowSavings(win, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
-      // Day-of-week of plug-in date (0=Sun, 6=Sat)
       const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
       const isWeekend = dow === 0 || dow === 6
       if (isWeekend) { weSavings += savingsEur; weDays++ }
@@ -335,13 +357,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     }
     const avgWdSavings = wdDays > 0 ? wdSavings / wdDays : 0
     const avgWeSavings = weDays > 0 ? weSavings / weDays : 0
-    // Weekly savings = (weekday avg × weekday plug-ins) + (weekend avg × weekend plug-ins)
-    const weeklySavings = avgWdSavings * scenario.weekdayPlugIns + avgWeSavings * scenario.weekendPlugIns
+    const weeklySavings = avgWdSavings * deferredWeekdayPlugIns + avgWeSavings * deferredWeekendPlugIns
     const mSav = Math.round(weeklySavings * (30.44 / 7) * 100) / 100
     const rollSav = Math.round(weeklySavings * 52 * 100) / 100
-
-    return { chartData: data, sessionCost: cost, rollingAvgSavings: rollSav, monthlySavings: mSav }
-  }, [chartPrices, prices.hourly, date1, date2, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.weekdayPlugIns, scenario.weekendPlugIns, weeklyPlugIns, scenario.chargingMode, isQH, isFullDay, chargePowerKw, renewableData])
+    return { rollingAvgSavings: rollSav, monthlySavings: mSav }
+  }, [prices.hourly, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw])
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -372,6 +392,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   }, [plotArea])
 
   // ── Drag logic ──
+  // Track last drag hour to avoid redundant state updates
+  const lastDragHour = useRef<number>(-1)
+
   const handleDrag = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     if (!isDragging || !chartRef.current || chartData.length === 0 || !plotArea) return
     const rect = chartRef.current.getBoundingClientRect()
@@ -382,10 +405,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const point = chartData[dataIdx]
     if (!point) return
 
+    // Skip if same hour as last drag event (avoids redundant re-renders)
+    if (point.hour === lastDragHour.current) return
+    lastDragHour.current = point.hour
+
     if (isDragging === 'arrival') {
       if (isFullDay) {
         if (point.date === date1) {
-          // Clamp departure to ≤ new plugInTime to enforce max 24h window
           const newDeparture = Math.min(scenario.departureTime, point.hour)
           setScenario({ ...scenario, plugInTime: point.hour, departureTime: newDeparture })
         }
@@ -395,9 +421,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         }
       }
     } else if (isDragging === 'departure') {
+      const depDate = isThreeDay ? date4 : date2
       if (isFullDay) {
-        // Max 24h: departure must be ≤ plugInTime on day2
-        if (point.date === date2 && point.hour <= scenario.plugInTime) {
+        if (point.date === depDate) {
           setScenario({ ...scenario, departureTime: point.hour })
         }
       } else {
@@ -410,20 +436,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   useEffect(() => {
     if (!isDragging) return
-    const onUp = () => setIsDragging(null)
+    const onUp = () => { setIsDragging(null); lastDragHour.current = -1 }
     window.addEventListener('mouseup', onUp)
     window.addEventListener('touchend', onUp)
     return () => { window.removeEventListener('mouseup', onUp); window.removeEventListener('touchend', onUp) }
   }, [isDragging])
 
-  // Key indices
+  // Key indices — departure date depends on mode
+  const departureDate = isThreeDay ? date4 : date2
   const arrivalIdx = chartData.findIndex(d => d.date === date1 && d.hour === scenario.plugInTime)
-  const departureIdx = chartData.findIndex(d => d.date === date2 && d.hour === scenario.departureTime)
+  const departureIdx = chartData.findIndex(d => d.date === departureDate && d.hour === scenario.departureTime)
   const N = chartData.length
 
   const arrivalLabel = `${String(scenario.plugInTime).padStart(2, '0')}:00`
   const departureLabel = `${String(scenario.departureTime).padStart(2, '0')}:00`
   const midnightIdx = chartData.findIndex(d => d.date === date2 && d.hour === 0)
+  const hasForecastData = chartData.some(d => d.isProjected)
+  const forecastStartIdx = hasForecastData ? chartData.findIndex(d => d.isProjected) : -1
 
   // Compute charging blocks (contiguous hour ranges) for clear visualization
   // Band for hour at index i spans [i, i+1], clamped to [arrivalIdx, departureIdx]
@@ -604,11 +633,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
-    const prices = chartData.map(d => d.price)
+    const prices = chartData.map(d => d.priceVal)
     const min = Math.min(...prices)
     const max = Math.max(...prices)
-    const pad = (max - min) * 0.05
-    return { min: min - pad, max: max + pad }
+    const range = max - min || 1
+    // Top padding 15% — keeps curve clear of date labels overlay
+    // Bottom padding 5%
+    return { min: min - range * 0.05, max: max + range * 0.15 }
   }, [chartData])
 
   const priceToY = (price: number) => {
@@ -619,32 +650,74 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   const mileageToPercent = (km: number) => ((km - SLIDER_MIN) / SLIDER_RANGE) * 100
 
-  // X-axis tick
-  // Explicit tick values — one per data point so Recharts places them at exact linear positions
-  const xTicks = useMemo(() => chartData.map(d => d.idx), [chartData])
+  // X-axis tick — adaptive label interval based on chart width
+  // Pre-compute midnight boundary indices (O(1) lookup)
+  const midnightIdxSet = useMemo(() => {
+    const set = new Set<number>()
+    for (const d of chartData) {
+      if (d.hour === 0 && d.minute === 0 && d.idx > 0) set.add(d.idx)
+    }
+    return set
+  }, [chartData])
+
+  // Compute label interval dynamically: ensure labels are ≥60px apart
+  // A "HH:00" label is ~40px wide at 12px font, so 60px gives comfortable spacing
+  const labelInterval = useMemo(() => {
+    const chartWidth = plotArea?.width ?? 800
+    const totalHours = chartData.length / (isQH ? 4 : 1)
+    const pxPerHour = chartWidth / Math.max(totalHours, 1)
+    const minPxBetweenLabels = 60
+    // Round up to a "nice" interval: 2, 3, 4, 6, 8, 12
+    const rawInterval = Math.ceil(minPxBetweenLabels / pxPerHour)
+    const niceIntervals = [2, 3, 4, 6, 8, 12]
+    return niceIntervals.find(n => n >= rawInterval) ?? 12
+  }, [plotArea?.width, chartData.length, isQH])
+
+  // Only emit ticks that will render (label positions + boundaries)
+  const xTicks = useMemo(() => {
+    return chartData
+      .filter(d => d.minute === 0 && (midnightIdxSet.has(d.idx) || d.hour % labelInterval === 0))
+      .map(d => d.idx)
+  }, [chartData, midnightIdxSet, labelInterval])
 
   const renderXTick = useCallback((props: { x: number; y: number; payload: { value: number } }) => {
     const { x, y, payload } = props
     const pt = chartData[payload.value]
     if (!pt) return <g />
-    // For QH: tick line at every :00, label every 2h (overnight) or 4h (full day)
-    // Full day spans 48 data points → label every 4h gives 12 labels total (readable)
-    const isOnHour = pt.minute === 0
-    const showTick = isQH ? isOnHour : true
-    const labelInterval = isFullDay ? 4 : 2
-    const showLabel = isOnHour && pt.hour % labelInterval === 0
-    if (!showTick) return <g />
+    const isDateBoundary = midnightIdxSet.has(pt.idx)
+
+    // Suppress hour labels within ±1 interval of a midnight boundary to prevent overlap
+    let isNearBoundary = false
+    if (!isDateBoundary && pt.hour % labelInterval === 0) {
+      const step = isQH ? 4 : 1
+      for (const midIdx of midnightIdxSet) {
+        if (Math.abs(pt.idx - midIdx) < step * labelInterval) { isNearBoundary = true; break }
+      }
+    }
+
+    const showLabel = pt.hour % labelInterval === 0 && !isDateBoundary && !isNearBoundary
+    const fontSize = labelInterval >= 6 ? 10 : 12
     return (
       <g transform={`translate(${x},${y})`}>
-        <line x1={0} y1={0} x2={0} y2={showLabel ? 6 : 4} stroke="#D1D5DB" strokeWidth={1} />
+        <line x1={0} y1={0} x2={0} y2={isDateBoundary ? 8 : 6} stroke={isDateBoundary ? '#6B7280' : '#D1D5DB'} strokeWidth={isDateBoundary ? 1.5 : 1} />
         {showLabel && (
-          <text x={0} y={0} dy={18} textAnchor="middle" fill="#6B7280" fontSize={12} fontWeight={500}>
+          <text x={0} y={0} dy={18} textAnchor="middle" fill="#6B7280" fontSize={fontSize} fontWeight={500}>
             {`${String(pt.hour).padStart(2, '0')}:00`}
           </text>
         )}
+        {isDateBoundary && (
+          <>
+            <text x={0} y={0} dy={20} textAnchor="middle" fill="#374151" fontSize={fontSize} fontWeight={700}>
+              00:00
+            </text>
+            <text x={0} y={0} dy={34} textAnchor="middle" fill="#6B7280" fontSize={Math.max(fontSize - 1, 9)} fontWeight={600}>
+              {pt.date.slice(5)}
+            </text>
+          </>
+        )}
       </g>
     )
-  }, [chartData, isQH, isFullDay])
+  }, [chartData, midnightIdxSet, labelInterval, isQH])
 
   return (
     <div className="space-y-8">
@@ -764,14 +837,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               </div>
               <div>
                 <input type="range"
-                  min={isFullDay ? 0 : PLUGIN_HOUR_MIN}
-                  max={isFullDay ? 23 : PLUGIN_HOUR_MAX}
+                  min={PLUGIN_HOUR_MIN}
+                  max={PLUGIN_HOUR_MAX}
+                  // Plug-in hour: full range for fullday/3-day, 14-22 for overnight
                   step={1}
                   value={scenario.plugInTime}
                   onChange={(e) => {
                     const newPlugIn = Number(e.target.value)
-                    const newDeparture = isFullDay ? Math.min(scenario.departureTime, newPlugIn) : scenario.departureTime
-                    setScenario({ ...scenario, plugInTime: newPlugIn, departureTime: newDeparture })
+                    // For fullday/3day: departure is on a different date, no clamping needed
+                    setScenario({ ...scenario, plugInTime: newPlugIn })
                   }}
                   aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
                   className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
@@ -862,37 +936,44 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             <div className="flex items-center justify-between">
               <div>
                 <CardTitle className="text-base font-bold text-[#313131]">
-                  {isFullDay ? 'Full Day Price Curve' : 'Overnight Price Curve'}
+                  {isThreeDay ? '3-Day Price Curve' : isFullDay ? 'Full Day Price Curve' : 'Overnight Price Curve'}
                 </CardTitle>
                 <p className="text-[11px] text-gray-400 mt-0.5">
-                  {isFullDay
-                    ? `Two days · plug-in ${arrivalLabel} → departure ${departureLabel} · max 24h window`
-                    : isQH
-                      ? isQHSynthesized
-                        ? 'Hourly avg (real 15-min not yet published by SMARD)'
-                        : 'Day-Ahead 15-min Auction'
-                      : 'Day-Ahead Hourly Auction'}
+                  {isThreeDay
+                    ? `${fmtDateShort(date1)} ${arrivalLabel} → ${fmtDateShort(date4)} 24:00`
+                    : isFullDay
+                      ? `${fmtDateShort(date1)} ${arrivalLabel} → ${fmtDateShort(date2)} 24:00`
+                      : `${fmtDateShort(date1)} evening → ${fmtDateShort(date2)} morning`}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                   <button onClick={() => {
-                    // Clamp plug-in and departure to overnight-valid ranges when switching back
+                    // Overnight default: plugIn 18:00, departure next day 06:00 (12h window)
                     const newPlugIn = Math.max(PLUGIN_HOUR_MIN, Math.min(PLUGIN_HOUR_MAX, scenario.plugInTime))
-                    const newDeparture = Math.max(4, Math.min(10, scenario.departureTime))
-                    setScenario({ ...scenario, chargingMode: 'overnight', plugInTime: newPlugIn, departureTime: newDeparture })
+                    const depDefault = (newPlugIn + 12) % 24 // 18→6, 20→8, 22→10
+                    setScenario({ ...scenario, chargingMode: 'overnight', plugInTime: newPlugIn, departureTime: depDefault })
                   }}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     Overnight
                   </button>
                   <button onClick={() => {
-                    // Ensure departure ≤ plugInTime (max 24h window) when switching to full day
-                    const newDeparture = Math.min(scenario.departureTime, scenario.plugInTime)
-                    setScenario({ ...scenario, chargingMode: 'fullday', departureTime: newDeparture })
+                    // Full day default: departure = same hour next day (24h window)
+                    setScenario({ ...scenario, chargingMode: 'fullday', departureTime: scenario.plugInTime })
                   }}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${scenario.chargingMode === 'fullday' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     Full Day
+                  </button>
+                  <button onClick={() => {
+                    if (!hasDate3Data) return
+                    // 3 days default: departure = same hour 3 days later (72h window)
+                    setScenario({ ...scenario, chargingMode: 'threeday', departureTime: scenario.plugInTime })
+                  }}
+                    disabled={!hasDate3Data}
+                    title={!hasDate3Data ? 'No price data available for day 3' : '3-day optimization window'}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${scenario.chargingMode === 'threeday' ? 'bg-white text-[#313131] shadow-sm' : !hasDate3Data ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-gray-600'}`}>
+                    3 Days
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -914,14 +995,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                           ≈ hourly avg
                         </span>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-[260px] text-left space-y-1.5 p-3">
-                        <p className="font-semibold text-[12px]">15-min data not yet published</p>
+                      <TooltipContent side="bottom" className="max-w-[220px] text-left p-3">
                         <p className="text-[11px] text-gray-500 leading-relaxed">
-                          SMARD releases quarterhour prices with a 1–2 day delay.
-                          The chart currently shows each hourly price repeated × 4 — no intra-hour variation.
+                          15-min data is missing — used hourly average
                         </p>
-                        <p className="text-[11px] text-gray-400 font-mono">
-                          node scripts/download-smard.mjs
+                      </TooltipContent>
+                    </UITooltip>
+                  </TooltipProvider>
+                )}
+                {hasForecastData && (
+                  <TooltipProvider delayDuration={100}>
+                    <UITooltip>
+                      <TooltipTrigger asChild>
+                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 cursor-help select-none">
+                          Forecast
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="max-w-[260px] text-left space-y-1.5 p-3">
+                        <p className="font-semibold text-[12px]">Contains forecast prices</p>
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          The dashed portion of the chart uses predicted prices from EnergyForecast.de,
+                          not yet published EPEX Spot auction results. Actual prices may differ.
                         </p>
                       </TooltipContent>
                     </UITooltip>
@@ -961,13 +1055,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       <stop offset="0%" stopColor="#22C55E" stopOpacity={0.10} />
                       <stop offset="100%" stopColor="#22C55E" stopOpacity={0.02} />
                     </linearGradient>
+                    <linearGradient id="forecastGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#D97706" stopOpacity={0.08} />
+                      <stop offset="100%" stopColor="#D97706" stopOpacity={0} />
+                    </linearGradient>
                   </defs>
 
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
 
                   <XAxis dataKey="idx" type="number" domain={[0, Math.max(chartData.length - 1, 1)]}
                     ticks={xTicks} tick={renderXTick as never} tickLine={false}
-                    stroke="#9CA3AF" interval={0} height={40}
+                    stroke="#9CA3AF" interval={0} height={midnightIdxSet.size > 0 ? 48 : 32}
                     allowDecimals={false} />
                   <YAxis yAxisId="left" tick={{ fontSize: 12, fontWeight: 500 }} stroke="#9CA3AF"
                     label={{ value: 'ct/kWh Day-Ahead Spot Price', angle: -90, position: 'insideLeft', offset: -8, style: { fontSize: 11, fill: '#6B7280', fontWeight: 400 } }} />
@@ -984,7 +1082,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       return (
                         <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px]">
                           <p className="text-gray-500 text-xs mb-1">{fmtDateShort(d.date)} {d.label}</p>
-                          <p className="font-semibold tabular-nums">{d.price.toFixed(2)} ct/kWh</p>
+                          <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} ct/kWh{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
                           {d.baselinePrice !== null && (
                             <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
                               <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Unmanaged charging
@@ -1007,8 +1105,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     if (arrivalIdx < 0) return null
                     const windowPts = chartData.filter(d => d.isInWindow)
                     if (windowPts.length === 0) return null
-                    const arrivalPrice = chartData[arrivalIdx]?.price
-                    const lowestWindowPrice = Math.min(...windowPts.map(d => d.price))
+                    const arrivalPrice = chartData[arrivalIdx]?.priceVal
+                    const lowestWindowPrice = Math.min(...windowPts.map(d => d.priceVal))
                     if (arrivalPrice === undefined || arrivalPrice <= lowestWindowPrice) return null
                     return (
                       <>
@@ -1048,6 +1146,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     dot={isQH ? { r: 1.5, fill: '#94A3B8', stroke: 'none' } : false}
                     activeDot={isQH ? { r: 4, fill: '#94A3B8', stroke: '#fff', strokeWidth: 2 } : undefined}
                     connectNulls />
+                  {/* Forecast price — dashed amber line + matching area fill */}
+                  {hasForecastData && (
+                    <>
+                      <Area type="monotone" dataKey="priceForecast" yAxisId="left" fill="url(#forecastGrad)" stroke="none" connectNulls={false} />
+                      <Line type="monotone" dataKey="priceForecast" yAxisId="left" stroke="#D97706" strokeWidth={1.5}
+                        strokeDasharray="6 3"
+                        dot={isQH ? { r: 1.5, fill: '#D97706', stroke: 'none' } : false}
+                        connectNulls={false} />
+                    </>
+                  )}
 
                   {/* Baseline dots — red, no connecting line for clarity on non-contiguous hours */}
                   <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isQH ? 2 : 3}
@@ -1059,44 +1167,45 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
-                  {/* Midnight boundary — both modes (overnight and full day both span two days) */}
-                  {midnightIdx >= 0 && (
-                    <ReferenceLine x={midnightIdx} stroke="#D1D5DB" strokeWidth={1.5} strokeDasharray="" />
+                  {/* Forecast tint background */}
+                  {forecastStartIdx >= 0 && (
+                    <ReferenceArea x1={forecastStartIdx} x2={N - 1} yAxisId="left"
+                      fill="#D97706" fillOpacity={0.03} stroke="none" ifOverflow="hidden" />
                   )}
-
-                  {/* Arrival reference line */}
-                  {arrivalIdx >= 0 && (
-                    <ReferenceLine x={arrivalIdx} stroke="#EA1C0A"
-                      strokeWidth={isDragging === 'arrival' ? 4 : 3}
-                      strokeOpacity={isDragging === 'arrival' ? 1 : 0.6} />
-                  )}
-                  {/* Departure reference line — both modes */}
-                  {departureIdx >= 0 && (
-                    <ReferenceLine x={departureIdx} stroke="#2563EB"
-                      strokeWidth={isDragging === 'departure' ? 4 : 3}
-                      strokeOpacity={isDragging === 'departure' ? 1 : 0.6} />
-                  )}
+                  {/* Arrival/departure/midnight lines rendered as HTML overlays below for guaranteed visibility */}
                 </ComposedChart>
               </ResponsiveContainer>
 
-              {/* ── Date labels ── */}
+              {/* ── Date labels — positioned between midnight boundaries ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
-                const midX = midnightIdx >= 0 ? idxToPx(midnightIdx) : plotArea.left + plotArea.width / 2
-                const day1Center = plotArea.left + (midX - plotArea.left) / 2
-                const day2Center = midX + (plotArea.left + plotArea.width - midX) / 2
-                return (
-                  <>
-                    <div className="absolute pointer-events-none z-[6] text-[11px] font-semibold text-gray-400"
-                      style={{ left: day1Center, top: plotArea.top + 6, transform: 'translateX(-50%)' }}>
-                      {fmtDateShort(date1)}
-                    </div>
-                    <div className="absolute pointer-events-none z-[6] text-[11px] font-semibold text-gray-400"
-                      style={{ left: day2Center, top: plotArea.top + 6, transform: 'translateX(-50%)' }}>
-                      {fmtDateShort(date2)}
-                    </div>
-                  </>
-                )
+                const pL = plotArea.left
+                const pR = plotArea.left + plotArea.width
+                // Collect all midnight boundaries
+                const midnights: { date: string; x: number }[] = []
+                for (const midIdx of midnightIdxSet) {
+                  const pt = chartData[midIdx]
+                  if (pt) midnights.push({ date: pt.date, x: idxToPx(midIdx) })
+                }
+                midnights.sort((a, b) => a.x - b.x)
+                // Build day segments: [chartStart, mid1], [mid1, mid2], ..., [midN, chartEnd]
+                const segments: { label: string; center: number }[] = []
+                const edges = [pL, ...midnights.map(m => m.x), pR]
+                // Day labels: date1, then each midnight's date
+                const dayLabels = [date1, ...midnights.map(m => m.date)]
+                for (let i = 0; i < dayLabels.length; i++) {
+                  const left = edges[i]
+                  const right = edges[i + 1] ?? pR
+                  if (right - left > 30) { // only show if segment wide enough
+                    segments.push({ label: fmtDateShort(dayLabels[i]), center: left + (right - left) / 2 })
+                  }
+                }
+                return segments.map((seg, i) => (
+                  <div key={i} className="absolute pointer-events-none z-[6] text-[12px] font-bold text-gray-500"
+                    style={{ left: seg.center, top: plotArea.top + 4, transform: 'translateX(-50%)' }}>
+                    {seg.label}
+                  </div>
+                ))
               })()}
 
               {/* ── Grey overlays OUTSIDE charging window ── */}
@@ -1104,6 +1213,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const aX = arrivalIdx >= 0 ? idxToPx(arrivalIdx) : plotArea.left
                 const dX = departureIdx >= 0 ? idxToPx(departureIdx) : plotArea.left + plotArea.width
+                const fcIdx = forecastStartIdx >= 0 ? idxToPx(forecastStartIdx) : -1
+                // All midnight divider x-positions
+                const midXs = Array.from(midnightIdxSet).map(i => idxToPx(i))
                 return (
                   <>
                     {arrivalIdx > 0 && (
@@ -1113,6 +1225,32 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     {departureIdx >= 0 && departureIdx < N - 1 && (
                       <div className="absolute pointer-events-none z-[5]"
                         style={{ left: dX, width: plotArea.left + plotArea.width - dX, top: plotArea.top, height: plotArea.height, background: 'rgba(148, 163, 184, 0.13)' }} />
+                    )}
+                    {/* Midnight divider lines */}
+                    {midXs.map((mx, i) => (
+                      <div key={`mid-${i}`} className="absolute pointer-events-none z-[7]"
+                        style={{ left: mx, top: plotArea.top, width: 1, height: plotArea.height, background: '#64748b', opacity: 0.4 }} />
+                    ))}
+                    {/* Plug-in line — red */}
+                    {arrivalIdx >= 0 && (
+                      <div className="absolute pointer-events-none z-[8]"
+                        style={{ left: aX - 0.75, top: plotArea.top, width: 1.5, height: plotArea.height, background: '#EA1C0A', opacity: 0.6 }} />
+                    )}
+                    {/* Departure line — blue */}
+                    {departureIdx >= 0 && (
+                      <div className="absolute pointer-events-none z-[8]"
+                        style={{ left: dX - 0.75, top: plotArea.top, width: 1.5, height: plotArea.height, background: '#2563EB', opacity: 0.6 }} />
+                    )}
+                    {/* Forecast start divider — dashed amber with label */}
+                    {fcIdx >= 0 && (
+                      <>
+                        <div className="absolute pointer-events-none z-[7]"
+                          style={{ left: fcIdx, top: plotArea.top, width: 0, height: plotArea.height, borderLeft: '1.5px dashed rgba(217, 119, 6, 0.45)' }} />
+                        <div className="absolute pointer-events-none z-[7] text-[9px] font-semibold text-amber-600"
+                          style={{ left: fcIdx + 4, top: plotArea.top + 2 }}>
+                          Forecast
+                        </div>
+                      </>
                     )}
                   </>
                 )
@@ -1248,17 +1386,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               const smardPageUrl = `https://www.smard.de/home/marktdaten?marketDataAttributes=%7B%22resolution%22:%22hour%22,%22from%22:${ts},%22to%22:${ts + 7 * 86400000},%22moduleIds%22:%5B8004169%5D,%22selectedCategory%22:null,%22activeChart%22:true,%22style%22:%22color%22,%22categoriesModuleOrder%22:%7B%7D,%22region%22:%22DE%22%7D`
               return (
                 <div className="flex items-center gap-3 mt-1 px-1 text-[10px] text-gray-400">
-                  <span>Source:</span>
+                  <span>Source: EPEX Spot DE-LU Day-Ahead via</span>
                   <a href={smardPageUrl} target="_blank" rel="noopener noreferrer"
                     className="hover:text-gray-600 underline underline-offset-2">
-                    SMARD.de — Day-Ahead Prices
+                    SMARD.de
                   </a>
-                  <span className="text-gray-300">·</span>
-                  <span className="italic">
-                    {isFullDay
-                      ? `${date1 && fmtDateShort(date1)} plug-in ${arrivalLabel} → ${date2 && fmtDateShort(date2)} departure ${departureLabel}`
-                      : `${date1 && fmtDateShort(date1)} evening (plug-in) → overnight → ${date2 && fmtDateShort(date2)} morning (departure)`}
-                  </span>
+                  {hasForecastData && (
+                    <>
+                      <span className="text-gray-300">+</span>
+                      <span className="text-amber-500">EnergyForecast.de (forecast)</span>
+                    </>
+                  )}
                 </div>
               )
             })()}
@@ -1293,83 +1431,153 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             <CardContent className="flex-1 overflow-auto">
               <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={true} />
 
-              {/* Spread: arrival price vs. lowest night price */}
+              {/* Spread indicators with min/max and savings */}
               {(() => {
                 if (!date1 || chartData.length === 0) return null
-                const arrivalPt = chartData.find(d => d.date === date1 && d.hour === scenario.plugInTime)
-                const windowPts = chartData.filter(d => d.isInWindow)
-                if (!arrivalPt || windowPts.length === 0) return null
-                const lowestPrice = Math.min(...windowPts.map(d => d.price))
-                const lowestPt = windowPts.reduce((m, d) => d.price < m.price ? d : m, windowPts[0])
-                const spread = Math.round((arrivalPt.price - lowestPrice) * 100) / 100
 
-                // Full Day Spread: find exact hour of max/min across full date1 24h
-                const dailySummary = prices.daily.find(d => d.date === date1)
-                const maxSpreadCt = dailySummary ? Math.round((dailySummary.spread / 10) * 100) / 100 : null
-                const maxPriceCt = dailySummary ? Math.round((dailySummary.maxPrice / 10) * 100) / 100 : null
-                const minPriceCt = dailySummary ? Math.round((dailySummary.minPrice / 10) * 100) / 100 : null
-                const date1Hourly = prices.hourly.filter(p => p.date === date1)
-                const maxHourlyPt = date1Hourly.length > 0
-                  ? date1Hourly.reduce((m, p) => p.priceEurMwh > m.priceEurMwh ? p : m, date1Hourly[0])
-                  : null
-                const minHourlyPt = date1Hourly.length > 0
-                  ? date1Hourly.reduce((m, p) => p.priceEurMwh < m.priceEurMwh ? p : m, date1Hourly[0])
-                  : null
                 const fmtHour = (h: number) => `${String(h).padStart(2, '0')}:00`
+                const depDate = isThreeDay ? date4 : date2
 
-                const arrivalLabel = arrivalPt.label  // already HH:MM
-                const lowestLabel = lowestPt.label     // HH:MM of cheapest slot
-                const lowestDateLabel = lowestPt.date === date2 ? fmtDateShort(date2) : fmtDateShort(date1)
+                // ── Spread windows (full price range visible on chart) ──
+                // Overnight: plugIn → departure (actual charging window)
+                const overnightSpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, scenario.departureTime)
+                const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw)
+
+                // Full Day: plugIn → t+1 24:00
+                const fullDaySpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, 24)
+                const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw)
+
+                // 3-Day: plugIn → t+3 24:00
+                const threeDaySpreadWin = hasDate3Data
+                  ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, 24)
+                  : []
+                const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw) : null
+                const hasForecast3d = hasDate3Data && threeDaySpreadWin.some(p => p.isProjected)
+
+                // ── Savings windows (actual plug-in → departure for optimization) ──
+                // Savings always use the real charging window: plugIn → departure on depDate
+                const savingsWinOvernight = overnightSpreadWin // same window for overnight
+                const savingsOvernight = computeSpread(savingsWinOvernight, energyPerSession, chargePowerKw)
+
+                const savingsWinFullDay = buildMultiDayWindow(prices.hourly, date1, depDate, scenario.plugInTime, scenario.departureTime)
+                const savingsFullDay = computeSpread(savingsWinFullDay, energyPerSession, chargePowerKw)
+
+                const savingsWin3Day = hasDate3Data
+                  ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, scenario.departureTime)
+                  : []
+                const savings3Day = hasDate3Data ? computeSpread(savingsWin3Day, energyPerSession, chargePowerKw) : null
+
+                type SpreadRow = {
+                  label: string
+                  tooltip: { title: string; desc: string; extra?: string }
+                  spread: ReturnType<typeof computeSpread>
+                  savings: ReturnType<typeof computeSpread>
+                  spreadRange: string
+                  savingsRange: string
+                }
+                const rows: SpreadRow[] = []
+
+                if (overnightSp) {
+                  rows.push({
+                    label: 'Overnight Spread',
+                    tooltip: {
+                      title: 'Overnight window',
+                      desc: `Price spread from plug-in to departure. Savings based on optimized charging within this window.`,
+                    },
+                    spread: overnightSp,
+                    savings: savingsOvernight,
+                    spreadRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date2)}`,
+                    savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)}`,
+                  })
+                }
+
+                if (fullDaySp) {
+                  rows.push({
+                    label: 'Full Day Spread',
+                    tooltip: {
+                      title: 'Full day window',
+                      desc: `Price range from plug-in until end of ${fmtDateShort(date2)}. Savings based on plug-in → departure.`,
+                    },
+                    spread: fullDaySp,
+                    savings: savingsFullDay,
+                    spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date2)}`,
+                    savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(depDate)}`,
+                  })
+                }
+
+                if (threeDaySp) {
+                  rows.push({
+                    label: '3-Day Spread',
+                    tooltip: {
+                      title: '3-day window',
+                      desc: `Price range from plug-in until end of ${fmtDateShort(date4)}. Savings based on plug-in → departure.`,
+                      extra: hasForecast3d ? 'Includes forecast prices — actual EPEX results may differ.' : undefined,
+                    },
+                    spread: threeDaySp,
+                    savings: savings3Day,
+                    spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date4)}`,
+                    savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date4)}`,
+                  })
+                }
+
+                if (rows.length === 0) return null
 
                 return (
                   <div className="mt-4 pt-3 border-t border-gray-100 space-y-3">
-                    <div>
-                      <div className="flex items-baseline justify-between">
-                        <TooltipProvider delayDuration={200}>
-                          <UITooltip>
-                            <TooltipTrigger asChild>
-                              <span className="text-[11px] text-gray-500 font-medium cursor-help underline decoration-dotted underline-offset-2">Overnight Spread</span>
-                            </TooltipTrigger>
-                            <TooltipContent side="left" className="max-w-[220px] text-left p-3 space-y-1">
-                              <p className="font-semibold text-[12px]">Arrival vs. cheapest window slot</p>
-                              <p className="text-[11px] text-gray-500 leading-relaxed">Price difference between plug-in time and the lowest-price hour in tonight's charging window — the arbitrage available by shifting load.</p>
-                            </TooltipContent>
-                          </UITooltip>
-                        </TooltipProvider>
-                        <span className="text-lg font-bold tabular-nums text-[#313131]">
-                          {spread.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
-                        </span>
-                      </div>
-                      <p className="text-[10px] text-gray-400 mt-1 leading-relaxed font-mono">
-                        {arrivalLabel} {arrivalPt.price.toFixed(1)} ct → {lowestLabel} {lowestPrice.toFixed(1)} ct
-                        <span className="font-sans ml-1 not-italic">({lowestDateLabel})</span>
-                      </p>
-                    </div>
-                    {maxSpreadCt !== null && maxPriceCt !== null && minPriceCt !== null && (
-                      <div>
+                    {rows.map(row => (
+                      <div key={row.label}>
+                        {/* Spread (min/max) */}
                         <div className="flex items-baseline justify-between">
                           <TooltipProvider delayDuration={200}>
                             <UITooltip>
                               <TooltipTrigger asChild>
-                                <span className="text-[11px] text-gray-500 font-medium cursor-help underline decoration-dotted underline-offset-2">Full Day Spread</span>
+                                <span className="text-[11px] text-gray-500 font-medium cursor-help underline decoration-dotted underline-offset-2">
+                                  {row.label}
+                                  {row.label === '3-Day Spread' && hasForecast3d && <span className="text-amber-600 text-[9px] ml-1">(incl. forecast)</span>}
+                                </span>
                               </TooltipTrigger>
                               <TooltipContent side="left" className="max-w-[220px] text-left p-3 space-y-1">
-                                <p className="font-semibold text-[12px]">24-hour high vs. low</p>
-                                <p className="text-[11px] text-gray-500 leading-relaxed">Maximum price range across all hours of the day — the theoretical maximum arbitrage if charging could be placed at the single cheapest hour.</p>
+                                <p className="font-semibold text-[12px]">{row.tooltip.title}</p>
+                                <p className="text-[11px] text-gray-500 leading-relaxed">{row.tooltip.desc}</p>
+                                {row.tooltip.extra && <p className="text-[11px] text-amber-600">{row.tooltip.extra}</p>}
                               </TooltipContent>
                             </UITooltip>
                           </TooltipProvider>
                           <span className="text-lg font-bold tabular-nums text-[#313131]">
-                            {maxSpreadCt.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                            {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
                           </span>
                         </div>
                         <p className="text-[10px] text-gray-400 mt-1 leading-relaxed font-mono">
-                          {maxHourlyPt ? fmtHour(maxHourlyPt.hour) : '—'} {maxPriceCt.toFixed(1)} ct
+                          {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} ct
+                          {row.spread!.expensiveDate && row.spread!.expensiveDate !== date1 && (
+                            <span className="font-sans ml-0.5 not-italic">({fmtDateShort(row.spread!.expensiveDate)})</span>
+                          )}
                           {' '}↔{' '}
-                          {minHourlyPt ? fmtHour(minHourlyPt.hour) : '—'} {minPriceCt.toFixed(1)} ct
+                          {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ct
+                          {row.spread!.cheapestDate && row.spread!.cheapestDate !== date1 && (
+                            <span className="font-sans ml-0.5 not-italic">({fmtDateShort(row.spread!.cheapestDate)})</span>
+                          )}
                         </p>
+                        <p className="text-[9px] text-gray-300 mt-0.5">{row.spreadRange}</p>
+                        {/* Savings (based on actual plug-in → departure) */}
+                        {row.savings && (
+                          <div className="flex items-baseline justify-between mt-1.5">
+                            <span className="text-[10px] text-gray-400">
+                              Savings ({energyPerSession.toFixed(1)} kWh)
+                            </span>
+                            <span className="text-[13px] font-bold tabular-nums text-emerald-600">
+                              {row.savings.capturableSavingsCtKwh.toFixed(2)} ct/kWh
+                              <span className="text-[10px] font-normal text-gray-400 ml-1.5">
+                                = {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct
+                              </span>
+                            </span>
+                          </div>
+                        )}
+                        {row.savings && (
+                          <p className="text-[9px] text-gray-300 mt-0.5">{row.savingsRange}</p>
+                        )}
                       </div>
-                    )}
+                    ))}
                   </div>
                 )
               })()}
@@ -1426,23 +1634,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         </Card>
       )}
 
-      {/* ── Behavior Heatmap: Mileage × Plug-ins ── */}
-      {heatmapData.length > 0 && (
-        <SavingsHeatmap heatmapData={heatmapData} scenario={scenario} setScenario={setScenario} />
-      )}
+      {/* ── Spread Indicators — disabled for performance ── */}
+      {/* <SpreadIndicatorsCard ... /> */}
 
-      {/* ── Fleet Portfolio View ── */}
-      {prices.hourly.length > 0 && prices.selectedDate && (
-        <FleetPortfolioCard
-          hourlyPrices={prices.hourly}
-          selectedDate={prices.selectedDate}
-          departureTime={scenario.departureTime}
-          yearlyMileageKm={scenario.yearlyMileageKm}
-          weekdayPlugIns={scenario.weekdayPlugIns}
-          weekendPlugIns={scenario.weekendPlugIns}
-          singleEvSavings={rollingAvgSavings}
-        />
-      )}
+      {/* ── Flexibility Demo Chart — disabled for performance ── */}
+      {/* <FlexibilityDemoChart /> */}
+
+      {/* ── Behavior Heatmap — disabled for performance ── */}
+      {/* <SavingsHeatmap ... /> */}
+
+      {/* ── Fleet Portfolio View — disabled for performance ── */}
+      {/* <FleetPortfolioCard ... /> */}
 
     </div>
   )
