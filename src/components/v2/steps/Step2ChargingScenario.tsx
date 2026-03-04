@@ -721,14 +721,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   return (
     <div className="space-y-8">
-      {/* ── Top row: Customer Profile + Outcome Box ── */}
+      {/* ── Main two-column layout: LEFT sidebar + RIGHT content ── */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      <Card id="tour-customer-profile" className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
-        <CardHeader className="pb-3 bg-gray-50/80 border-b border-gray-100">
+
+      {/* ══ LEFT SIDEBAR — Customer Profile + Day Selector ══ */}
+      <div className="space-y-4 lg:sticky lg:top-20 lg:self-start">
+      <Card id="tour-customer-profile" className="overflow-hidden shadow-sm border-gray-200/80">
+        <CardHeader className="pb-2 bg-gray-50/80 border-b border-gray-100">
           <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Customer Profile</CardTitle>
         </CardHeader>
-        <CardContent className="pt-6 pb-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 lg:gap-8 items-start">
+        <CardContent className="pt-4 pb-4">
+          <div className="space-y-4">
             {/* Mileage slider */}
             <div className="flex flex-col gap-2">
               <div className="flex items-baseline justify-between h-8">
@@ -895,43 +898,37 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         </CardContent>
       </Card>
 
-      {/* ── Outcome Box (Savings Potential) ── */}
-      <Card id="tour-savings-potential" className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
-        <CardHeader className="pb-3 border-b border-gray-100">
-          <CardTitle className="text-base font-bold text-[#313131]">Savings Potential</CardTitle>
-          <p className="text-[11px] text-gray-400 mt-0.5">
-            {isFullDay ? 'Full day · ' : 'Overnight · '}Rolling 12 months · {sessionsPerYear} sessions/yr
-          </p>
-        </CardHeader>
-        <CardContent className="flex-1 pt-4 space-y-5">
-          {/* Annual EUR — hero number */}
-          <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Annual Savings</p>
-            <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR" className="text-4xl font-extrabold text-emerald-700 tabular-nums leading-none" />
-            <p className="text-[10px] text-gray-400 mt-0.5">per year</p>
+      {/* Day Selector */}
+      <Card id="tour-day-selector" className="overflow-hidden shadow-sm border-gray-200/80">
+        <CardHeader className="pb-2 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Select Day</CardTitle>
+            {(() => {
+              const now = new Date()
+              now.setDate(now.getDate() - 1)
+              const yesterdayStr = now.toISOString().slice(0, 10)
+              const latestDate = prices.daily.find(d => d.date === yesterdayStr)?.date
+                ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
+              if (!latestDate || prices.selectedDate === latestDate) return null
+              return (
+                <button
+                  onClick={() => prices.setSelectedDate(latestDate)}
+                  className="text-[11px] font-semibold text-[#EA1C0A] hover:text-[#EA1C0A]/80 transition-colors flex items-center gap-1">
+                  <span>↓</span> Latest
+                </button>
+              )
+            })()}
           </div>
-          {/* Rolling avg ct/kWh spread — consistent with annual EUR */}
-          {sessionsPerYear > 0 && energyPerSession > 0 && rollingAvgSavings > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Avg Monetizable Spread</p>
-              <p className="text-2xl font-bold text-emerald-600 tabular-nums">
-                {((rollingAvgSavings / sessionsPerYear) / energyPerSession * 100).toFixed(1)}
-                <span className="text-sm font-normal text-gray-400 ml-1">ct/kWh</span>
-              </p>
-              <p className="text-[10px] text-gray-400 mt-0.5">12-month rolling avg</p>
-            </div>
-          )}
-          {rollingAvgSavings === 0 && (
-            <p className="text-[11px] text-gray-400 leading-relaxed">Select a date above to calculate savings.</p>
-          )}
+        </CardHeader>
+        <CardContent className="pt-2 pb-2">
+          <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={true} />
         </CardContent>
       </Card>
-      </div>{/* end top row */}
+      </div>{/* end left sidebar */}
 
-      {/* ── Chart + Sidebar ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        {/* Chart (3/4) */}
-        <Card id="tour-price-chart" className="lg:col-span-3 overflow-hidden shadow-sm border-gray-200/80">
+      {/* ══ RIGHT CONTENT — Chart + Spread Indicators ══ */}
+      <div className="lg:col-span-3 space-y-4">
+        <Card id="tour-price-chart" className="overflow-hidden shadow-sm border-gray-200/80">
           <CardHeader className="pb-3 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <div>
@@ -1404,187 +1401,185 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           </CardContent>
         </Card>
 
-        {/* ── Sidebar ── */}
-        <div className="h-full">
-          <Card id="tour-day-selector" className="h-full flex flex-col overflow-hidden shadow-sm border-gray-200/80">
-            <CardHeader className="pb-3 border-b border-gray-100">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-bold text-[#313131]">Select a Day</CardTitle>
-                {(() => {
-                  // "Today" = yesterday (t-1), because we need t+1 data for the overnight chart
-                  const now = new Date()
-                  now.setDate(now.getDate() - 1)
-                  const yesterdayStr = now.toISOString().slice(0, 10)
-                  const latestDate = prices.daily.find(d => d.date === yesterdayStr)?.date
-                    ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
-                  if (!latestDate || prices.selectedDate === latestDate) return null
-                  return (
-                    <button
-                      onClick={() => prices.setSelectedDate(latestDate)}
-                      className="text-[11px] font-semibold text-[#EA1C0A] hover:text-[#EA1C0A]/80 transition-colors flex items-center gap-1">
-                      <span>↓</span> Latest
-                    </button>
-                  )
-                })()}
-              </div>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-auto">
-              <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={true} />
+      {/* ── Spread Indicators — horizontal row below chart ── */}
+      {(() => {
+        if (!date1 || chartData.length === 0) return null
 
-              {/* Spread indicators with min/max and savings */}
-              {(() => {
-                if (!date1 || chartData.length === 0) return null
+        const fmtHour = (h: number) => `${String(h).padStart(2, '0')}:00`
+        const depDate = isThreeDay ? date4 : date2
 
-                const fmtHour = (h: number) => `${String(h).padStart(2, '0')}:00`
-                const depDate = isThreeDay ? date4 : date2
+        const overnightSpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, scenario.departureTime)
+        const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw)
 
-                // ── Spread windows (full price range visible on chart) ──
-                // Overnight: plugIn → departure (actual charging window)
-                const overnightSpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, scenario.departureTime)
-                const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw)
+        const fullDaySpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, 24)
+        const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw)
 
-                // Full Day: plugIn → t+1 24:00
-                const fullDaySpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, 24)
-                const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw)
+        const threeDaySpreadWin = hasDate3Data
+          ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, 24) : []
+        const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw) : null
+        const hasForecast3d = hasDate3Data && threeDaySpreadWin.some(p => p.isProjected)
 
-                // 3-Day: plugIn → t+3 24:00
-                const threeDaySpreadWin = hasDate3Data
-                  ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, 24)
-                  : []
-                const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw) : null
-                const hasForecast3d = hasDate3Data && threeDaySpreadWin.some(p => p.isProjected)
+        const savingsWinOvernight = overnightSpreadWin
+        const savingsOvernight = computeSpread(savingsWinOvernight, energyPerSession, chargePowerKw)
+        const savingsWinFullDay = buildMultiDayWindow(prices.hourly, date1, depDate, scenario.plugInTime, scenario.departureTime)
+        const savingsFullDay = computeSpread(savingsWinFullDay, energyPerSession, chargePowerKw)
+        const savingsWin3Day = hasDate3Data
+          ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, scenario.departureTime) : []
+        const savings3Day = hasDate3Data ? computeSpread(savingsWin3Day, energyPerSession, chargePowerKw) : null
 
-                // ── Savings windows (actual plug-in → departure for optimization) ──
-                // Savings always use the real charging window: plugIn → departure on depDate
-                const savingsWinOvernight = overnightSpreadWin // same window for overnight
-                const savingsOvernight = computeSpread(savingsWinOvernight, energyPerSession, chargePowerKw)
+        // Determine which mode is currently active for highlight
+        const activeMode = scenario.chargingMode === 'threeday' ? '3day' : scenario.chargingMode === 'fullday' ? 'fullday' : 'overnight'
 
-                const savingsWinFullDay = buildMultiDayWindow(prices.hourly, date1, depDate, scenario.plugInTime, scenario.departureTime)
-                const savingsFullDay = computeSpread(savingsWinFullDay, energyPerSession, chargePowerKw)
+        type SpreadRow = {
+          key: string
+          label: string
+          tooltip: { title: string; desc: string; extra?: string }
+          spread: ReturnType<typeof computeSpread>
+          savings: ReturnType<typeof computeSpread>
+          spreadRange: string
+          savingsRange: string
+        }
+        const rows: SpreadRow[] = []
 
-                const savingsWin3Day = hasDate3Data
-                  ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, scenario.departureTime)
-                  : []
-                const savings3Day = hasDate3Data ? computeSpread(savingsWin3Day, energyPerSession, chargePowerKw) : null
+        if (overnightSp) {
+          rows.push({
+            key: 'overnight',
+            label: 'Overnight',
+            tooltip: { title: 'Overnight window', desc: `Plug-in to departure.` },
+            spread: overnightSp, savings: savingsOvernight,
+            spreadRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date2)}`,
+            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)}`,
+          })
+        }
+        if (fullDaySp) {
+          rows.push({
+            key: 'fullday',
+            label: 'Full Day',
+            tooltip: { title: 'Full day window', desc: `Plug-in until end of ${fmtDateShort(date2)}.` },
+            spread: fullDaySp, savings: savingsFullDay,
+            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date2)}`,
+            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(depDate)}`,
+          })
+        }
+        if (threeDaySp) {
+          rows.push({
+            key: '3day',
+            label: '3-Day',
+            tooltip: {
+              title: '3-day window',
+              desc: `Plug-in until end of ${fmtDateShort(date4)}.`,
+              extra: hasForecast3d ? 'Includes forecast prices.' : undefined,
+            },
+            spread: threeDaySp, savings: savings3Day,
+            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date4)}`,
+            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date4)}`,
+          })
+        }
 
-                type SpreadRow = {
-                  label: string
-                  tooltip: { title: string; desc: string; extra?: string }
-                  spread: ReturnType<typeof computeSpread>
-                  savings: ReturnType<typeof computeSpread>
-                  spreadRange: string
-                  savingsRange: string
-                }
-                const rows: SpreadRow[] = []
+        if (rows.length === 0) return null
 
-                if (overnightSp) {
-                  rows.push({
-                    label: 'Overnight Spread',
-                    tooltip: {
-                      title: 'Overnight window',
-                      desc: `Price spread from plug-in to departure. Savings based on optimized charging within this window.`,
-                    },
-                    spread: overnightSp,
-                    savings: savingsOvernight,
-                    spreadRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date2)}`,
-                    savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)}`,
-                  })
-                }
-
-                if (fullDaySp) {
-                  rows.push({
-                    label: 'Full Day Spread',
-                    tooltip: {
-                      title: 'Full day window',
-                      desc: `Price range from plug-in until end of ${fmtDateShort(date2)}. Savings based on plug-in → departure.`,
-                    },
-                    spread: fullDaySp,
-                    savings: savingsFullDay,
-                    spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date2)}`,
-                    savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(depDate)}`,
-                  })
-                }
-
-                if (threeDaySp) {
-                  rows.push({
-                    label: '3-Day Spread',
-                    tooltip: {
-                      title: '3-day window',
-                      desc: `Price range from plug-in until end of ${fmtDateShort(date4)}. Savings based on plug-in → departure.`,
-                      extra: hasForecast3d ? 'Includes forecast prices — actual EPEX results may differ.' : undefined,
-                    },
-                    spread: threeDaySp,
-                    savings: savings3Day,
-                    spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date4)}`,
-                    savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date4)}`,
-                  })
-                }
-
-                if (rows.length === 0) return null
-
-                return (
-                  <div className="mt-4 pt-3 border-t border-gray-100 space-y-3">
-                    {rows.map(row => (
-                      <div key={row.label}>
-                        {/* Spread (min/max) */}
-                        <div className="flex items-baseline justify-between">
-                          <TooltipProvider delayDuration={200}>
-                            <UITooltip>
-                              <TooltipTrigger asChild>
-                                <span className="text-[11px] text-gray-500 font-medium cursor-help underline decoration-dotted underline-offset-2">
-                                  {row.label}
-                                  {row.label === '3-Day Spread' && hasForecast3d && <span className="text-amber-600 text-[9px] ml-1">(incl. forecast)</span>}
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent side="left" className="max-w-[220px] text-left p-3 space-y-1">
-                                <p className="font-semibold text-[12px]">{row.tooltip.title}</p>
-                                <p className="text-[11px] text-gray-500 leading-relaxed">{row.tooltip.desc}</p>
-                                {row.tooltip.extra && <p className="text-[11px] text-amber-600">{row.tooltip.extra}</p>}
-                              </TooltipContent>
-                            </UITooltip>
-                          </TooltipProvider>
-                          <span className="text-lg font-bold tabular-nums text-[#313131]">
-                            {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-xs font-normal text-gray-400 ml-0.5">ct/kWh</span>
+        return (
+          <div className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            {rows.map(row => {
+              const isActive = row.key === activeMode
+              return (
+                <div key={row.key}
+                  className={`rounded-lg border p-3 transition-all ${
+                    isActive
+                      ? 'bg-white border-gray-300 shadow-sm ring-1 ring-gray-200'
+                      : 'bg-gray-50/60 border-gray-100 opacity-70'
+                  }`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <TooltipProvider delayDuration={200}>
+                      <UITooltip>
+                        <TooltipTrigger asChild>
+                          <span className={`text-[11px] font-semibold cursor-help ${isActive ? 'text-[#313131]' : 'text-gray-400'}`}>
+                            {row.label}
+                            {isActive && <span className="ml-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">active</span>}
+                            {row.key === '3day' && hasForecast3d && <span className="text-amber-600 text-[9px] ml-1">(forecast)</span>}
                           </span>
-                        </div>
-                        <p className="text-[10px] text-gray-400 mt-1 leading-relaxed font-mono">
-                          {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} ct
-                          {row.spread!.expensiveDate && row.spread!.expensiveDate !== date1 && (
-                            <span className="font-sans ml-0.5 not-italic">({fmtDateShort(row.spread!.expensiveDate)})</span>
-                          )}
-                          {' '}↔{' '}
-                          {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ct
-                          {row.spread!.cheapestDate && row.spread!.cheapestDate !== date1 && (
-                            <span className="font-sans ml-0.5 not-italic">({fmtDateShort(row.spread!.cheapestDate)})</span>
-                          )}
-                        </p>
-                        <p className="text-[9px] text-gray-300 mt-0.5">{row.spreadRange}</p>
-                        {/* Savings (based on actual plug-in → departure) */}
-                        {row.savings && (
-                          <div className="flex items-baseline justify-between mt-1.5">
-                            <span className="text-[10px] text-gray-400">
-                              Savings ({energyPerSession.toFixed(1)} kWh)
-                            </span>
-                            <span className="text-[13px] font-bold tabular-nums text-emerald-600">
-                              {row.savings.capturableSavingsCtKwh.toFixed(2)} ct/kWh
-                              <span className="text-[10px] font-normal text-gray-400 ml-1.5">
-                                = {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct
-                              </span>
-                            </span>
-                          </div>
-                        )}
-                        {row.savings && (
-                          <p className="text-[9px] text-gray-300 mt-0.5">{row.savingsRange}</p>
-                        )}
-                      </div>
-                    ))}
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-[220px] text-left p-3 space-y-1">
+                          <p className="font-semibold text-[12px]">{row.tooltip.title}</p>
+                          <p className="text-[11px] text-gray-500 leading-relaxed">{row.tooltip.desc}</p>
+                          {row.tooltip.extra && <p className="text-[11px] text-amber-600">{row.tooltip.extra}</p>}
+                        </TooltipContent>
+                      </UITooltip>
+                    </TooltipProvider>
                   </div>
-                )
-              })()}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+                  {/* Spread value */}
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Spread</span>
+                    <span className={`text-lg font-bold tabular-nums ${isActive ? 'text-[#313131]' : 'text-gray-400'}`}>
+                      {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[10px] font-normal text-gray-400 ml-0.5">ct</span>
+                    </span>
+                  </div>
+                  {/* Min/Max range */}
+                  <p className="text-[9px] text-gray-400 mt-1 font-mono leading-relaxed">
+                    {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)}
+                    {' '}↔{' '}
+                    {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ct
+                  </p>
+                  {/* Savings */}
+                  {row.savings && (
+                    <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-gray-100">
+                      <span className="text-[10px] text-gray-400">Savings</span>
+                      <span className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        {row.savings.capturableSavingsCtKwh.toFixed(2)} ct
+                        <span className="text-[10px] font-normal text-gray-400 ml-1">
+                          = {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct/sess.
+                        </span>
+                      </span>
+                    </div>
+                  )}
+                  <p className="text-[8px] text-gray-300 mt-1">{row.spreadRange}</p>
+                </div>
+              )
+            })}
+          </div>
+        )
+      })()}
+
+      </div>{/* end right content column */}
+      </div>{/* end main two-column grid */}
+
+      {/* ── Savings Potential (Outcome Box) ── */}
+      <Card id="tour-savings-potential" className="overflow-hidden shadow-sm border-gray-200/80">
+        <CardHeader className="pb-3 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-base font-bold text-[#313131]">Savings Potential</CardTitle>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                {isFullDay ? 'Full day · ' : 'Overnight · '}Rolling 12 months · {sessionsPerYear} sessions/yr
+              </p>
+            </div>
+            <div className="text-right">
+              <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR" className="text-3xl font-extrabold text-emerald-700 tabular-nums leading-none" />
+              <p className="text-[10px] text-gray-400 mt-0.5">per year</p>
+            </div>
+          </div>
+        </CardHeader>
+        {sessionsPerYear > 0 && energyPerSession > 0 && rollingAvgSavings > 0 && (
+          <CardContent className="pt-3 pb-3">
+            <div className="flex items-center gap-6">
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Avg Monetizable Spread</p>
+                <p className="text-xl font-bold text-emerald-600 tabular-nums">
+                  {((rollingAvgSavings / sessionsPerYear) / energyPerSession * 100).toFixed(1)}
+                  <span className="text-sm font-normal text-gray-400 ml-1">ct/kWh</span>
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Monthly</p>
+                <p className="text-xl font-bold text-emerald-600 tabular-nums">
+                  {monthlySavings.toFixed(2)}
+                  <span className="text-sm font-normal text-gray-400 ml-1">EUR</span>
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        )}
+      </Card>
 
       {/* ── Session Cost Breakdown (full width) ── */}
       {sessionCost && (
