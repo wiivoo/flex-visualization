@@ -1,31 +1,56 @@
 /**
  * Price Cache Layer (Supabase)
- * Caches price data for 24 hours to reduce external API calls
+ *
+ * Caches price data per (date, type) with smart TTL:
+ *   - Past dates:   24h (EPEX data is final)
+ *   - Today:         2h (may get intraday updates)
+ *   - Future dates:  1h (forecast → actual replacement when EPEX publishes at ~12:15 CET)
+ *
+ * Resolution is encoded into the type field:
+ *   - 'day-ahead'    = hourly prices (24 points/day)
+ *   - 'day-ahead-qh' = quarter-hourly prices (96 points/day)
+ * This avoids a Supabase schema migration while supporting both resolutions.
  */
 
 import { supabase } from './supabase'
 import { format, parseISO, subHours, isBefore } from 'date-fns'
 
+type CacheType = string // 'day-ahead' | 'day-ahead-qh' | 'intraday' | 'forward'
+
 export interface CachedPriceData {
   date: string // YYYY-MM-DD
-  type: 'day-ahead' | 'intraday' | 'forward'
+  type: CacheType
   cached_at: string // ISO timestamp
   source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo'
   prices_json: Array<{ timestamp: string; price_ct_kwh: number | null }>
 }
 
-const CACHE_TTL_HOURS = {
-  'day-ahead': 24,
-  'intraday': 1, // Intraday changes more frequently
-  'forward': 24
-} as const
+/**
+ * Build cache type key from market type + resolution.
+ * Encodes resolution into the type string so QH has its own cache slot.
+ */
+export function cacheTypeKey(
+  type: 'day-ahead' | 'intraday' | 'forward',
+  resolution: 'hour' | 'quarterhour' = 'hour'
+): CacheType {
+  if (resolution === 'quarterhour' && type === 'day-ahead') return 'day-ahead-qh'
+  return type
+}
+
+/** Smart TTL: past=24h, today=2h, future=1h */
+function getTtlHours(date: string): number {
+  const today = format(new Date(), 'yyyy-MM-dd')
+  if (date < today) return 24  // Historical — final data
+  if (date === today) return 2  // Today — may update
+  return 1                      // Future — forecast, replace quickly
+}
 
 /**
  * Get cached price data if available and fresh
  */
 export async function getCachedPrices(
   date: string,
-  type: 'day-ahead' | 'intraday' | 'forward'
+  type: CacheType
 ): Promise<CachedPriceData | null> {
   try {
     const { data, error } = await supabase
@@ -37,13 +62,13 @@ export async function getCachedPrices(
 
     if (error || !data) return null
 
-    // Check if cache is still valid
+    // Check if cache is still valid (smart TTL based on date)
     const cachedAt = parseISO(data.cached_at)
-    const expiry = subHours(new Date(), CACHE_TTL_HOURS[type])
+    const ttl = getTtlHours(date)
+    const expiry = subHours(new Date(), ttl)
 
     if (isBefore(cachedAt, expiry)) {
-      // Cache expired
-      return null
+      return null // Cache expired
     }
 
     return data as CachedPriceData
@@ -58,7 +83,7 @@ export async function getCachedPrices(
  */
 export async function setCachedPrices(
   date: string,
-  type: 'day-ahead' | 'intraday' | 'forward',
+  type: CacheType,
   source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo',
   prices: Array<{ timestamp: string; price_ct_kwh: number | null }>
 ): Promise<void> {
@@ -89,7 +114,7 @@ export async function setCachedPrices(
 export async function cleanupExpiredCache(): Promise<void> {
   try {
     const cutoffDate = new Date()
-    cutoffDate.setDate(cutoffDate.getDate() - 30) // Delete entries older than 30 days
+    cutoffDate.setDate(cutoffDate.getDate() - 30)
 
     const { error } = await supabase
       .from('price_cache')

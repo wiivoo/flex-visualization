@@ -236,11 +236,12 @@ export function usePrices(): PriceData {
           setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
         }
 
-        // Background: fetch incremental data up to tomorrow (EPEX publishes D+1 prices after ~noon)
-        // Always run — even if static is current, tomorrow's prices may already be on SMARD
-        const tomorrow = nextDay(today)
-        fetchIncremental(lastStaticDate, tomorrow, prices)
-        fetchIncrementalQH(lastStaticQHDate, tomorrow, qhPrices)
+        // Background: fetch incremental data up to dayAfterTomorrow
+        // EPEX publishes D+1 after ~noon; EnergyForecast.de provides 48h forecast for D+2
+        // This enables the 3-day chart view
+        const dayAfterTomorrow = nextDay(nextDay(today))
+        fetchIncremental(lastStaticDate, dayAfterTomorrow, prices)
+        fetchIncrementalQH(lastStaticQHDate, dayAfterTomorrow, qhPrices)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load prices')
       } finally {
@@ -265,17 +266,22 @@ export function usePrices(): PriceData {
       const newPoints: { timestamp: string; price_ct_kwh: number }[] = data.prices || []
       if (newPoints.length === 0) return
 
+      // forecastStart marks where EPEX actuals end and EnergyForecast.de predictions begin
+      const forecastStartTs = data.forecastStart ? new Date(data.forecastStart).getTime() : null
+
       // Convert batch API format to HourlyPrice
       const newHourly: HourlyPrice[] = newPoints.map(p => {
         const d = new Date(p.timestamp)
         const eurMwh = p.price_ct_kwh * 10
+        const ts = d.getTime()
         return {
-          timestamp: d.getTime(),
+          timestamp: ts,
           priceEurMwh: eurMwh,
           priceCtKwh: p.price_ct_kwh,
           hour: d.getHours(),
           minute: d.getMinutes(),
           date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+          isProjected: forecastStartTs ? ts >= forecastStartTs : false,
         }
       })
 
@@ -321,16 +327,20 @@ export function usePrices(): PriceData {
       const newPoints: { timestamp: string; price_ct_kwh: number }[] = data.prices || []
       if (newPoints.length === 0) return
 
+      const forecastStartTs = data.forecastStart ? new Date(data.forecastStart).getTime() : null
+
       const newQH: HourlyPrice[] = newPoints.map(p => {
         const d = new Date(p.timestamp)
         const eurMwh = p.price_ct_kwh * 10
+        const ts = d.getTime()
         return {
-          timestamp: d.getTime(),
+          timestamp: ts,
           priceEurMwh: eurMwh,
           priceCtKwh: p.price_ct_kwh,
           hour: d.getHours(),
           minute: d.getMinutes(),
           date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
+          isProjected: forecastStartTs ? ts >= forecastStartTs : false,
         }
       })
 

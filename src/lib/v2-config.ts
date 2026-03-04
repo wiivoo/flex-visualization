@@ -26,7 +26,7 @@ export interface ChargingScenario {
   weekdayPlugIns: number   // 0-5 (Mon-Fri)
   weekendPlugIns: number   // 0-2 (Sat-Sun)
   chargePowerKw: number    // 7 or 11
-  chargingMode: 'overnight' | 'fullday'
+  chargingMode: 'overnight' | 'fullday' | 'threeday'
 }
 
 /** Total weekly plug-ins (weekday + weekend) */
