@@ -152,9 +152,9 @@ function V2Inner() {
   return (
     <div className="min-h-screen bg-[#F5F5F2]">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
-        <div className="max-w-[1440px] mx-auto px-8 py-4 flex items-center justify-between">
-          <h1 className="text-lg font-bold text-[#313131]">EV Flex Charging — Load Shifting Visualization</h1>
+      <header className="bg-white border-b border-gray-200">
+        <div className="max-w-[1440px] mx-auto px-8 py-2 flex items-center justify-between">
+          <h1 className="text-sm font-semibold text-gray-400">EV Flex Charging — Load Shifting Visualization</h1>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowTutorial(true)}
