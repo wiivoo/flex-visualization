@@ -1007,6 +1007,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     : isFullDay
                       ? `${fmtDateShort(date1)} ${arrivalLabel} → ${fmtDateShort(date2)} 24:00`
                       : `${fmtDateShort(date1)} evening → ${fmtDateShort(date2)} morning`}
+                  <span className="text-gray-300 ml-2">·</span>
+                  <a href="https://www.smard.de" target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-gray-500 underline underline-offset-2 ml-1">SMARD.de</a>
+                  {hasForecastData && <span className="text-amber-400 ml-1">+ forecast</span>}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1100,7 +1103,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             </div>
           </div>
           </CardHeader>
-          <CardContent className="pb-2">
+          <CardContent className="pb-1">
             {/* ── Chart container ── */}
             <div className="relative h-[400px] select-none"
               ref={chartRef}
@@ -1435,12 +1438,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   )}
                 </>
               )}
-            </div>
-
-            {/* Source attribution — compact inline */}
-            <div className="flex items-center gap-2 px-1 text-[9px] text-gray-300">
-              <span>EPEX Spot DE-LU Day-Ahead via <a href="https://www.smard.de" target="_blank" rel="noopener noreferrer" className="hover:text-gray-500 underline underline-offset-2">SMARD.de</a></span>
-              {hasForecastData && <span className="text-amber-400">+ EnergyForecast.de</span>}
             </div>
 
           </CardContent>
