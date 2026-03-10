@@ -25,20 +25,26 @@ interface Props {
   baselineEndHour: number
   plugInTime: number
   isQH: boolean
+  chargingMode: 'overnight' | 'fullday' | 'threeday'
+  onModeChange: (mode: 'overnight' | 'fullday' | 'threeday') => void
+  hasDate3Data?: boolean
 }
 
 export function SessionCostCard({
   sessionCost, sessionsPerYear, energyPerSession, sessionHoursNeeded,
   windowHours, flexibilityHours, baselineEndHour, plugInTime, isQH,
+  chargingMode, onModeChange, hasDate3Data = true,
 }: Props) {
   const [formulaOpen, setFormulaOpen] = useState(false)
+
+  const modeLabel = chargingMode === 'threeday' ? '3-Day' : chargingMode === 'fullday' ? 'Full Day' : 'Overnight'
 
   return (
     <Card className="shadow-sm border-gray-200/80 flex flex-col">
       <CardHeader className="pb-3 border-b border-gray-100">
         <CardTitle className="text-base font-bold text-[#313131]">Session Cost Breakdown</CardTitle>
         <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
-          {sessionsPerYear} sessions/yr · {energyPerSession} kWh · {sessionHoursNeeded}h charge ·{' '}
+          {modeLabel} · {sessionsPerYear} sessions/yr · {energyPerSession} kWh · {sessionHoursNeeded}h charge ·{' '}
           {windowHours}h window ·{' '}
           <span className={`font-semibold ${flexibilityHours > 3 ? 'text-emerald-600' : flexibilityHours > 0 ? 'text-amber-600' : 'text-red-500'}`}>
             {flexibilityHours}h flex
@@ -128,6 +134,26 @@ export function SessionCostCard({
           <span className="font-mono">{String(baselineEndHour).padStart(2, '0')}:00</span>.
           Optimized shifts the same {sessionHoursNeeded}h to the cheapest slot in the {windowHours}h window.
         </p>
+
+        {/* Scenario mode selector */}
+        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Scenario</span>
+          <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+            <button onClick={() => onModeChange('overnight')}
+              className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'overnight' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+              Overnight
+            </button>
+            <button onClick={() => onModeChange('fullday')}
+              className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'fullday' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+              Full Day
+            </button>
+            <button onClick={() => onModeChange('threeday')}
+              disabled={!hasDate3Data}
+              className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'threeday' ? 'bg-white text-[#313131] shadow-sm' : !hasDate3Data ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-gray-600'}`}>
+              3 Days
+            </button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

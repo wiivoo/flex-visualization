@@ -1,109 +1,73 @@
-# PROJ-27: Spread Indicators Panel
+# PROJ-27: Spread Indicators & Scenario Cards
 
-## Status: Planned
+## Status: Deployed
 **Created:** 2026-02-27
-**Last Updated:** 2026-02-27
+**Last Updated:** 2026-03-10
 
 ## Dependencies
 - PROJ-1 (SMARD Data Integration) — price data required
 - PROJ-12 (Interactive Price Chart) — host component
-- PROJ-18 (Mini Calendar) — selected date drives weekend/overnight spreads
+- PROJ-18 (Mini Calendar) — selected date drives spreads
 - PROJ-2 (Price Optimization Engine) — plugInTime/departureTime from ChargingScenario
 
 ---
 
 ## Overview
 
-A new panel showing three contextual spread indicators for the selected day, plus a 12-month rolling historical breakdown. Each indicator has **two dimensions**:
+Three scenario cards (Overnight, Full Day, 3-Day) showing market spread and capturable savings per charging mode. Each card displays:
+- **Selected day** savings (ct/kWh and EUR)
+- **Last 4 weeks** backward-looking average savings
+- **Last 52 weeks** backward-looking average savings
+- **Market spread** (max − min in ct/kWh)
+- **Time window** label showing the applied hours
+- **Clickable** — clicking a card switches the active charging mode
 
-1. **Market Spread** (ct/kWh) = max(window prices) − min(window prices). Raw market opportunity, independent of vehicle.
-2. **Capturable Savings** (EUR) = baseline cost − optimized cost for the user's actual ChargingScenario (energy per session, charge power). Uses the same `computeWindowSavings()` logic as the existing optimization engine.
+An expandable **Session Cost Detail Panel** below the cards shows the hour-by-hour (or quarter-hourly) breakdown for the active mode: baseline (first N slots) vs. optimized (cheapest N slots), with averages and EUR costs.
 
 ---
 
-## User Stories
+## Implementation
 
-- As a fleet operator, I want to see the overnight market spread so I know today's price range for each overnight session.
-- As a user, I want to see my capturable savings alongside the market spread so I understand what I actually earn vs. what the market offers.
-- As a user, I want to see the weekend spread on Fridays so I can decide whether to defer or split charging across the weekend.
-- As a user, I want the weekly spread to understand how much better I could do if I could defer charging by up to 7 days.
-- As an analyst, I want a 12-month breakdown of both market spreads and capturable savings to understand seasonal patterns.
+### Files
+- `src/components/v2/steps/Step2ChargingScenario.tsx` — scenario cards, detail panel, spread computation
+- `src/lib/charging-helpers.ts` — `computeSpread()`, `computeWindowSavings()`, `buildMultiDayWindow()`
+
+### Scenario Card Windows
+| Mode | Window Definition |
+|------|-------------------|
+| Overnight | plugInTime → departureTime next morning |
+| Full Day | plugInTime → plugInTime next day (24h) |
+| 3-Day | plugInTime → plugInTime day+3 (72h) |
+
+### Per-Mode Calculations
+Each card computes its own window independently using:
+- **Active mode**: uses the user's actual `departureTime`
+- **Inactive modes**: use canonical departure (overnight: `(plugInTime+12)%24`, fullday/threeday: `plugInTime`)
+
+This ensures card values remain stable when switching between modes.
+
+### Backward-Looking Savings
+- **Last 4 weeks**: averages savings across the trailing 28 days
+- **Last 52 weeks**: averages savings across the trailing 365 days
+- Each mode builds its own window per historical day
+
+### Session Cost Detail Panel
+- Toggles open/closed via "Details" button on each card
+- Shows hour-by-hour (or 15-min in QH mode) prices for both baseline and optimized
+- Computes averages, EUR costs, and savings
+- Adapts to quarter-hourly resolution when 15-min toggle is active
 
 ---
 
 ## Acceptance Criteria
 
-### Overnight Spread
-- [ ] Window: `plugInTime` → `departureTime` next morning (both from ChargingScenario)
-- [ ] **Market Spread**: max(hourly prices) − min(hourly prices), in ct/kWh
-- [ ] **Capturable Savings**: baseline cost − optimized cost (EUR), using `computeWindowSavings()` with user's energy per session
-- [ ] Displayed as a KPI tile: primary = market spread (ct/kWh), secondary = savings (EUR)
-- [ ] Tooltip or sub-label shows cheapest and most expensive hours
-
-### Weekend Spread
-- [ ] Only active if the selected date is a **Friday** (day-of-week = 5)
-- [ ] Window: Friday `plugInTime` → Monday `departureTime` (covers Fri eve + all day Sat + all day Sun + Mon early morning)
-- [ ] **Market Spread**: max − min across all prices in window, in ct/kWh
-- [ ] **Capturable Savings**: baseline cost − optimized cost (EUR), using same energy per session
-- [ ] If selected day is NOT Friday: displays "N/A" with a note "Select a Friday to see weekend spread"
-- [ ] If price data for Saturday, Sunday, or Monday is unavailable: displays "N/A — data not available"
-
-### Weekly Spread
-- [ ] Window: selected date `plugInTime` → day +7 `departureTime` (7 full rolling days)
-- [ ] **Market Spread**: max − min across all prices in the 7-day window, in ct/kWh
-- [ ] **Capturable Savings**: baseline cost − optimized cost (EUR) for the best session in the 7-day window
-- [ ] If fewer than 4 days of data available: displays "N/A — insufficient data"
-- [ ] Sub-label shows the date of the cheapest hour and the date of the most expensive hour
-
-### 12-Month Historical Breakdown (Rolling 365 Days)
-- [ ] For each of the trailing 365 calendar days (ending on the selected date), compute all three spread types (overnight, weekend, weekly) and their capturable savings
-- [ ] Group by calendar month (YYYY-MM) → compute monthly averages
-- [ ] Display as a bar chart (same layout as existing MonthlySavingsCard)
-- [ ] **Dual metric**: each bar shows market spread (ct/kWh) with capturable savings (EUR) as a secondary value (tooltip or overlaid label)
-- [ ] X-axis: month abbreviations; Y-axis: average spread in ct/kWh
-- [ ] Tooltip per bar: month name, avg overnight spread, avg weekend spread (Fridays only), avg weekly spread, avg capturable savings (EUR), number of days included
-- [ ] Projected-data months shown with a dashed border or muted colour (same convention as other charts)
-
-### Display & Layout
-- [ ] Indicators are grouped in a card titled "Spread Indicators"
-- [ ] The three KPI values (Overnight, Weekend, Weekly) are shown as a horizontal row of stat tiles within the card
-- [ ] The 12-month chart sits below the KPI row inside the same card
-- [ ] The card is positioned in the dashboard after the existing Savings Potential Box
-- [ ] All values update whenever the selected date or ChargingScenario changes
-
----
-
-## Edge Cases
-
-| Scenario | Expected Behaviour |
-|---|---|
-| Selected date is Saturday | Weekend Spread → N/A ("Select a Friday") |
-| Price data missing for next-day morning | Overnight Spread → computed from available hours only; if < 2 hours available show N/A |
-| 7-day window extends beyond available data | Weekly Spread → computed from available days; if < 4 days show "partial" label |
-| All prices in window are equal (zero spread) | Show "0.0 ct/kWh" — not N/A |
-| Negative prices in window (e.g. min < 0) | Include in spread calculation; spread = max − min can be > max if min is negative |
-| Less than 6 months of historical data available | 12-month chart shows only available months; missing months shown as empty bar with "–" label |
-| ChargingScenario.plugInTime changes | All three KPI indicators recalculate immediately (plugInTime affects window start) |
-
----
-
-## Technical Notes (for Architecture)
-
-- Spread calculations should live in `src/lib/charging-helpers.ts` as pure functions (no side effects)
-- The weekly spread requires 8 days of price data to be loaded (7 days + morning of day 8)
-- The 12-month chart reuses the price data already fetched for the existing MonthlySavingsCard — no additional API calls needed
-- Weekend spread window: Friday `plugInTime`:00 → Monday `departureTime`:00 = up to ~62 hours of data
-- Weekly spread window: Day 0 `plugInTime`:00 → Day 7 `departureTime`:00 = up to ~158 hours of data
-- All windows use the user's `departureTime` from ChargingScenario as the end boundary
-- Capturable savings use `computeWindowSavings()` from `charging-helpers.ts` with the user's energy per session and charge power
-
----
-
-## Tech Design (Solution Architect)
-_To be added by /architecture_
-
-## QA Test Results
-_To be added by /qa_
-
-## Deployment
-_To be added by /deploy_
+- [x] Three scenario cards displayed horizontally below the chart
+- [x] Each card shows selected day, 4-week, and 52-week savings
+- [x] Cards are clickable and switch the active charging mode
+- [x] Active card has emerald highlight, inactive cards are muted
+- [x] Time window label shown on each card
+- [x] Session cost detail panel with hour-by-hour breakdown
+- [x] Detail panel supports both hourly and 15-min resolution
+- [x] Calculations remain stable when switching between modes
+- [x] Departure time changes update the active mode's calculations
+- [x] Market spread (max − min) shown on each card

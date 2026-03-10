@@ -39,11 +39,19 @@ interface Props {
   monthlySavings: number
   avgDailyEur: number
   selectedDate: string
+  chargingMode?: 'overnight' | 'fullday' | 'threeday'
+}
+
+const MODE_LABELS: Record<string, string> = {
+  overnight: 'overnight shifting',
+  fullday: 'full-day shifting',
+  threeday: '3-day shifting',
 }
 
 export function MonthlySavingsCard({
   monthlySavingsData, weeklyPlugIns, energyPerSession,
   sessionsPerYear, rollingAvgSavings, monthlySavings, avgDailyEur, selectedDate,
+  chargingMode = 'overnight',
 }: Props) {
   const [methodologyOpen, setMethodologyOpen] = useState(false)
 
@@ -77,7 +85,7 @@ export function MonthlySavingsCard({
       <CardHeader className="pb-3 border-b border-gray-100">
         <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings — Rolling 365-Day Average</CardTitle>
         <p className="text-[11px] text-gray-500 mt-1">
-          {weeklyPlugIns}x/week · {energyPerSession} kWh/session · day-ahead spot shifting
+          {weeklyPlugIns}x/week · {energyPerSession} kWh/session · {MODE_LABELS[chargingMode] || 'day-ahead spot shifting'}
         </p>
       </CardHeader>
       <CardContent className="pt-5 space-y-4 flex-1 flex flex-col">
