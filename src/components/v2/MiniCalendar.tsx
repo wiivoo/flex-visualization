@@ -8,11 +8,12 @@ interface MiniCalendarProps {
   selectedDate: string
   onSelect: (date: string) => void
   requireNextDay?: boolean
+  compact?: boolean
 }
 
 const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = true }: MiniCalendarProps) {
+export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = true, compact = false }: MiniCalendarProps) {
   const dataRange = useMemo(() => {
     if (daily.length === 0) return { firstMonth: '', lastMonth: '', firstYear: 0, lastYear: 0 }
     const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
@@ -122,9 +123,9 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
   }
 
   return (
-    <div className="w-full">
+    <div className={compact ? 'w-[260px]' : 'w-full'}>
       {/* Year navigation row */}
-      <div className="flex items-center justify-between mb-1">
+      <div className={`flex items-center justify-between ${compact ? 'mb-0.5' : 'mb-1'}`}>
         <button
           onClick={() => shiftYear(-1)}
           disabled={!canYearBack}
@@ -135,7 +136,7 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
         </button>
         <button
           onClick={() => setShowMonthPicker(prev => !prev)}
-          className="text-sm font-bold text-[#313131] hover:text-[#EA1C0A] transition-colors cursor-pointer"
+          className={`${compact ? 'text-xs' : 'text-sm'} font-bold text-[#313131] hover:text-[#EA1C0A] transition-colors cursor-pointer`}
           aria-label="Toggle month picker"
         >
           {viewYear}
@@ -152,7 +153,7 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
 
       {/* Month picker grid (3 cols x 4 rows) */}
       {showMonthPicker && (
-        <div className="grid grid-cols-3 gap-1 mb-2 p-1.5 bg-gray-50 rounded-lg border border-gray-100">
+        <div className={`grid grid-cols-3 ${compact ? 'gap-0.5 mb-1.5 p-1' : 'gap-1 mb-2 p-1.5'} bg-gray-50 rounded-lg border border-gray-100`}>
           {MONTH_NAMES_SHORT.map((name, idx) => {
             const inRange = isMonthInRange(idx)
             const isCurrent = isCurrentViewMonth(idx)
@@ -177,33 +178,33 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
       )}
 
       {/* Month navigation row */}
-      <div className="flex items-center justify-between mb-2">
+      <div className={`flex items-center justify-between ${compact ? 'mb-1' : 'mb-2'}`}>
         <button
           onClick={() => shiftMonth(-1)}
           disabled={!canGoBack}
           aria-label="Previous month"
-          className={`px-2 py-1 text-sm rounded ${canGoBack ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
+          className={`${compact ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-1 text-sm'} rounded ${canGoBack ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
         >
           &larr;
         </button>
-        <span className="text-sm font-bold text-[#313131]">{monthLabel}</span>
+        <span className={`${compact ? 'text-xs' : 'text-sm'} font-bold text-[#313131]`}>{monthLabel}</span>
         <button
           onClick={() => shiftMonth(1)}
           disabled={!canGoForward}
           aria-label="Next month"
-          className={`px-2 py-1 text-sm rounded ${canGoForward ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
+          className={`${compact ? 'px-1.5 py-0.5 text-xs' : 'px-2 py-1 text-sm'} rounded ${canGoForward ? 'hover:bg-gray-100 text-gray-700' : 'text-gray-300 cursor-not-allowed'}`}
         >
           &rarr;
         </button>
       </div>
 
       {/* Day grid */}
-      <div className="grid grid-cols-7 gap-1 text-xs">
+      <div className={`grid grid-cols-7 ${compact ? 'gap-0.5 text-[10px]' : 'gap-1 text-xs'}`}>
         {['Mo', 'Tu', 'We', 'Th', 'Fr'].map(d => (
-          <div key={d} className="text-center text-gray-400 font-medium py-1">{d}</div>
+          <div key={d} className={`text-center text-gray-400 font-medium ${compact ? 'py-0.5' : 'py-1'}`}>{d}</div>
         ))}
         {['Sa', 'Su'].map(d => (
-          <div key={d} className="text-center text-gray-400 font-medium py-1 bg-gray-50 rounded-t">{d}</div>
+          <div key={d} className={`text-center text-gray-400 font-medium ${compact ? 'py-0.5' : 'py-1'} bg-gray-50/50 rounded-t`}>{d}</div>
         ))}
         {monthDays.map((day, i) => {
           if (!day) return <div key={`pad-${i}`} />
@@ -219,22 +220,22 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
               key={day.date}
               onClick={() => hasNextDay && onSelect(day.date)}
               disabled={!hasNextDay}
-              className={`relative p-1 rounded text-center transition-all ${
+              className={`relative ${compact ? 'p-0.5' : 'p-1'} rounded text-center transition-all ${
                 !hasNextDay
                   ? 'opacity-30 cursor-not-allowed'
                   : `hover:ring-2 hover:ring-[#EA1C0A]/50 ${isSelected ? 'ring-2 ring-[#EA1C0A] bg-[#EA1C0A]/5' : ''}`
               } ${(() => { const dow = new Date(day.date + 'T12:00:00Z').getUTCDay(); return dow === 0 || dow === 6 ? 'bg-gray-50' : '' })()}`}
               title={hasNextDay ? `${day.date}: Spread ${day.spread.toFixed(0)} EUR/MWh` : `${day.date}: no next-day data`}
             >
-              <div className="text-[10px] text-gray-600">{dayNum}</div>
-              <div className={`w-full h-1.5 rounded-full mt-0.5 ${hasNextDay ? spreadColor(day.spread) : 'bg-gray-200'}`} />
+              <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600`}>{dayNum}</div>
+              <div className={`w-full ${compact ? 'h-1' : 'h-1.5'} rounded-full mt-0.5 ${hasNextDay ? spreadColor(day.spread) : 'bg-gray-200'}`} />
             </button>
           )
         })}
       </div>
 
       {/* Legend */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-3 text-[10px] text-gray-500">
+      <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 ${compact ? 'mt-2' : 'mt-3'} text-[10px] text-gray-500`}>
         <span>Spread:</span>
         <span className="flex items-center gap-1"><span className="w-3 h-2 bg-green-100 rounded" />Low</span>
         <span className="flex items-center gap-1"><span className="w-3 h-2 bg-yellow-400 rounded" />Med</span>

@@ -15,9 +15,16 @@ interface Props {
   yearlySavingsData: YearlySavingsEntry[]
   weeklyPlugIns: number
   energyPerSession: number
+  chargingMode?: 'overnight' | 'fullday' | 'threeday'
 }
 
-export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession }: Props) {
+const MODE_LABELS: Record<string, string> = {
+  overnight: 'overnight',
+  fullday: 'full-day',
+  threeday: '3-day',
+}
+
+export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession, chargingMode = 'overnight' }: Props) {
   if (!yearlySavingsData || yearlySavingsData.length === 0) return null
 
   const currentYear = new Date().getFullYear()
@@ -49,7 +56,7 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
       <CardHeader className="pb-3 border-b border-gray-100">
         <CardTitle className="text-base font-bold text-[#313131]">Yearly Savings</CardTitle>
         <p className="text-[11px] text-gray-500 mt-1">
-          {weeklyPlugIns}x/week · {energyPerSession} kWh
+          {weeklyPlugIns}x/week · {energyPerSession} kWh · {MODE_LABELS[chargingMode] || 'overnight'}
         </p>
       </CardHeader>
       <CardContent className="pt-4 flex-1 flex flex-col justify-center space-y-3">

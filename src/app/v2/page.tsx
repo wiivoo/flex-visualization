@@ -35,7 +35,7 @@ function parseScenario(params: URLSearchParams): ChargingScenario {
     plugInTime:      get('plugin_time', DEFAULT_SCENARIO.plugInTime),
     departureTime:   get('departure', DEFAULT_SCENARIO.departureTime),
     chargePowerKw:   get('power', DEFAULT_SCENARIO.chargePowerKw),
-    chargingMode:    mode === 'fullday' ? 'fullday' : 'overnight',
+    chargingMode:    mode === 'fullday' ? 'fullday' : mode === 'threeday' ? 'threeday' : 'overnight',
   }
 }
 
@@ -93,7 +93,7 @@ function V2Inner() {
     p.set('plugin_time', String(scenario.plugInTime))
     p.set('departure',   String(scenario.departureTime))
     if (scenario.chargePowerKw !== 7) p.set('power', String(scenario.chargePowerKw))
-    if (scenario.chargingMode === 'fullday') p.set('mode', 'fullday')
+    if (scenario.chargingMode !== 'overnight') p.set('mode', scenario.chargingMode)
     router.replace(`/v2?${p.toString()}`, { scroll: false })
   }, [scenario, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
 

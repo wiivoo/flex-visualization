@@ -7,7 +7,7 @@ import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, totalWeeklyPlugIns, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr } from '@/lib/charging-helpers'
-import { MiniCalendar } from '@/components/v2/MiniCalendar'
+import { DateStrip } from '@/components/v2/DateStrip'
 import { SessionCostCard } from '@/components/v2/SessionCostCard'
 import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
 // Disabled for performance: SavingsHeatmap, FleetPortfolioCard, SpreadIndicatorsCard, FlexibilityDemoChart
@@ -30,20 +30,6 @@ const MAX_DIST_PCT = 26
 const SLIDER_MIN = 5000, SLIDER_MAX = 40000, SLIDER_RANGE = SLIDER_MAX - SLIDER_MIN
 const DE_AVG_MILEAGE = 14000
 
-// Typical EV plug-in time distribution (home charging, Germany)
-// Based on smart-meter + BDEW load profile research: peak after-work return 17-18h
-const PLUGIN_TIME_DIST = [
-  { hour: 14, pct: 2 },
-  { hour: 15, pct: 4 },
-  { hour: 16, pct: 9 },
-  { hour: 17, pct: 21 },
-  { hour: 18, pct: 27 },
-  { hour: 19, pct: 18 },
-  { hour: 20, pct: 11 },
-  { hour: 21, pct: 5 },
-  { hour: 22, pct: 3 },
-]
-const MAX_PLUGIN_PCT = 27
 const PLUGIN_HOUR_MIN = 14
 const PLUGIN_HOUR_MAX = 23
 
@@ -96,10 +82,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
+  const [costDetailMode, setCostDetailMode] = useState<string | null>(null)
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
   const [showRenewable, setShowRenewable] = useState(false)
   const [renewableData, setRenewableData] = useState<Map<string, number>>(new Map())
+  // Latest available date for "Jump to latest" button
+  const latestAvailableDate = useMemo(() => {
+    const now = new Date()
+    now.setDate(now.getDate() - 1)
+    const yesterdayStr = now.toISOString().slice(0, 10)
+    return prices.daily.find(d => d.date === yesterdayStr)?.date
+      ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
+  }, [prices.daily])
 
   const date1 = prices.selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
@@ -131,7 +126,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       setRenewableData(map)
     })
     return () => controller.abort()
-  }, [date1])
+  }, [date1, isThreeDay])
 
   // Deferred scenario values — heavy computations (heatmap, monthly) use these
   // so they don't block the UI during handle dragging
@@ -186,10 +181,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    const rollKwhPerSlot = chargePowerKw  // rolling avg always uses hourly
-    const rollSlotsPerHour = 1
-    const rollMinHours = Math.ceil(energyPerSession / chargePowerKw)
-
     type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
@@ -324,11 +315,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   // ── 365-day rolling average — expensive scan over all hourly prices ──
   // Uses deferred plug-in/departure values so it doesn't block drag interactions
+  // Mode-aware: builds appropriate windows for overnight/fullday/threeday
   const { rollingAvgSavings, monthlySavings } = useMemo(() => {
     if (!date1 || prices.hourly.length === 0) return { rollingAvgSavings: 0, monthlySavings: 0 }
     const rollKwhPerSlot = chargePowerKw
     const rollSlotsPerHour = 1
     const rollMinHours = Math.ceil(energyPerSession / chargePowerKw)
+    const mode = scenario.chargingMode
 
     const endDate = date1
     const startRoll = new Date(new Date(endDate + 'T12:00:00Z').getTime() - 365 * 86400000).toISOString().slice(0, 10)
@@ -342,12 +335,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     }
     let wdSavings = 0, wdDays = 0, weSavings = 0, weDays = 0
     for (const [dDate, dPrices] of byDate) {
-      const nd = nextDayStr(dDate)
-      const nPrices = byDate.get(nd)
-      if (!nPrices || nPrices.length === 0) continue
-      const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
-      const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
-      const win = [...eve, ...morn]
+      let win: HourlyPrice[]
+      if (mode === 'threeday') {
+        const d2 = addDaysStr(dDate, 1), d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
+        const p2 = byDate.get(d2)
+        if (!p2 || p2.length === 0) continue
+        win = [...dPrices.filter(p => p.hour >= deferredPlugInTime), ...p2]
+        const p3 = byDate.get(d3)
+        if (p3) win.push(...p3)
+        const p4 = byDate.get(d4)
+        if (p4) win.push(...p4.filter(p => p.hour < deferredPlugInTime))
+      } else {
+        const nd = nextDayStr(dDate)
+        const nPrices = byDate.get(nd)
+        if (!nPrices || nPrices.length === 0) continue
+        const eve = dPrices.filter(p => p.hour >= deferredPlugInTime)
+        const morn = nPrices.filter(p => p.hour < deferredDepartureTime)
+        win = [...eve, ...morn]
+      }
       if (win.length < rollMinHours) continue
       const { savingsEur } = computeWindowSavings(win, energyPerSession, rollKwhPerSlot, rollSlotsPerHour)
       const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
@@ -361,7 +366,91 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const mSav = Math.round(weeklySavings * (30.44 / 7) * 100) / 100
     const rollSav = Math.round(weeklySavings * 52 * 100) / 100
     return { rollingAvgSavings: rollSav, monthlySavings: mSav }
-  }, [prices.hourly, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw])
+  }, [prices.hourly, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, scenario.chargingMode])
+
+  // ── Per-mode rolling savings: 4 weeks + 52 weeks for overnight/fullday/threeday ──
+  type ModeSavings = { ctKwh4w: number; eur4w: number; ctKwh52w: number; eur52w: number }
+  const perModeSavings = useMemo((): Record<string, ModeSavings> => {
+    if (!date1 || prices.hourly.length === 0) {
+      const z: ModeSavings = { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }
+      return { overnight: z, fullday: z, threeday: z }
+    }
+    const kwhSlot = chargePowerKw
+    const minH = Math.ceil(deferredEnergyPerSession / chargePowerKw)
+    const end52 = date1
+    const start52 = new Date(new Date(end52 + 'T12:00:00Z').getTime() - 364 * 86400000).toISOString().slice(0, 10)
+    const start4w = new Date(new Date(end52 + 'T12:00:00Z').getTime() - 28 * 86400000).toISOString().slice(0, 10)
+
+    const byDate = new Map<string, HourlyPrice[]>()
+    for (const p of prices.hourly) {
+      if (p.date >= start52 && p.date <= end52) {
+        const arr = byDate.get(p.date) || []
+        arr.push(p)
+        byDate.set(p.date, arr)
+      }
+    }
+
+    function calcMode(buildWindow: (dDate: string) => HourlyPrice[] | null): { s4w: number; d4w: number; s52w: number; d52w: number } {
+      let s4w = 0, d4w = 0, s52w = 0, d52w = 0
+      for (const dDate of byDate.keys()) {
+        const win = buildWindow(dDate)
+        if (!win || win.length < minH) continue
+        const { savingsEur } = computeWindowSavings(win, deferredEnergyPerSession, kwhSlot, 1)
+        s52w += savingsEur; d52w++
+        if (dDate >= start4w) { s4w += savingsEur; d4w++ }
+      }
+      return { s4w, d4w, s52w, d52w }
+    }
+
+    // Each mode: use actual departure when active, canonical when inactive
+    const curMode = scenario.chargingMode
+    const overnightDep = curMode === 'overnight' ? deferredDepartureTime : (deferredPlugInTime + 12) % 24
+    const fullDayDep = curMode === 'fullday' ? deferredDepartureTime : deferredPlugInTime
+    const threeDayDep = curMode === 'threeday' ? deferredDepartureTime : deferredPlugInTime
+
+    const overnight = calcMode((dDate) => {
+      const nd = addDaysStr(dDate, 1)
+      const nP = byDate.get(nd)
+      if (!nP || nP.length === 0) return null
+      const dP = byDate.get(dDate)
+      if (!dP) return null
+      return [...dP.filter(p => p.hour >= deferredPlugInTime), ...nP.filter(p => p.hour < overnightDep)]
+    })
+
+    const fullday = calcMode((dDate) => {
+      const nd = addDaysStr(dDate, 1)
+      const nP = byDate.get(nd)
+      if (!nP || nP.length === 0) return null
+      const dP = byDate.get(dDate)
+      if (!dP) return null
+      return [...dP.filter(p => p.hour >= deferredPlugInTime), ...nP.filter(p => p.hour < fullDayDep)]
+    })
+
+    const threeday = calcMode((dDate) => {
+      const d2 = addDaysStr(dDate, 1), d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
+      const dP = byDate.get(dDate), p2 = byDate.get(d2), p3 = byDate.get(d3)
+      if (!dP || !p2) return null
+      const all = [...dP.filter(p => p.hour >= deferredPlugInTime), ...p2]
+      if (p3) all.push(...p3)
+      const p4 = byDate.get(d4)
+      if (p4) all.push(...p4.filter(p => p.hour < threeDayDep))
+      return all
+    })
+
+    function toResult(r: { s4w: number; d4w: number; s52w: number; d52w: number }): ModeSavings {
+      const avgPerDay4w = r.d4w > 0 ? r.s4w / r.d4w : 0
+      const avgPerDay52w = r.d52w > 0 ? r.s52w / r.d52w : 0
+      const weekly4w = avgPerDay4w * deferredWeeklyPlugIns
+      const weekly52w = avgPerDay52w * deferredWeeklyPlugIns
+      const eur4w = Math.round(weekly4w * 4 * 100) / 100 // 4 weeks
+      const eur52w = Math.round(weekly52w * 52 * 100) / 100
+      const ctKwh4w = deferredEnergyPerSession > 0 ? avgPerDay4w / deferredEnergyPerSession * 100 : 0
+      const ctKwh52w = deferredEnergyPerSession > 0 ? avgPerDay52w / deferredEnergyPerSession * 100 : 0
+      return { ctKwh4w, eur4w, ctKwh52w, eur52w }
+    }
+
+    return { overnight: toResult(overnight), fullday: toResult(fullday), threeday: toResult(threeday) }
+  }, [prices.hourly, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeeklyPlugIns, chargePowerKw, scenario.chargingMode])
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -483,10 +572,35 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   // ── Pre-compute overnight windows (shared by monthly + heatmap) ──
   // Uses deferred values so these heavy computations don't block during drag
+  // Mode-aware: overnight/fullday use 2-day windows, threeday uses 4-day windows
   const overnightWindows = useMemo(() => {
     if (prices.hourly.length === 0) return []
+    if (scenario.chargingMode === 'threeday') {
+      const byDate = new Map<string, HourlyPrice[]>()
+      for (const p of prices.hourly) {
+        const arr = byDate.get(p.date) || []
+        arr.push(p)
+        byDate.set(p.date, arr)
+      }
+      const windows: import('@/lib/charging-helpers').OvernightWindow[] = []
+      for (const [dDate, dPrices] of byDate) {
+        const d2 = addDaysStr(dDate, 1), d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
+        const p2 = byDate.get(d2)
+        if (!p2 || p2.length === 0) continue
+        const all = [...dPrices.filter(p => p.hour >= deferredPlugInTime), ...p2]
+        const p3 = byDate.get(d3)
+        if (p3) all.push(...p3)
+        const p4 = byDate.get(d4)
+        if (p4) all.push(...p4.filter(p => p.hour < deferredPlugInTime))
+        if (all.length === 0) continue
+        const sorted = [...all].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+        const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
+        windows.push({ date: dDate, month: dDate.slice(0, 7), prices: all, sorted, isProjected: all.some(p => p.isProjected), isWeekend: dow === 0 || dow === 6 })
+      }
+      return windows
+    }
     return buildOvernightWindows(prices.hourly, deferredPlugInTime, deferredDepartureTime)
-  }, [prices.hourly, deferredPlugInTime, deferredDepartureTime])
+  }, [prices.hourly, deferredPlugInTime, deferredDepartureTime, scenario.chargingMode])
 
   // ── Monthly savings breakdown for yearly chart ──
   // Split weekday vs weekend savings for accurate weighting
@@ -750,7 +864,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 </div>
               </div>
               {/* Mileage distribution bars */}
-              <div className="relative h-6">
+              <div className="relative h-4">
                 {MILEAGE_DIST.map((bin, i) => {
                   const leftPct = ((bin.lo - SLIDER_MIN) / SLIDER_RANGE) * 100
                   const widthPct = ((bin.hi - bin.lo) / SLIDER_RANGE) * 100
@@ -773,61 +887,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               </p>
             </div>
 
-            {/* Weekly plug-ins — weekday/weekend split */}
+            {/* Weekly plug-ins — single slider 1-7 */}
             <div className="flex flex-col gap-2">
               <div className="flex items-baseline justify-between h-8">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Weekly Plug-ins</span>
                 <span className="text-2xl font-bold text-[#313131] tabular-nums">{weeklyPlugIns}<span className="text-xs font-normal text-gray-400 ml-1">x / wk</span></span>
               </div>
-              {/* Weekday slider */}
               <div>
-                <div className="flex items-center justify-between mb-0.5">
-                  <span className="text-[10px] font-medium text-gray-500">Mon – Fri</span>
-                  <span className="text-[10px] font-bold text-[#313131] tabular-nums">{scenario.weekdayPlugIns}x</span>
-                </div>
-                <input type="range" min={0} max={5} step={1} value={scenario.weekdayPlugIns}
-                  onChange={(e) => setScenario({ ...scenario, weekdayPlugIns: Number(e.target.value) })}
-                  aria-label={`Weekday plug-ins: ${scenario.weekdayPlugIns}`}
+                <input type="range" min={1} max={7} step={1} value={weeklyPlugIns}
+                  onChange={(e) => {
+                    const total = Number(e.target.value)
+                    const wd = Math.min(total, 5)
+                    const we = Math.max(0, total - 5)
+                    setScenario({ ...scenario, weekdayPlugIns: wd, weekendPlugIns: we })
+                  }}
+                  aria-label={`Weekly plug-ins: ${weeklyPlugIns}`}
                   className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-              </div>
-              {/* Weekend slider */}
-              <div>
-                <div className="flex items-center justify-between mb-0.5">
-                  <span className="text-[10px] font-medium text-gray-400">Sat – Sun</span>
-                  <span className="text-[10px] font-bold text-[#313131] tabular-nums">{scenario.weekendPlugIns}x</span>
-                </div>
-                <input type="range" min={0} max={2} step={1} value={scenario.weekendPlugIns}
-                  onChange={(e) => setScenario({ ...scenario, weekendPlugIns: Number(e.target.value) })}
-                  aria-label={`Weekend plug-ins: ${scenario.weekendPlugIns}`}
-                  className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
-              </div>
-              {/* Day blocks visual */}
-              <div className="flex items-end justify-center gap-0.5">
-                {['Mo','Tu','We','Th','Fr'].map((d, i) => (
-                  <div key={d} className="flex flex-col items-center gap-0.5 flex-1">
-                    <div className={`h-3 w-full rounded-sm transition-colors ${i < scenario.weekdayPlugIns ? 'bg-[#313131]/20' : 'bg-gray-100'}`} />
-                    <span className="text-[9px] text-gray-400 leading-none">{d}</span>
-                  </div>
-                ))}
-                <div className="w-px h-3.5 bg-gray-200 mx-0.5" />
-                {['Sa','Su'].map((d, i) => (
-                  <div key={d} className="flex flex-col items-center gap-0.5 flex-1">
-                    <div className={`h-3 w-full rounded-sm transition-colors ${i < scenario.weekendPlugIns ? 'bg-gray-400/30' : 'bg-gray-100'}`} />
-                    <span className="text-[9px] text-gray-400 leading-none">{d}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center justify-center gap-1.5">
-                <span className="text-[10px] text-gray-400">~{sessionLabel}/session ·</span>
-                <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
-                  <button
-                    onClick={() => setScenario({ ...scenario, chargePowerKw: 7 })}
-                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === 7 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                  >7 kW</button>
-                  <button
-                    onClick={() => setScenario({ ...scenario, chargePowerKw: 11 })}
-                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === 11 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                  >11 kW</button>
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>1x</span>
+                  <span>7x</span>
                 </div>
               </div>
             </div>
@@ -842,12 +920,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 <input type="range"
                   min={PLUGIN_HOUR_MIN}
                   max={PLUGIN_HOUR_MAX}
-                  // Plug-in hour: full range for fullday/3-day, 14-22 for overnight
                   step={1}
                   value={scenario.plugInTime}
                   onChange={(e) => {
                     const newPlugIn = Number(e.target.value)
-                    // For fullday/3day: departure is on a different date, no clamping needed
                     setScenario({ ...scenario, plugInTime: newPlugIn })
                   }}
                   aria-label={`Typical plug-in time: ${scenario.plugInTime}:00`}
@@ -857,77 +933,67 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   <span>{isFullDay ? '23:00' : '22:00'}</span>
                 </div>
               </div>
-              {/* Plug-in time distribution bars */}
-              <div className="relative h-6 flex items-end gap-px">
-                {PLUGIN_TIME_DIST.map((bin) => {
-                  const heightPct = (bin.pct / MAX_PLUGIN_PCT) * 100
-                  const isActive = bin.hour === scenario.plugInTime
-                  return (
-                    <div key={bin.hour} className="flex-1 rounded-sm transition-all"
-                      style={{
-                        height: `${heightPct}%`,
-                        background: isActive ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.06)',
-                      }}
-                      title={`${bin.hour}:00 — ${bin.pct}% of drivers`} />
-                  )
-                })}
-              </div>
-              <p className="text-[10px] text-gray-400 text-center">
-                Baseline arrival · also draggable on chart
-              </p>
             </div>
 
-            {/* Per Session stats */}
+            {/* Per Session — slider + display */}
             <div className="flex flex-col gap-2">
               <div className="flex items-baseline justify-between h-8">
                 <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Per Session</span>
+                <span className="text-2xl font-bold text-[#313131] tabular-nums">{energyPerSession}<span className="text-xs font-normal text-gray-400 ml-1">kWh</span></span>
               </div>
-              <div className="flex flex-col gap-1.5 p-3 bg-gray-50/80 rounded-lg border border-gray-200/60">
-                <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-bold text-[#313131] tabular-nums">~{energyPerSession}</span>
-                  <span className="text-xs text-gray-400">kWh</span>
+              <div>
+                <input type="range" min={3} max={50} step={0.5}
+                  value={energyPerSession}
+                  onChange={(e) => {
+                    const newKwh = Number(e.target.value)
+                    const newMileage = Math.round(newKwh * sessionsPerYear * 100 / AVG_CONSUMPTION_KWH_PER_100KM / 1000) * 1000
+                    const clampedMileage = Math.max(SLIDER_MIN, Math.min(SLIDER_MAX, newMileage))
+                    setScenario({ ...scenario, yearlyMileageKm: clampedMileage })
+                  }}
+                  aria-label={`Energy per session: ${energyPerSession} kWh`}
+                  className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>3 kWh</span>
+                  <span>50 kWh</span>
                 </div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-sm font-medium text-gray-600 tabular-nums">~{kmPerCharge}</span>
-                  <span className="text-xs text-gray-400">km range</span>
-                </div>
-                <p className="text-[10px] text-gray-400">{sessionsPerYear} sessions/yr</p>
+              </div>
+              <p className="text-[10px] text-gray-400 text-center">~{kmPerCharge} km · {sessionsPerYear} sessions/yr</p>
+            </div>
+
+            {/* Session duration + charge power — bottom of card */}
+            <div className="flex items-center justify-center gap-1.5 pt-2 border-t border-gray-100">
+              <span className="text-[10px] text-gray-400">~{sessionLabel}/session ·</span>
+              <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
+                <button
+                  onClick={() => setScenario({ ...scenario, chargePowerKw: 7 })}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === 7 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                >7 kW</button>
+                <button
+                  onClick={() => setScenario({ ...scenario, chargePowerKw: 11 })}
+                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === 11 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                >11 kW</button>
               </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Day Selector */}
-      <Card id="tour-day-selector" className="overflow-hidden shadow-sm border-gray-200/80">
-        <CardHeader className="pb-2 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Select Day</CardTitle>
-            {(() => {
-              const now = new Date()
-              now.setDate(now.getDate() - 1)
-              const yesterdayStr = now.toISOString().slice(0, 10)
-              const latestDate = prices.daily.find(d => d.date === yesterdayStr)?.date
-                ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
-              if (!latestDate || prices.selectedDate === latestDate) return null
-              return (
-                <button
-                  onClick={() => prices.setSelectedDate(latestDate)}
-                  className="text-[11px] font-semibold text-[#EA1C0A] hover:text-[#EA1C0A]/80 transition-colors flex items-center gap-1">
-                  <span>↓</span> Latest
-                </button>
-              )
-            })()}
-          </div>
-        </CardHeader>
-        <CardContent className="pt-2 pb-2">
-          <MiniCalendar daily={prices.daily} selectedDate={prices.selectedDate} onSelect={prices.setSelectedDate} requireNextDay={true} />
-        </CardContent>
-      </Card>
       </div>{/* end left sidebar */}
 
-      {/* ══ RIGHT CONTENT — Chart + Spread Indicators ══ */}
+      {/* ══ RIGHT CONTENT — Calendar + Chart + Spread Indicators ══ */}
       <div className="lg:col-span-3 space-y-4">
+        {/* Day Selector Strip */}
+        <Card id="tour-day-selector" className="overflow-hidden shadow-sm border-gray-200/80">
+          <CardContent className="py-2 px-3">
+            <DateStrip
+              daily={prices.daily}
+              selectedDate={prices.selectedDate}
+              onSelect={prices.setSelectedDate}
+              requireNextDay={true}
+              latestDate={latestAvailableDate}
+            />
+          </CardContent>
+        </Card>
         <Card id="tour-price-chart" className="overflow-hidden shadow-sm border-gray-200/80">
           <CardHeader className="pb-3 border-b border-gray-100">
             <div className="flex items-center justify-between">
@@ -1278,33 +1344,33 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 return (
                   <>
                     {/* Baseline (Immediate) */}
-                    <div className="absolute pointer-events-none transition-all duration-300 ease-out z-10"
+                    <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
                         <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider">Immediate</span>
                         <div className="bg-red-50/95 backdrop-blur-sm border border-red-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
-                          <span className="text-red-700 text-[12px] font-bold tabular-nums whitespace-nowrap">
-                            <AnimatedNumber value={sessionCost.baselineEur} decimals={2} suffix=" €" />
+                          <span className="text-red-700 text-[13px] font-bold tabular-nums whitespace-nowrap">
+                            {sessionCost.baselineAvgCt.toFixed(1)} ct/kWh
                           </span>
                           <span className="text-red-400 text-[10px] tabular-nums whitespace-nowrap">
-                            {sessionCost.baselineAvgCt.toFixed(1)} ct
+                            {sessionCost.baselineEur.toFixed(2)} €
                           </span>
                         </div>
                       </div>
                     </div>
                     {/* Optimized */}
-                    <div className="absolute pointer-events-none transition-all duration-300 ease-out z-10"
+                    <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
                         <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Optimized</span>
                         <div className="bg-emerald-50/95 backdrop-blur-sm border border-emerald-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
-                          <span className="text-emerald-700 text-[12px] font-bold tabular-nums whitespace-nowrap">
-                            <AnimatedNumber value={sessionCost.optimizedEur} decimals={2} suffix=" €" />
+                          <span className="text-emerald-700 text-[13px] font-bold tabular-nums whitespace-nowrap">
+                            {sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh
                           </span>
                           <span className="text-emerald-400 text-[10px] tabular-nums whitespace-nowrap">
-                            {sessionCost.optimizedAvgCt.toFixed(1)} ct
+                            {sessionCost.optimizedEur.toFixed(2)} €
                           </span>
                         </div>
                       </div>
@@ -1406,26 +1472,30 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         if (!date1 || chartData.length === 0) return null
 
         const fmtHour = (h: number) => `${String(h).padStart(2, '0')}:00`
-        const depDate = isThreeDay ? date4 : date2
+        const mode = scenario.chargingMode
+        // Each mode uses actual departureTime when active, canonical when inactive
+        const overnightDep = mode === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
+        const fullDayDep = mode === 'fullday' ? scenario.departureTime : scenario.plugInTime
+        const threeDayDep = mode === 'threeday' ? scenario.departureTime : scenario.plugInTime
 
-        const overnightSpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, scenario.departureTime)
+        // Overnight: plug-in evening → next morning
+        const overnightSpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, overnightDep)
         const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw)
 
-        const fullDaySpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, 24)
+        // Full day: plug-in → departure on next day
+        const fullDaySpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, fullDayDep)
         const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw)
 
+        // 3-day: plug-in → departure on day+3
         const threeDaySpreadWin = hasDate3Data
-          ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, 24) : []
+          ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, threeDayDep) : []
         const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw) : null
         const hasForecast3d = hasDate3Data && threeDaySpreadWin.some(p => p.isProjected)
 
-        const savingsWinOvernight = overnightSpreadWin
-        const savingsOvernight = computeSpread(savingsWinOvernight, energyPerSession, chargePowerKw)
-        const savingsWinFullDay = buildMultiDayWindow(prices.hourly, date1, depDate, scenario.plugInTime, scenario.departureTime)
-        const savingsFullDay = computeSpread(savingsWinFullDay, energyPerSession, chargePowerKw)
-        const savingsWin3Day = hasDate3Data
-          ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, scenario.departureTime) : []
-        const savings3Day = hasDate3Data ? computeSpread(savingsWin3Day, energyPerSession, chargePowerKw) : null
+        // Savings use the same windows
+        const savingsOvernight = overnightSp
+        const savingsFullDay = fullDaySp
+        const savings3Day = threeDaySp
 
         // Determine which mode is currently active for highlight
         const activeMode = scenario.chargingMode === 'threeday' ? '3day' : scenario.chargingMode === 'fullday' ? 'fullday' : 'overnight'
@@ -1438,6 +1508,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           savings: ReturnType<typeof computeSpread>
           spreadRange: string
           savingsRange: string
+          windowPrices: HourlyPrice[]
         }
         const rows: SpreadRow[] = []
 
@@ -1445,20 +1516,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           rows.push({
             key: 'overnight',
             label: 'Overnight',
-            tooltip: { title: 'Overnight window', desc: `Plug-in to departure.` },
-            spread: overnightSp, savings: savingsOvernight,
-            spreadRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date2)}`,
-            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)}`,
+            tooltip: { title: 'Overnight window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)} next morning.` },
+            spread: overnightSp, savings: savingsOvernight, windowPrices: overnightSpreadWin,
+            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(overnightDep)} ${fmtDateShort(date2)}`,
+            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)}`,
           })
         }
         if (fullDaySp) {
           rows.push({
             key: 'fullday',
             label: 'Full Day',
-            tooltip: { title: 'Full day window', desc: `Plug-in until end of ${fmtDateShort(date2)}.` },
-            spread: fullDaySp, savings: savingsFullDay,
-            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date2)}`,
-            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(depDate)}`,
+            tooltip: { title: 'Full day window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)} next day.` },
+            spread: fullDaySp, savings: savingsFullDay, windowPrices: fullDaySpreadWin,
+            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(fullDayDep)} ${fmtDateShort(date2)}`,
+            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)}`,
           })
         }
         if (threeDaySp) {
@@ -1467,72 +1538,116 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             label: '3-Day',
             tooltip: {
               title: '3-day window',
-              desc: `Plug-in until end of ${fmtDateShort(date4)}.`,
+              desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(threeDayDep)} on ${fmtDateShort(date4)}.`,
               extra: hasForecast3d ? 'Includes forecast prices.' : undefined,
             },
-            spread: threeDaySp, savings: savings3Day,
-            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → 24:00 ${fmtDateShort(date4)}`,
-            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(scenario.departureTime)} ${fmtDateShort(date4)}`,
+            spread: threeDaySp, savings: savings3Day, windowPrices: threeDaySpreadWin,
+            spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(threeDayDep)} ${fmtDateShort(date4)}`,
+            savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(threeDayDep)}`,
           })
         }
 
         if (rows.length === 0) return null
 
+        // Map row keys to perModeSavings keys
+        const modeKeyMap: Record<string, string> = { overnight: 'overnight', fullday: 'fullday', '3day': 'threeday' }
+
         return (
           <div className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {rows.map(row => {
               const isActive = row.key === activeMode
+              const ms = perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }
               return (
                 <div key={row.key}
-                  className={`rounded-lg border p-3 transition-all ${
+                  onClick={() => {
+                    const modeMap: Record<string, 'overnight' | 'fullday' | 'threeday'> = { overnight: 'overnight', fullday: 'fullday', '3day': 'threeday' }
+                    const newMode = modeMap[row.key]
+                    if (newMode && newMode !== scenario.chargingMode) {
+                      if (newMode === 'overnight') {
+                        const depDefault = (scenario.plugInTime + 12) % 24
+                        setScenario({ ...scenario, chargingMode: 'overnight', departureTime: depDefault })
+                      } else {
+                        setScenario({ ...scenario, chargingMode: newMode, departureTime: scenario.plugInTime })
+                      }
+                    }
+                    // Update detail panel to follow the clicked scenario
+                    if (costDetailMode) setCostDetailMode(row.key)
+                  }}
+                  className={`rounded-lg border p-3 transition-all cursor-pointer ${
                     isActive
                       ? 'bg-white border-gray-300 shadow-sm ring-1 ring-gray-200'
-                      : 'bg-gray-50/60 border-gray-100 opacity-70'
+                      : 'bg-gray-50/80 border-gray-200 hover:border-gray-300 hover:shadow-sm'
                   }`}>
-                  <div className="flex items-center gap-2 mb-2">
-                    <TooltipProvider delayDuration={200}>
-                      <UITooltip>
-                        <TooltipTrigger asChild>
-                          <span className={`text-[11px] font-semibold cursor-help ${isActive ? 'text-[#313131]' : 'text-gray-400'}`}>
-                            {row.label}
-                            {isActive && <span className="ml-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">active</span>}
-                            {row.key === '3day' && hasForecast3d && <span className="text-amber-600 text-[9px] ml-1">(forecast)</span>}
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="bottom" className="max-w-[220px] text-left p-3 space-y-1">
-                          <p className="font-semibold text-[12px]">{row.tooltip.title}</p>
-                          <p className="text-[11px] text-gray-500 leading-relaxed">{row.tooltip.desc}</p>
-                          {row.tooltip.extra && <p className="text-[11px] text-amber-600">{row.tooltip.extra}</p>}
-                        </TooltipContent>
-                      </UITooltip>
-                    </TooltipProvider>
+                  <div className="mb-2">
+                    <div className="flex items-center gap-2">
+                      <TooltipProvider delayDuration={200}>
+                        <UITooltip>
+                          <TooltipTrigger asChild>
+                            <span className={`text-[11px] font-semibold cursor-help ${isActive ? 'text-[#313131]' : 'text-gray-400'}`}>
+                              {row.label}
+                              {isActive && <span className="ml-1.5 text-[9px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full">active</span>}
+                              {row.key === '3day' && hasForecast3d && <span className="text-amber-600 text-[9px] ml-1">(forecast)</span>}
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-[220px] text-left p-3 space-y-1">
+                            <p className="font-semibold text-[12px]">{row.tooltip.title}</p>
+                            <p className="text-[11px] text-gray-500 leading-relaxed">{row.tooltip.desc}</p>
+                            {row.tooltip.extra && <p className="text-[11px] text-amber-600">{row.tooltip.extra}</p>}
+                          </TooltipContent>
+                        </UITooltip>
+                      </TooltipProvider>
+                    </div>
+                    <p className={`text-[9px] font-mono mt-0.5 ${isActive ? 'text-gray-500' : 'text-gray-400'}`}>
+                      {row.spreadRange}
+                    </p>
                   </div>
-                  {/* Spread value */}
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] text-gray-400 uppercase tracking-wide">Spread</span>
-                    <span className={`text-lg font-bold tabular-nums ${isActive ? 'text-[#313131]' : 'text-gray-400'}`}>
-                      {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[10px] font-normal text-gray-400 ml-0.5">ct</span>
-                    </span>
-                  </div>
-                  {/* Min/Max range */}
-                  <p className="text-[9px] text-gray-400 mt-1 font-mono leading-relaxed">
-                    {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)}
-                    {' '}↔{' '}
-                    {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ct
-                  </p>
-                  {/* Savings */}
+                  {/* Selected day savings — avg ct/kWh prominent */}
                   {row.savings && (
-                    <div className="flex items-baseline justify-between mt-2 pt-2 border-t border-gray-100">
-                      <span className="text-[10px] text-gray-400">Savings</span>
-                      <span className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-400'}`}>
-                        {row.savings.capturableSavingsCtKwh.toFixed(2)} ct
-                        <span className="text-[10px] font-normal text-gray-400 ml-1">
-                          = {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct/sess.
-                        </span>
+                    <div className="mb-2">
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Selected Day</p>
+                      <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
+                        {row.savings.capturableSavingsCtKwh.toFixed(2)}
                       </span>
+                      <span className="text-[10px] text-gray-400 ml-1">ct/kWh</span>
+                      <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
+                        {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct for {energyPerSession} kWh
+                      </p>
                     </div>
                   )}
-                  <p className="text-[8px] text-gray-300 mt-1">{row.spreadRange}</p>
+                  {/* Last 4 weeks + Last 52 weeks — per-mode calculation */}
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 mb-2">
+                    <div>
+                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Last 4 weeks</p>
+                      <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
+                        {ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                      </p>
+                      <p className="text-[8px] text-gray-400">{ms.eur4w.toFixed(2)} EUR</p>
+                    </div>
+                    <div>
+                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Last 52 weeks</p>
+                      <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
+                        {ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                      </p>
+                      <p className="text-[8px] text-gray-400">{ms.eur52w.toFixed(0)} EUR/yr</p>
+                    </div>
+                  </div>
+                  {/* Spread = min↔max */}
+                  <div className="flex items-baseline justify-between pt-1.5 border-t border-gray-100">
+                    <span className="text-[9px] text-gray-400 uppercase tracking-wide">Spread</span>
+                    <span className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-[#313131]' : 'text-gray-500'}`}>
+                      {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">ct</span>
+                    </span>
+                  </div>
+                  <p className="text-[8px] text-gray-400 font-mono leading-relaxed">
+                    {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ↔ {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} ct
+                  </p>
+                  {/* Detail toggle */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setCostDetailMode(costDetailMode === row.key ? null : row.key) }}
+                    className="mt-2 w-full text-[9px] font-semibold text-gray-400 hover:text-gray-600 transition-colors flex items-center justify-center gap-1 pt-1.5 border-t border-gray-100"
+                  >
+                    {costDetailMode === row.key ? 'Hide' : 'Details'} {costDetailMode === row.key ? '▲' : '▼'}
+                  </button>
                 </div>
               )
             })}
@@ -1540,61 +1655,121 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         )
       })()}
 
+      {/* ── Session Cost Detail Panel ── */}
+      {costDetailMode && (() => {
+        const modeD = scenario.chargingMode
+        const overnightDepD = modeD === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
+        const fullDayDepD = modeD === 'fullday' ? scenario.departureTime : scenario.plugInTime
+        const threeDayDepD = modeD === 'threeday' ? scenario.departureTime : scenario.plugInTime
+        // Use QH prices when in 15-min resolution
+        const detailPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+        const detailIsQH = isQH && prices.hourlyQH.length > 0
+        const winMap: Record<string, { prices: HourlyPrice[]; label: string }> = {
+          overnight: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, overnightDepD), label: 'Overnight' },
+          fullday: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, fullDayDepD), label: 'Full Day' },
+          '3day': { prices: hasDate3Data ? buildMultiDayWindow(detailPrices, date1, date4, scenario.plugInTime, threeDayDepD) : [], label: '3-Day' },
+        }
+        const detail = winMap[costDetailMode]
+        if (!detail || detail.prices.length === 0) return null
+        // QH: each slot = 15min = chargePowerKw * 0.25 kWh; Hourly: each slot = 1h = chargePowerKw kWh
+        const kwhPerSlot = detailIsQH ? chargePowerKw * 0.25 : chargePowerKw
+        const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
+        const slotLabel = detailIsQH ? `${slotsNeeded} × 15 min` : `${slotsNeeded}h`
+        const windowLabel = detailIsQH ? `${detail.prices.length} × 15 min` : `${detail.prices.length}h`
+        const wp = detail.prices
+        const baselineSlots = wp.slice(0, slotsNeeded)
+        const optimizedSlots = [...wp].sort((a: HourlyPrice, b: HourlyPrice) => a.priceEurMwh - b.priceEurMwh).slice(0, slotsNeeded)
+          .sort((a: HourlyPrice, b: HourlyPrice) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+        const bAvg = baselineSlots.length > 0 ? baselineSlots.reduce((s: number, p: HourlyPrice) => s + p.priceCtKwh, 0) / baselineSlots.length : 0
+        const oAvg = optimizedSlots.length > 0 ? optimizedSlots.reduce((s: number, p: HourlyPrice) => s + p.priceCtKwh, 0) / optimizedSlots.length : 0
+        const bEur = bAvg * energyPerSession / 100
+        const oEur = oAvg * energyPerSession / 100
+        const fmtSlot = (p: HourlyPrice) => {
+          const d = p.date !== date1 ? ` ${p.date.slice(8, 10)}.` : ''
+          return `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}${d}`
+        }
+
+        return (
+          <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-bold text-[#313131]">
+                Session Cost — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">(15 min)</span>}
+              </p>
+              <div className="flex items-center gap-3">
+                <p className="text-[10px] text-gray-400">
+                  {slotLabel} charge · {windowLabel} window · {energyPerSession} kWh
+                </p>
+                <button onClick={() => setCostDetailMode(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {/* Baseline = first N slots */}
+              <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
+                <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2">
+                  Unmanaged · first {slotLabel}
+                </p>
+                <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
+                  {baselineSlots.map((p: HourlyPrice, i: number) => (
+                    <div key={i} className="flex justify-between text-[11px] leading-snug">
+                      <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
+                      <span className="tabular-nums font-semibold text-red-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-red-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
+                  <span className="text-gray-500 font-medium">avg</span>
+                  <span className="font-bold text-red-700 tabular-nums">{bAvg.toFixed(2)} ct/kWh</span>
+                </div>
+                <div className="flex justify-between text-[10px] mt-0.5">
+                  <span className="text-gray-400">cost</span>
+                  <span className="font-semibold text-red-600 tabular-nums">{bEur.toFixed(2)} EUR</span>
+                </div>
+              </div>
+
+              {/* Optimized = cheapest N hours */}
+              <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
+                <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
+                  Optimized · cheapest {slotLabel}
+                </p>
+                <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
+                  {optimizedSlots.map((p: HourlyPrice, i: number) => (
+                    <div key={i} className="flex justify-between text-[11px] leading-snug">
+                      <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
+                      <span className="tabular-nums font-semibold text-emerald-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="border-t border-emerald-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
+                  <span className="text-gray-500 font-medium">avg</span>
+                  <span className="font-bold text-emerald-700 tabular-nums">{oAvg.toFixed(2)} ct/kWh</span>
+                </div>
+                <div className="flex justify-between text-[10px] mt-0.5">
+                  <span className="text-gray-400">cost</span>
+                  <span className="font-semibold text-emerald-600 tabular-nums">{oEur.toFixed(2)} EUR</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Summary row */}
+            <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
+              <div className="text-[10px] text-gray-500">
+                <span className="font-mono">{bAvg.toFixed(2)} ct − {oAvg.toFixed(2)} ct = <strong className="text-emerald-600">{(bAvg - oAvg).toFixed(2)} ct/kWh</strong></span>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-gray-400">savings </span>
+                <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{(bEur - oEur).toFixed(2)} EUR</span>
+                <span className="text-[10px] text-gray-400 ml-1">/session</span>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       </div>{/* end right content column */}
       </div>{/* end main two-column grid */}
 
-      {/* ── Savings Potential (Outcome Box) ── */}
-      <Card id="tour-savings-potential" className="overflow-hidden shadow-sm border-gray-200/80">
-        <CardHeader className="pb-3 border-b border-gray-100">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-base font-bold text-[#313131]">Savings Potential</CardTitle>
-              <p className="text-[11px] text-gray-400 mt-0.5">
-                {isFullDay ? 'Full day · ' : 'Overnight · '}Rolling 12 months · {sessionsPerYear} sessions/yr
-              </p>
-            </div>
-            <div className="text-right">
-              <AnimatedNumber value={rollingAvgSavings} decimals={0} suffix=" EUR" className="text-3xl font-extrabold text-emerald-700 tabular-nums leading-none" />
-              <p className="text-[10px] text-gray-400 mt-0.5">per year</p>
-            </div>
-          </div>
-        </CardHeader>
-        {sessionsPerYear > 0 && energyPerSession > 0 && rollingAvgSavings > 0 && (
-          <CardContent className="pt-3 pb-3">
-            <div className="flex items-center gap-6">
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Avg Monetizable Spread</p>
-                <p className="text-xl font-bold text-emerald-600 tabular-nums">
-                  {((rollingAvgSavings / sessionsPerYear) / energyPerSession * 100).toFixed(1)}
-                  <span className="text-sm font-normal text-gray-400 ml-1">ct/kWh</span>
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-0.5">Monthly</p>
-                <p className="text-xl font-bold text-emerald-600 tabular-nums">
-                  {monthlySavings.toFixed(2)}
-                  <span className="text-sm font-normal text-gray-400 ml-1">EUR</span>
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        )}
-      </Card>
-
-      {/* ── Session Cost Breakdown (full width) ── */}
-      {sessionCost && (
-        <SessionCostCard
-          sessionCost={sessionCost}
-          sessionsPerYear={sessionsPerYear}
-          energyPerSession={energyPerSession}
-          sessionHoursNeeded={sessionHoursNeeded}
-          windowHours={windowHours}
-          flexibilityHours={flexibilityHours}
-          baselineEndHour={baselineEndHour}
-          plugInTime={scenario.plugInTime}
-          isQH={isQH}
-        />
-      )}
+      {/* Savings integrated into scenario cards above */}
 
       {/* ── Monthly Savings (3/4) + Yearly Savings (1/4) ── */}
       {monthlySavingsData.length > 0 && (
@@ -1608,12 +1783,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             monthlySavings={monthlySavings}
             avgDailyEur={sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0}
             selectedDate={date1}
+            chargingMode={scenario.chargingMode}
           />
           {yearlySavingsData.length > 0 && (
             <YearlySavingsCard
               yearlySavingsData={yearlySavingsData}
               weeklyPlugIns={weeklyPlugIns}
               energyPerSession={energyPerSession}
+              chargingMode={scenario.chargingMode}
             />
           )}
         </div>
