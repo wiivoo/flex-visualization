@@ -1100,7 +1100,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             </div>
           </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pb-2">
             {/* ── Chart container ── */}
             <div className="relative h-[400px] select-none"
               ref={chartRef}
@@ -1437,32 +1437,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               )}
             </div>
 
-            {/* SMARD source link */}
-            {date1 && (() => {
-              const d = new Date(date1 + 'T12:00:00Z')
-              const day = d.getUTCDay()
-              const mondayOffset = day === 0 ? -6 : 1 - day
-              const monday = new Date(d)
-              monday.setUTCDate(monday.getUTCDate() + mondayOffset)
-              monday.setUTCHours(0, 0, 0, 0)
-              const ts = monday.getTime()
-              const smardPageUrl = `https://www.smard.de/home/marktdaten?marketDataAttributes=%7B%22resolution%22:%22hour%22,%22from%22:${ts},%22to%22:${ts + 7 * 86400000},%22moduleIds%22:%5B8004169%5D,%22selectedCategory%22:null,%22activeChart%22:true,%22style%22:%22color%22,%22categoriesModuleOrder%22:%7B%7D,%22region%22:%22DE%22%7D`
-              return (
-                <div className="flex items-center gap-3 mt-1 px-1 text-[10px] text-gray-400">
-                  <span>Source: EPEX Spot DE-LU Day-Ahead via</span>
-                  <a href={smardPageUrl} target="_blank" rel="noopener noreferrer"
-                    className="hover:text-gray-600 underline underline-offset-2">
-                    SMARD.de
-                  </a>
-                  {hasForecastData && (
-                    <>
-                      <span className="text-gray-300">+</span>
-                      <span className="text-amber-500">EnergyForecast.de (forecast)</span>
-                    </>
-                  )}
-                </div>
-              )
-            })()}
+            {/* Source attribution — compact inline */}
+            <div className="flex items-center gap-2 px-1 text-[9px] text-gray-300">
+              <span>EPEX Spot DE-LU Day-Ahead via <a href="https://www.smard.de" target="_blank" rel="noopener noreferrer" className="hover:text-gray-500 underline underline-offset-2">SMARD.de</a></span>
+              {hasForecastData && <span className="text-amber-400">+ EnergyForecast.de</span>}
+            </div>
 
           </CardContent>
         </Card>
