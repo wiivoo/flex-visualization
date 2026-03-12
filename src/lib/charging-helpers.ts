@@ -167,12 +167,17 @@ const EMPTY_V2G: V2gResult = {
  * Model: plug in at startSoc → trade the battery (buy low / sell high) →
  * must reach targetSoc by departure. All revenue IS the saving.
  *
+ * Supports multiple charge/discharge cycles per session: the battery can
+ * charge→discharge→charge→discharge repeatedly, limited only by available
+ * time slots, battery bounds, and pair profitability.
+ *
  * Algorithm:
  * 1. Determine how many kWh must be net-charged: (targetSoc - startSoc) * batteryKwh / 100
- * 2. Greedy pair cheapest buy slots with most expensive sell slots
- * 3. Each pair is profitable if: sellPrice - buyPrice/efficiency - degradation > 0
- * 4. Respect battery bounds: never below minSoc, never above 100%
- * 5. Ensure enough net charge to reach targetSoc
+ * 2. Reserve cheapest slots for mandatory net charge to reach targetSoc
+ * 3. From remaining slots, greedily pair cheapest buy + most expensive sell
+ * 4. Each pair is profitable if: sellPrice - buyPrice/efficiency - degradation > 0
+ * 5. Multiple cycles allowed — usable battery window [minSoc, 100%] per cycle
+ * 6. Total cycles limited by time: each cycle needs 1 charge + 1 discharge slot
  */
 export function computeV2gWindowSavings(
   windowPrices: HourlyPrice[],
@@ -192,7 +197,7 @@ export function computeV2gWindowSavings(
   const targetKwh = batteryKwh * targetSocPercent / 100
   const minKwh = batteryKwh * minSocPercent / 100
   const maxKwh = batteryKwh
-  const chargeKwhPerSlot = Math.min(kwhPerSlot, maxKwh) // capped by slot duration × power
+  const chargeKwhPerSlot = Math.min(kwhPerSlot, maxKwh)
   const dischargeKwhPerSlot = Math.min(dischargePowerKw * (kwhPerSlot / chargePowerKw), maxKwh)
 
   // Net kWh needed to reach target from start
@@ -202,12 +207,12 @@ export function computeV2gWindowSavings(
   const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
 
   // Step 1: Reserve cheapest slots for net charging (must reach targetSoc)
-  // Each charge slot adds kwhPerSlot to battery
   const netChargeSlotsNeeded = Math.ceil(netNeededKwh / chargeKwhPerSlot)
   const netChargeSlots = sorted.slice(0, netChargeSlotsNeeded)
   const netChargeKeys = new Set(netChargeSlots.map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
 
-  // Step 2: From remaining slots, find profitable charge/discharge pairs
+  // Step 2: From remaining slots, find ALL profitable charge/discharge pairs
+  // Multiple cycles allowed — battery can go min→max→min→max repeatedly
   const remaining = sorted.filter(p => !netChargeKeys.has(`${p.date}-${p.hour}-${p.minute ?? 0}`))
   const buyLow = [...remaining] // cheap→expensive
   const sellHigh = [...remaining].reverse() // expensive→cheap
@@ -216,14 +221,14 @@ export function computeV2gWindowSavings(
   const arbitrageDischargeSlots: HourlyPrice[] = []
   const usedKeys = new Set<string>()
 
-  // Available capacity for trading: room above minSoc + startKwh, capped by battery
-  // The battery can cycle within [minKwh, maxKwh] during the session
-  const maxTradeableKwh = maxKwh - minKwh
+  // Usable battery capacity per cycle
+  const usableBatteryKwh = maxKwh - minKwh
 
-  let totalTraded = 0
+  // Track energy within the current cycle — reset when a full cycle completes
+  let currentCycleKwh = 0
+
   let bIdx = 0
   for (const sell of sellHigh) {
-    if (totalTraded >= maxTradeableKwh) break
     const sellKey = `${sell.date}-${sell.hour}-${sell.minute ?? 0}`
     if (usedKeys.has(sellKey)) continue
 
@@ -238,14 +243,20 @@ export function computeV2gWindowSavings(
     const buy = buyLow[bIdx]
     // Profitability: sell revenue > buy cost (adj for RT efficiency) + degradation
     const profit = sell.priceCtKwh - (buy.priceCtKwh / roundTripEfficiency) - degradationCtKwh
-    if (profit <= 0) break
+    if (profit <= 0) break // remaining pairs will be less profitable
 
-    const tradeKwh = Math.min(dischargeKwhPerSlot, chargeKwhPerSlot, maxTradeableKwh - totalTraded)
+    const tradeKwh = Math.min(dischargeKwhPerSlot, chargeKwhPerSlot)
+
+    // Check if this pair fits in the current cycle, or start a new cycle
+    if (currentCycleKwh + tradeKwh > usableBatteryKwh) {
+      currentCycleKwh = 0 // new cycle
+    }
+
     arbitrageDischargeSlots.push(sell)
     arbitrageChargeSlots.push(buy)
     usedKeys.add(sellKey)
     usedKeys.add(`${buy.date}-${buy.hour}-${buy.minute ?? 0}`)
-    totalTraded += tradeKwh
+    currentCycleKwh += tradeKwh
     bIdx++
   }
 
@@ -255,6 +266,7 @@ export function computeV2gWindowSavings(
 
   const totalChargedKwh = allChargeSlots.length * chargeKwhPerSlot
   const totalDischargedKwh = allDischargeSlots.length * dischargeKwhPerSlot
+  const cyclesCompleted = usableBatteryKwh > 0 ? totalDischargedKwh / usableBatteryKwh : 0
 
   // Financials
   const chargeAvgCt = allChargeSlots.length > 0
@@ -262,18 +274,13 @@ export function computeV2gWindowSavings(
   const dischargeAvgCt = allDischargeSlots.length > 0
     ? allDischargeSlots.reduce((s, p) => s + p.priceCtKwh, 0) / allDischargeSlots.length : 0
 
-  const chargeCostEur = allChargeSlots.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot, 0) / 100
   const dischargeRevenueEur = allDischargeSlots.reduce((s, p) => s + p.priceCtKwh * dischargeKwhPerSlot, 0) / 100
   const degradationCostEur = degradationCtKwh * totalDischargedKwh / 100
-  const profitEur = dischargeRevenueEur - chargeCostEur + (chargeAvgCt > 0 ? 0 : 0) // net: sell - buy - degradation
-  // But we need to account for: the net charging cost is just the cost of getting to targetSoc
-  // The arbitrage profit = sell revenue - buy cost for arb pairs - degradation
+  // Arbitrage profit: sell revenue - buy cost (adjusted for round-trip efficiency) - degradation
   const arbChargeCost = arbitrageChargeSlots.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot / roundTripEfficiency, 0) / 100
   const arbProfit = dischargeRevenueEur - arbChargeCost - degradationCostEur
   // Net charge cost = cheapest slots to reach target
   const netChargeCostEur = netChargeSlots.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot, 0) / 100
-  // Total "savings" = arbitrage profit (the net charging cost is unavoidable)
-  const totalProfitEur = arbProfit
 
   // SoC tracking (simplified — greedy doesn't guarantee chronological feasibility,
   // but for the dashboard visualization this is sufficient)
@@ -295,11 +302,11 @@ export function computeV2gWindowSavings(
     chargeCostEur: netChargeCostEur + arbChargeCost,
     dischargeRevenueEur,
     degradationCostEur,
-    profitEur: totalProfitEur,
-    profitCtKwh: totalDischargedKwh > 0 ? totalProfitEur * 100 / totalDischargedKwh : 0,
+    profitEur: arbProfit,
+    profitCtKwh: totalDischargedKwh > 0 ? arbProfit * 100 / totalDischargedKwh : 0,
     startSoc: startSocPercent,
     endSoc,
-    minSocReached: minSocPercent, // greedy approximation
+    minSocReached: minSocPercent,
     dischargeKeys,
     chargeKeys,
   }

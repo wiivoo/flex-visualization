@@ -6,7 +6,7 @@ import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger }
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, totalWeeklyPlugIns, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
-import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr, computeV2gWindowSavings } from '@/lib/charging-helpers'
+import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr, computeV2gWindowSavings, type V2gResult } from '@/lib/charging-helpers'
 import { VEHICLE_PRESETS } from '@/lib/v2-config'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { SessionCostCard } from '@/components/v2/SessionCostCard'
@@ -979,6 +979,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         </CardHeader>
         <CardContent className="pt-4 pb-4">
           <div className="space-y-4">
+            {/* V1G-only settings: Mileage, Weekly Plug-ins */}
+            {!isV2G && (
+            <>
             {/* Mileage slider */}
             <div className="flex flex-col gap-2">
               <div className="flex items-baseline justify-between h-8">
@@ -1042,6 +1045,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 </div>
               </div>
             </div>
+            </>
+            )}
 
             {/* Typical Plug-in Time */}
             <div className="flex flex-col gap-2">
@@ -1068,6 +1073,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               </div>
             </div>
 
+            {/* V1G-only: Per Session + Session duration + charge power */}
+            {!isV2G && (
+            <>
             {/* Per Session — slider + display */}
             <div className="flex flex-col gap-2">
               <div className="flex items-baseline justify-between h-8">
@@ -1107,83 +1115,141 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 >11 kW</button>
               </div>
             </div>
+            </>
+            )}
 
-            {/* V2G Settings — conditional */}
+            {/* V2G Settings — conditional, same visual style as V1G sliders */}
             {isV2G && (
-              <div className="space-y-3 pt-3 mt-1 border-t border-amber-200/60">
-                <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest">V2G Settings</p>
+              <div className="space-y-4">
+                {/* Battery Size — slider snaps to presets */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-baseline justify-between h-8">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Battery</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{batteryKwh}<span className="text-xs font-normal text-gray-400 ml-1">kWh</span></span>
+                  </div>
+                  <div>
+                    <input type="range" min={0} max={VEHICLE_PRESETS.length - 1} step={1}
+                      value={VEHICLE_PRESETS.findIndex(v => v.id === scenario.vehicleId)}
+                      onChange={(e) => {
+                        const preset = VEHICLE_PRESETS[Number(e.target.value)]
+                        if (preset) setScenario({ ...scenario, vehicleId: preset.id })
+                      }}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      {VEHICLE_PRESETS.map(v => <span key={v.id}>{v.battery_kwh} kWh</span>)}
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-400 text-center">{vehiclePreset.label}: {vehiclePreset.examples}</p>
+                </div>
 
                 {/* Start SoC */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] font-medium text-gray-500">Start SoC</span>
-                    <span className="text-sm font-bold text-[#313131] tabular-nums">{scenario.v2gStartSoc}<span className="text-[10px] font-normal text-gray-400">%</span></span>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-baseline justify-between h-8">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Start SoC</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.v2gStartSoc}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
                   </div>
-                  <input type="range" min={10} max={90} step={5}
-                    value={scenario.v2gStartSoc}
-                    onChange={(e) => setScenario({ ...scenario, v2gStartSoc: Number(e.target.value) })}
-                    className="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer" />
+                  <div>
+                    <input type="range" min={10} max={90} step={5}
+                      value={scenario.v2gStartSoc}
+                      onChange={(e) => setScenario({ ...scenario, v2gStartSoc: Number(e.target.value) })}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      <span>10%</span>
+                      <span>90%</span>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Target SoC */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] font-medium text-gray-500">Target SoC</span>
-                    <span className="text-sm font-bold text-[#313131] tabular-nums">{scenario.v2gTargetSoc}<span className="text-[10px] font-normal text-gray-400">%</span></span>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-baseline justify-between h-8">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Target SoC</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.v2gTargetSoc}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
                   </div>
-                  <input type="range" min={50} max={100} step={5}
-                    value={scenario.v2gTargetSoc}
-                    onChange={(e) => setScenario({ ...scenario, v2gTargetSoc: Number(e.target.value) })}
-                    className="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer" />
+                  <div>
+                    <input type="range" min={50} max={100} step={5}
+                      value={scenario.v2gTargetSoc}
+                      onChange={(e) => setScenario({ ...scenario, v2gTargetSoc: Number(e.target.value) })}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      <span>50%</span>
+                      <span>100%</span>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Discharge Power */}
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-medium text-gray-500">Discharge</span>
+                {/* Min SoC */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-baseline justify-between h-8">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Min Battery</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.minSocPercent}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
+                  </div>
+                  <div>
+                    <input type="range" min={10} max={40} step={5}
+                      value={scenario.minSocPercent}
+                      onChange={(e) => setScenario({ ...scenario, minSocPercent: Number(e.target.value) })}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      <span>10%</span>
+                      <span>40%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Round-trip Efficiency */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-baseline justify-between h-8">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Round-trip Eff.</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{Math.round(scenario.roundTripEfficiency * 100)}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
+                  </div>
+                  <div>
+                    <input type="range" min={80} max={95} step={1}
+                      value={Math.round(scenario.roundTripEfficiency * 100)}
+                      onChange={(e) => setScenario({ ...scenario, roundTripEfficiency: Number(e.target.value) / 100 })}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      <span>80%</span>
+                      <span>95%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Degradation Cost */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-baseline justify-between h-8">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Degradation</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.degradationCtKwh.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-1">ct/kWh</span></span>
+                  </div>
+                  <div>
+                    <input type="range" min={1} max={8} step={0.5}
+                      value={scenario.degradationCtKwh}
+                      onChange={(e) => setScenario({ ...scenario, degradationCtKwh: Number(e.target.value) })}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
+                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                      <span>1 ct</span>
+                      <span>8 ct</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Charge + Discharge Power — bottom of card */}
+                <div className="flex items-center justify-center gap-2 pt-2 border-t border-gray-100">
+                  <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
+                    {[7, 11].map(kw => (
+                      <button key={kw}
+                        onClick={() => setScenario({ ...scenario, chargePowerKw: kw })}
+                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === kw ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                      >{kw} kW ↑</button>
+                    ))}
+                  </div>
                   <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
                     {[5, 7, 11].map(kw => (
                       <button key={kw}
                         onClick={() => setScenario({ ...scenario, dischargePowerKw: kw })}
                         className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${scenario.dischargePowerKw === kw ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                      >{kw} kW</button>
+                      >{kw} kW ↓</button>
                     ))}
                   </div>
-                </div>
-
-                {/* Round-trip Efficiency */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] font-medium text-gray-500">Round-trip Eff.</span>
-                    <span className="text-sm font-bold text-[#313131] tabular-nums">{Math.round(scenario.roundTripEfficiency * 100)}<span className="text-[10px] font-normal text-gray-400">%</span></span>
-                  </div>
-                  <input type="range" min={80} max={95} step={1}
-                    value={Math.round(scenario.roundTripEfficiency * 100)}
-                    onChange={(e) => setScenario({ ...scenario, roundTripEfficiency: Number(e.target.value) / 100 })}
-                    className="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer" />
-                </div>
-
-                {/* Degradation Cost */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] font-medium text-gray-500">Degradation</span>
-                    <span className="text-sm font-bold text-[#313131] tabular-nums">{scenario.degradationCtKwh.toFixed(1)}<span className="text-[10px] font-normal text-gray-400 ml-0.5">ct/kWh</span></span>
-                  </div>
-                  <input type="range" min={1} max={8} step={0.5}
-                    value={scenario.degradationCtKwh}
-                    onChange={(e) => setScenario({ ...scenario, degradationCtKwh: Number(e.target.value) })}
-                    className="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer" />
-                </div>
-
-                {/* Min SoC */}
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-[10px] font-medium text-gray-500">Min Battery</span>
-                    <span className="text-sm font-bold text-[#313131] tabular-nums">{scenario.minSocPercent}<span className="text-[10px] font-normal text-gray-400">%</span></span>
-                  </div>
-                  <input type="range" min={20} max={50} step={5}
-                    value={scenario.minSocPercent}
-                    onChange={(e) => setScenario({ ...scenario, minSocPercent: Number(e.target.value) })}
-                    className="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-amber-500 [&::-webkit-slider-thumb]:shadow-sm [&::-webkit-slider-thumb]:cursor-pointer" />
                 </div>
               </div>
             )}
@@ -1371,14 +1437,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                         <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px]">
                           <p className="text-gray-500 text-xs mb-1">{fmtDateShort(d.date)} {d.label}</p>
                           <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} ct/kWh{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
-                          {d.baselinePrice !== null && (
+                          {!isV2G && d.baselinePrice !== null && (
                             <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
                               <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Charge now (starts at plug-in)
                             </p>
                           )}
                           {d.optimizedPrice !== null && (
                             <p className="text-blue-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-blue-500 rounded inline-block" /> Smart charging (cheapest hours)
+                              <span className="w-2 h-0.5 bg-blue-500 rounded inline-block" /> {isV2G ? 'V2G Charge (buy low)' : 'Smart charging (cheapest hours)'}
+                            </p>
+                          )}
+                          {isV2G && d.dischargePrice !== null && (
+                            <p className="text-emerald-600 text-xs mt-1 flex items-center gap-1">
+                              <span className="w-2 h-0.5 bg-emerald-500 rounded inline-block" /> V2G Discharge (sell high)
                             </p>
                           )}
                           {showRenewable && d.renewableShare != null && (
@@ -1414,15 +1485,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   })()}
 
                   {/* Charging hour bands — clear colored backgrounds per block */}
-                  {baselineRanges.map((r, i) => (
+                  {!isV2G && baselineRanges.map((r, i) => (
                     <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
                   ))}
                   {optimizedRanges.map((r, i) => (
                     <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
                   ))}
-                  {/* V2G discharge bands — amber */}
+                  {/* V2G discharge bands — green */}
                   {dischargeRanges.map((r, i) => (
-                    <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#F59E0B" fillOpacity={0.10} ifOverflow="hidden" />
+                    <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.10} ifOverflow="hidden" />
                   ))}
 
                   {/* Renewable generation share — very subtle background area */}
@@ -1449,20 +1520,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     </>
                   )}
 
-                  {/* Baseline dots — red, no connecting line for clarity on non-contiguous hours */}
-                  <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isQH ? 2 : 3}
-                    dot={isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 }}
-                    connectNulls={false} />
+                  {/* Baseline dots — red (V1G only) */}
+                  {!isV2G && (
+                    <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isQH ? 2 : 3}
+                      dot={isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 }}
+                      connectNulls={false} />
+                  )}
 
-                  {/* Optimized dots — blue */}
+                  {/* Optimized / V2G charge dots — blue */}
                   <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
                     dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
-                  {/* V2G discharge dots — amber */}
+                  {/* V2G discharge dots — green */}
                   {isV2G && (
-                    <Line type="monotone" dataKey="dischargePrice" yAxisId="left" stroke="#F59E0B" strokeWidth={isQH ? 2 : 3}
-                      dot={isQH ? { r: 2, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1.5 }}
+                    <Line type="monotone" dataKey="dischargePrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
+                      dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
                       connectNulls={false} />
                   )}
 
@@ -1606,7 +1679,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 if (dYAdj + 36 > chartBottom - 10) dYAdj = dY - 36 - 10
                 return (
                   <>
-                    {/* Baseline (Charge now) — centered on red dots, below line */}
+                    {/* Baseline (Charge now) — V1G only */}
+                    {!isV2G && (
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
@@ -1622,35 +1696,36 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                         </div>
                       </div>
                     </div>
-                    {/* Smart charging — blue label on the line */}
+                    )}
+                    {/* Smart charging / V2G Charge — blue label on the line */}
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">Smart charging</span>
+                        <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">{isV2G ? 'V2G Charge' : 'Smart charging'}</span>
                         <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
                           <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {pillSavings.oAvg.toFixed(1)} ct/kWh
+                            {isV2G && pillV2g ? pillV2g.chargeAvgCt.toFixed(1) : pillSavings.oAvg.toFixed(1)} ct/kWh
                           </span>
                           <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
-                            {(pillSavings.oAvg * energyPerSession / 100).toFixed(2)} €
+                            {isV2G && pillV2g ? pillV2g.chargeCostEur.toFixed(2) : (pillSavings.oAvg * energyPerSession / 100).toFixed(2)} €
                           </span>
                         </div>
                       </div>
                     </div>
-                    {/* V2G discharge label — amber, on the discharge dots */}
+                    {/* V2G discharge label — green, on the discharge dots */}
                     {isV2G && pillV2g && dCenter && pillV2g.dischargeSlots.length > 0 && (
                       <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                         style={{ left: dCenter, top: dYAdj, transform: 'translateX(-50%)' }}>
                         <div className="flex flex-col items-center gap-0.5">
-                          <span className="text-[8px] font-bold text-amber-500 uppercase tracking-wider">V2G Discharge</span>
-                          <div className="bg-amber-50/40 backdrop-blur-[2px] border border-amber-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0" />
-                            <span className="text-amber-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                          <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">V2G Discharge</span>
+                          <div className="bg-emerald-50/40 backdrop-blur-[2px] border border-emerald-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
+                            <span className="text-emerald-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
                               {pillV2g.dischargeAvgCt.toFixed(1)} ct/kWh
                             </span>
-                            <span className="text-amber-400 text-[9px] tabular-nums whitespace-nowrap">
-                              +{pillV2g.profitEur.toFixed(2)} €
+                            <span className="text-emerald-400 text-[9px] tabular-nums whitespace-nowrap">
+                              +{pillV2g.dischargeRevenueEur.toFixed(2)} €
                             </span>
                           </div>
                         </div>
@@ -1660,14 +1735,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     {totalSavingsCt > 0 && (
                       <div className="absolute pointer-events-none z-10"
                         style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
-                        <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 ${
-                          isV2G ? 'bg-amber-50/80 border-amber-300/50' : 'bg-emerald-50/80 border-emerald-300/50'
-                        }`}>
-                          <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${isV2G ? 'text-amber-700' : 'text-emerald-700'}`}>
-                            ▼ {totalSavingsCt.toFixed(1)} ct/kWh
+                        <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
+                          <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
+                            {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(1)} ct/kWh
                           </span>
-                          <span className={`text-[9px] font-semibold tabular-nums whitespace-nowrap ${isV2G ? 'text-amber-600' : 'text-emerald-600'}`}>
-                            {totalSavingsEur.toFixed(2)} € saved
+                          <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
+                            {totalSavingsEur.toFixed(2)} € {isV2G ? 'profit' : 'saved'}
                           </span>
                         </div>
                       </div>
@@ -1809,6 +1882,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const savingsFullDay = fullDaySp
         const savings3Day = threeDaySp
 
+        // V2G profit for each window
+        const v2gOvernightProfit = isV2G ? computeV2gWindowSavings(overnightSpreadWin, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, spreadKwhPerSlot) : null
+        const v2gFullDayProfit = isV2G ? computeV2gWindowSavings(fullDaySpreadWin, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, spreadKwhPerSlot) : null
+        const v2gThreeDayProfit = isV2G && threeDaySpreadWin.length > 0 ? computeV2gWindowSavings(threeDaySpreadWin, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, spreadKwhPerSlot) : null
+
         // Determine which mode is currently active for highlight
         const activeMode = scenario.chargingMode === 'threeday' ? '3day' : scenario.chargingMode === 'fullday' ? 'fullday' : 'overnight'
 
@@ -1818,6 +1896,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           tooltip: { title: string; desc: string; extra?: string }
           spread: ReturnType<typeof computeSpread>
           savings: ReturnType<typeof computeSpread>
+          v2gProfit: V2gResult | null
           spreadRange: string
           savingsRange: string
           windowPrices: HourlyPrice[]
@@ -1829,7 +1908,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             key: 'overnight',
             label: 'Overnight',
             tooltip: { title: 'Overnight window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)} next morning.` },
-            spread: overnightSp, savings: savingsOvernight, windowPrices: overnightSpreadWin,
+            spread: overnightSp, savings: savingsOvernight, v2gProfit: v2gOvernightProfit, windowPrices: overnightSpreadWin,
             spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(overnightDep)} ${fmtDateShort(date2)}`,
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)}`,
           })
@@ -1839,7 +1918,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             key: 'fullday',
             label: 'Full Day',
             tooltip: { title: 'Full day window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)} next day.` },
-            spread: fullDaySp, savings: savingsFullDay, windowPrices: fullDaySpreadWin,
+            spread: fullDaySp, savings: savingsFullDay, v2gProfit: v2gFullDayProfit, windowPrices: fullDaySpreadWin,
             spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(fullDayDep)} ${fmtDateShort(date2)}`,
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)}`,
           })
@@ -1853,7 +1932,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(threeDayDep)} on ${fmtDateShort(date4)}.`,
               extra: hasForecast3d ? 'Includes forecast prices.' : undefined,
             },
-            spread: threeDaySp, savings: savings3Day, windowPrices: threeDaySpreadWin,
+            spread: threeDaySp, savings: savings3Day, v2gProfit: v2gThreeDayProfit, windowPrices: threeDaySpreadWin,
             spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(threeDayDep)} ${fmtDateShort(date4)}`,
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(threeDayDep)}`,
           })
@@ -1913,8 +1992,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       {row.spreadRange}
                     </p>
                   </div>
-                  {/* Selected day savings — avg ct/kWh prominent */}
-                  {row.savings && (
+                  {/* Selected day — V2G: profit, V1G: savings */}
+                  {isV2G && row.v2gProfit ? (
+                    <div className="mb-2">
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Profit on selected day</p>
+                      <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
+                        {row.v2gProfit.profitEur.toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-400 ml-1">EUR</span>
+                      <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
+                        {row.v2gProfit.profitCtKwh.toFixed(1)} ct/kWh · {row.v2gProfit.totalDischargedKwh.toFixed(1)} kWh discharged
+                      </p>
+                      <div className="flex gap-3 mt-1 text-[9px]">
+                        <span className="text-blue-500">Buy: {row.v2gProfit.chargeCostEur.toFixed(2)} €</span>
+                        <span className="text-emerald-500">Sell: {row.v2gProfit.dischargeRevenueEur.toFixed(2)} €</span>
+                        <span className="text-gray-400">Wear: {row.v2gProfit.degradationCostEur.toFixed(2)} €</span>
+                      </div>
+                    </div>
+                  ) : row.savings && (
                     <div className="mb-2">
                       <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
@@ -1929,16 +2024,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   {/* Last 4 weeks + Last 52 weeks — per-mode calculation */}
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 mb-2">
                     <div>
-                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Avg savings 4 wk</p>
+                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 4 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                        {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR' : 'ct/kWh'}</span>
                       </p>
                       <p className="text-[8px] text-gray-400">{ms.eur4w.toFixed(2)} EUR total</p>
                     </div>
                     <div>
-                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Avg savings 52 wk</p>
+                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 52 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
+                        {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR/yr' : 'ct/kWh'}</span>
                       </p>
                       <p className="text-[8px] text-gray-400">{ms.eur52w.toFixed(0)} EUR/yr</p>
                     </div>
@@ -1973,7 +2068,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const overnightDepD = modeD === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
         const fullDayDepD = modeD === 'fullday' ? scenario.departureTime : scenario.plugInTime
         const threeDayDepD = modeD === 'threeday' ? scenario.departureTime : scenario.plugInTime
-        // Use QH prices when in 15-min resolution
         const detailPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
         const detailIsQH = isQH && prices.hourlyQH.length > 0
         const winMap: Record<string, { prices: HourlyPrice[]; label: string }> = {
@@ -1983,8 +2077,106 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         }
         const detail = winMap[costDetailMode]
         if (!detail || detail.prices.length === 0) return null
-        // QH: each slot = 15min = chargePowerKw * 0.25 kWh; Hourly: each slot = 1h = chargePowerKw kWh
         const kwhPerSlot = detailIsQH ? chargePowerKw * 0.25 : chargePowerKw
+        const fmtSlot = (p: HourlyPrice) => {
+          const d = p.date !== date1 ? ` ${p.date.slice(8, 10)}.` : ''
+          return `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}${d}`
+        }
+
+        // V2G detail panel
+        if (isV2G) {
+          const v2gDetail = computeV2gWindowSavings(detail.prices, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, kwhPerSlot)
+          const chargeSlotsSorted = [...v2gDetail.chargeSlots].sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+          const dischargeSlotsSorted = [...v2gDetail.dischargeSlots].sort((a, b) => a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.hour !== b.hour ? a.hour - b.hour : (a.minute ?? 0) - (b.minute ?? 0))
+          return (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-bold text-[#313131]">
+                  V2G Arbitrage — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">(15 min)</span>}
+                </p>
+                <div className="flex items-center gap-3">
+                  <p className="text-[10px] text-gray-400">
+                    {batteryKwh} kWh battery · {scenario.v2gStartSoc}% → {scenario.v2gTargetSoc}% SoC
+                  </p>
+                  <button onClick={() => setCostDetailMode(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Charge slots (buy low) — blue */}
+                <div className="bg-blue-50/60 rounded-lg p-3 border border-blue-100/80">
+                  <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider mb-2">
+                    Charge · {chargeSlotsSorted.length} slots · {v2gDetail.totalChargedKwh.toFixed(1)} kWh
+                  </p>
+                  <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
+                    {chargeSlotsSorted.map((p: HourlyPrice, i: number) => (
+                      <div key={i} className="flex justify-between text-[11px] leading-snug">
+                        <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
+                        <span className="tabular-nums font-semibold text-blue-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-blue-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
+                    <span className="text-gray-500 font-medium">avg buy</span>
+                    <span className="font-bold text-blue-700 tabular-nums">{v2gDetail.chargeAvgCt.toFixed(2)} ct/kWh</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] mt-0.5">
+                    <span className="text-gray-400">cost</span>
+                    <span className="font-semibold text-blue-600 tabular-nums">{v2gDetail.chargeCostEur.toFixed(2)} EUR</span>
+                  </div>
+                </div>
+
+                {/* Discharge slots (sell high) — green */}
+                <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
+                  <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
+                    Discharge · {dischargeSlotsSorted.length} slots · {v2gDetail.totalDischargedKwh.toFixed(1)} kWh
+                  </p>
+                  <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
+                    {dischargeSlotsSorted.map((p: HourlyPrice, i: number) => (
+                      <div key={i} className="flex justify-between text-[11px] leading-snug">
+                        <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
+                        <span className="tabular-nums font-semibold text-emerald-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-emerald-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
+                    <span className="text-gray-500 font-medium">avg sell</span>
+                    <span className="font-bold text-emerald-700 tabular-nums">{v2gDetail.dischargeAvgCt.toFixed(2)} ct/kWh</span>
+                  </div>
+                  <div className="flex justify-between text-[10px] mt-0.5">
+                    <span className="text-gray-400">revenue</span>
+                    <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* V2G Summary: revenue - cost - degradation = profit */}
+              <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-100 space-y-1">
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-gray-500">Discharge revenue</span>
+                  <span className="font-semibold text-emerald-600 tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
+                </div>
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-gray-500">Charge cost (arb. cycles)</span>
+                  <span className="font-semibold text-blue-600 tabular-nums">-{(v2gDetail.chargeCostEur).toFixed(2)} EUR</span>
+                </div>
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-gray-500">Battery degradation ({scenario.degradationCtKwh} ct/kWh)</span>
+                  <span className="font-semibold text-gray-500 tabular-nums">-{v2gDetail.degradationCostEur.toFixed(2)} EUR</span>
+                </div>
+                <div className="flex items-center justify-between border-t border-gray-200 pt-1.5 mt-1">
+                  <span className="text-[10px] font-semibold text-gray-500">Net arbitrage profit</span>
+                  <div className="text-right">
+                    <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{v2gDetail.profitEur.toFixed(2)} EUR</span>
+                    <span className="text-[10px] text-gray-400 ml-1">/session</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        }
+
+        // V1G detail panel (unchanged)
         const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
         const slotLabel = detailIsQH ? `${slotsNeeded} × 15 min` : `${slotsNeeded}h`
         const windowLabel = detailIsQH ? `${detail.prices.length} × 15 min` : `${detail.prices.length}h`
@@ -1996,10 +2188,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const oAvg = optimizedSlots.length > 0 ? optimizedSlots.reduce((s: number, p: HourlyPrice) => s + p.priceCtKwh, 0) / optimizedSlots.length : 0
         const bEur = bAvg * energyPerSession / 100
         const oEur = oAvg * energyPerSession / 100
-        const fmtSlot = (p: HourlyPrice) => {
-          const d = p.date !== date1 ? ` ${p.date.slice(8, 10)}.` : ''
-          return `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}${d}`
-        }
 
         return (
           <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
