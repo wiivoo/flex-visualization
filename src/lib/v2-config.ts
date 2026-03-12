@@ -40,9 +40,9 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
   departureTime: 7,
   startLevel: 20,
   targetLevel: 80,
-  yearlyMileageKm: 15000,
-  weekdayPlugIns: 3,
-  weekendPlugIns: 1,
+  yearlyMileageKm: 12000,
+  weekdayPlugIns: 2,
+  weekendPlugIns: 0,
   chargePowerKw: 7,
   chargingMode: 'overnight',
 }
