@@ -13,37 +13,31 @@ const STEPS: TutorialStep[] = [
   {
     targetId: 'tour-customer-profile',
     title: 'Your Charging Profile',
-    description: 'Adjust yearly mileage, plug-in frequency (weekday vs weekend), arrival time, and wallbox power. Every chart below updates instantly as you move the sliders.',
-    position: 'bottom',
-  },
-  {
-    targetId: 'tour-savings-potential',
-    title: 'Annual Savings',
-    description: 'Your estimated yearly savings from smart charging — calculated from a rolling 12-month average of real SMARD market prices. The monetizable spread shows the average price difference you can capture per kWh.',
-    position: 'left',
-  },
-  {
-    targetId: 'tour-price-chart',
-    title: 'The Price Curve',
-    description: 'Real day-ahead electricity prices from SMARD.de. Red dots = unmanaged charging (starts immediately). Green dots = optimized (cheapest hours). Drag the red/blue lines to change arrival and departure times. Toggle "Renewable" to see solar + wind generation share as a subtle overlay.',
+    description: 'Set your yearly mileage, how often you plug in per week, your typical arrival time, and wallbox power. Every chart and number on the page updates instantly as you change these.',
     position: 'bottom',
   },
   {
     targetId: 'tour-day-selector',
     title: 'Pick a Day',
-    description: 'Every day has different price spreads. The color bars show savings opportunity — red means high spread (more savings), green means low spread. Click any day to see its price curve.',
-    position: 'left',
+    description: 'Each day has different electricity prices. Select any day to see its price curve. The color bars indicate how much prices varied that day — more variation means more savings potential.',
+    position: 'bottom',
+  },
+  {
+    targetId: 'tour-price-chart',
+    title: 'The Price Curve',
+    description: 'Real day-ahead electricity prices from SMARD.de. Red dots = "Charge now" (what you pay if charging starts immediately at plug-in). Green dots = "Smart charging" (cheapest hours in the window). The difference between red and green is your savings. Drag the red/blue lines to adjust arrival and departure times.',
+    position: 'bottom',
+  },
+  {
+    targetId: 'tour-scenario-cards',
+    title: 'Savings Comparison',
+    description: 'These cards compare three charging strategies: Overnight, Full Day, and 3-Day. Each shows how much cheaper (in ct/kWh) smart charging is vs. charging immediately — for the selected day and as averages over 4 and 52 weeks. "Market range" shows the gap between cheapest and costliest hour. Click a card to switch the chart above.',
+    position: 'top',
   },
   {
     targetId: 'tour-monthly-savings',
     title: 'Savings Over Time',
-    description: 'Monthly bar chart shows seasonal patterns — winter months typically have higher price volatility and more savings potential. The yearly trend line reveals the long-term picture.',
-    position: 'top',
-  },
-  {
-    targetId: 'tour-fleet-portfolio',
-    title: 'Fleet Portfolio',
-    description: 'Scale from 10 to 10,000 EVs. In a fleet, cars arrive at different times and drive different distances — this natural diversity creates a portfolio effect where larger fleets save more per EV through better load distribution.',
+    description: 'Monthly bar chart showing how much you would have saved each month with smart charging. Winter months typically have higher price swings and more savings. The numbers reflect your profile settings and the charging mode you selected.',
     position: 'top',
   },
 ]
