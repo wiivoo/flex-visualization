@@ -29,7 +29,10 @@ export default function LoginPage() {
 
       if (response.ok) {
         const params = new URLSearchParams(window.location.search)
-        window.location.href = params.get('redirect') || '/v2'
+        const redirect = params.get('redirect') || '/v2'
+        // Only allow relative paths to prevent open redirect attacks
+        const isRelative = redirect.startsWith('/') && !redirect.startsWith('//')
+        window.location.href = isRelative ? redirect : '/v2'
       } else {
         setError(data.error || 'Wrong password')
       }
