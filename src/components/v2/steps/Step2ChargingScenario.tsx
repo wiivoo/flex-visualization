@@ -1151,12 +1151,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                           <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} ct/kWh{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
                           {d.baselinePrice !== null && (
                             <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Unmanaged charging
+                              <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Charge now (starts at plug-in)
                             </p>
                           )}
                           {d.optimizedPrice !== null && (
                             <p className="text-emerald-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-emerald-500 rounded inline-block" /> Optimized charging
+                              <span className="w-2 h-0.5 bg-emerald-500 rounded inline-block" /> Smart charging (cheapest hours)
                             </p>
                           )}
                           {showRenewable && d.renewableShare != null && (
@@ -1346,15 +1346,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 bYAdj = Math.max(plotArea.top + 2, Math.min(bYAdj, plotArea.top + plotArea.height - 48))
                 return (
                   <>
-                    {/* Baseline (Immediate) */}
+                    {/* Baseline (Charge now) */}
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider">Immediate</span>
+                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider">Charge now</span>
                         <div className="bg-red-50/95 backdrop-blur-sm border border-red-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[13px] font-bold tabular-nums whitespace-nowrap">
-                            {sessionCost.baselineAvgCt.toFixed(1)} ct/kWh
+                            {sessionCost.baselineAvgCt.toFixed(1)} ct/kWh avg
                           </span>
                           <span className="text-red-400 text-[10px] tabular-nums whitespace-nowrap">
                             {sessionCost.baselineEur.toFixed(2)} €
@@ -1362,15 +1362,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                         </div>
                       </div>
                     </div>
-                    {/* Optimized */}
+                    {/* Smart charging */}
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Optimized</span>
+                        <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Smart charging</span>
                         <div className="bg-emerald-50/95 backdrop-blur-sm border border-emerald-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
                           <span className="text-emerald-700 text-[13px] font-bold tabular-nums whitespace-nowrap">
-                            {sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh
+                            {sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh avg
                           </span>
                           <span className="text-emerald-400 text-[10px] tabular-nums whitespace-nowrap">
                             {sessionCost.optimizedEur.toFixed(2)} €
@@ -1440,6 +1440,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               )}
             </div>
 
+          {/* ── Chart legend ── */}
+          <div className="flex items-center justify-center gap-4 px-4 pb-3 pt-1">
+            <span className="flex items-center gap-1.5 text-[11px] text-gray-500">
+              <span className="w-4 h-[2px] bg-gray-400 rounded inline-block" /> Market price
+            </span>
+            <span className="flex items-center gap-1.5 text-[11px] text-red-600">
+              <span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" /> Charge now
+            </span>
+            <span className="flex items-center gap-1.5 text-[11px] text-emerald-600">
+              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full inline-block" /> Smart charging
+            </span>
+            {showRenewable && (
+              <span className="flex items-center gap-1.5 text-[11px] text-emerald-500/70">
+                <span className="w-4 h-2 bg-emerald-100 border border-emerald-300/50 rounded-sm inline-block" /> Renewable %
+              </span>
+            )}
+          </div>
           </CardContent>
         </Card>
 
@@ -1454,18 +1471,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const fullDayDep = mode === 'fullday' ? scenario.departureTime : scenario.plugInTime
         const threeDayDep = mode === 'threeday' ? scenario.departureTime : scenario.plugInTime
 
+        // Use QH prices when 15-min resolution is active, otherwise hourly
+        const spreadPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+        const spreadSlotsPerHour = isQH && prices.hourlyQH.length > 0 ? 4 : 1
+
         // Overnight: plug-in evening → next morning
-        const overnightSpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, overnightDep)
-        const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw)
+        const overnightSpreadWin = buildMultiDayWindow(spreadPrices, date1, date2, scenario.plugInTime, overnightDep)
+        const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw, spreadSlotsPerHour)
 
         // Full day: plug-in → departure on next day
-        const fullDaySpreadWin = buildMultiDayWindow(prices.hourly, date1, date2, scenario.plugInTime, fullDayDep)
-        const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw)
+        const fullDaySpreadWin = buildMultiDayWindow(spreadPrices, date1, date2, scenario.plugInTime, fullDayDep)
+        const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw, spreadSlotsPerHour)
 
         // 3-day: plug-in → departure on day+3
         const threeDaySpreadWin = hasDate3Data
-          ? buildMultiDayWindow(prices.hourly, date1, date4, scenario.plugInTime, threeDayDep) : []
-        const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw) : null
+          ? buildMultiDayWindow(spreadPrices, date1, date4, scenario.plugInTime, threeDayDep) : []
+        const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw, spreadSlotsPerHour) : null
         const hasForecast3d = hasDate3Data && threeDaySpreadWin.some(p => p.isProjected)
 
         // Savings use the same windows
@@ -1529,7 +1550,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const modeKeyMap: Record<string, string> = { overnight: 'overnight', fullday: 'fullday', '3day': 'threeday' }
 
         return (
-          <div className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+          <div id="tour-scenario-cards" className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {rows.map(row => {
               const isActive = row.key === activeMode
               const ms = perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }
@@ -1580,42 +1601,42 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   {/* Selected day savings — avg ct/kWh prominent */}
                   {row.savings && (
                     <div className="mb-2">
-                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Selected Day</p>
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {row.savings.capturableSavingsCtKwh.toFixed(2)}
                       </span>
-                      <span className="text-[10px] text-gray-400 ml-1">ct/kWh</span>
+                      <span className="text-[10px] text-gray-400 ml-1">ct/kWh cheaper</span>
                       <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct for {energyPerSession} kWh
+                        = {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct saved on {energyPerSession} kWh session
                       </p>
                     </div>
                   )}
                   {/* Last 4 weeks + Last 52 weeks — per-mode calculation */}
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 mb-2">
                     <div>
-                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Last 4 weeks</p>
+                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Avg savings 4 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
                       </p>
-                      <p className="text-[8px] text-gray-400">{ms.eur4w.toFixed(2)} EUR</p>
+                      <p className="text-[8px] text-gray-400">{ms.eur4w.toFixed(2)} EUR total</p>
                     </div>
                     <div>
-                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Last 52 weeks</p>
+                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">Avg savings 52 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
                       </p>
                       <p className="text-[8px] text-gray-400">{ms.eur52w.toFixed(0)} EUR/yr</p>
                     </div>
                   </div>
-                  {/* Spread = min↔max */}
+                  {/* Market range = min↔max price in window */}
                   <div className="flex items-baseline justify-between pt-1.5 border-t border-gray-100">
-                    <span className="text-[9px] text-gray-400 uppercase tracking-wide">Spread</span>
+                    <span className="text-[9px] text-gray-400 uppercase tracking-wide">Market range</span>
                     <span className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-[#313131]' : 'text-gray-500'}`}>
                       {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">ct</span>
                     </span>
                   </div>
                   <p className="text-[8px] text-gray-400 font-mono leading-relaxed">
-                    {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ↔ {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} ct
+                    cheapest {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ↔ costliest {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} ct
                   </p>
                   {/* Detail toggle */}
                   <button
@@ -1683,7 +1704,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               {/* Baseline = first N slots */}
               <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
                 <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2">
-                  Unmanaged · first {slotLabel}
+                  Charge now · first {slotLabel}
                 </p>
                 <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
                   {baselineSlots.map((p: HourlyPrice, i: number) => (
@@ -1706,7 +1727,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               {/* Optimized = cheapest N hours */}
               <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
                 <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
-                  Optimized · cheapest {slotLabel}
+                  Smart charging · cheapest {slotLabel}
                 </p>
                 <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
                   {optimizedSlots.map((p: HourlyPrice, i: number) => (
@@ -1730,7 +1751,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             {/* Summary row */}
             <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
               <div className="text-[10px] text-gray-500">
-                <span className="font-mono">{bAvg.toFixed(2)} ct − {oAvg.toFixed(2)} ct = <strong className="text-emerald-600">{(bAvg - oAvg).toFixed(2)} ct/kWh</strong></span>
+                <span className="font-mono">{bAvg.toFixed(2)} ct (now) − {oAvg.toFixed(2)} ct (smart) = <strong className="text-emerald-600">{(bAvg - oAvg).toFixed(2)} ct/kWh saved</strong></span>
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-gray-400">savings </span>

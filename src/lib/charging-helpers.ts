@@ -67,12 +67,14 @@ export function computeSpread(
   windowPrices: HourlyPrice[],
   energyPerSession: number,
   chargePowerKw: number,
+  slotsPerHour: number = 1,
 ): SpreadResult | null {
   if (windowPrices.length < 2) return null
   const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
   const cheapest = sorted[0]
   const expensive = sorted[sorted.length - 1]
-  const { bAvg, oAvg, savingsEur } = computeWindowSavings(windowPrices, energyPerSession, chargePowerKw, 1)
+  const kwhPerSlot = slotsPerHour === 4 ? chargePowerKw * 0.25 : chargePowerKw
+  const { bAvg, oAvg, savingsEur } = computeWindowSavings(windowPrices, energyPerSession, kwhPerSlot, slotsPerHour)
   return {
     marketSpreadCtKwh: Math.round((expensive.priceCtKwh - cheapest.priceCtKwh) * 100) / 100,
     capturableSavingsCtKwh: Math.round((bAvg - oAvg) * 100) / 100,
