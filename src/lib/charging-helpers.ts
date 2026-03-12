@@ -62,18 +62,24 @@ export interface SpreadResult {
   hoursInWindow: number
 }
 
-/** Compute market spread + capturable savings for a price window */
+/** Compute market spread + capturable savings for a price window.
+ *  kwhPerSlot: energy per price entry (7 for hourly @ 7kW, 1.75 for QH @ 7kW).
+ *  slotsPerHour: how many charging slots each price entry represents
+ *    (1 for both hourly and QH data — each entry = one slot).
+ *    Legacy callers may pass 4 for hourly data to simulate QH; for actual QH data always pass 1.
+ */
 export function computeSpread(
   windowPrices: HourlyPrice[],
   energyPerSession: number,
   chargePowerKw: number,
   slotsPerHour: number = 1,
+  kwhPerSlotOverride?: number,
 ): SpreadResult | null {
   if (windowPrices.length < 2) return null
   const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
   const cheapest = sorted[0]
   const expensive = sorted[sorted.length - 1]
-  const kwhPerSlot = slotsPerHour === 4 ? chargePowerKw * 0.25 : chargePowerKw
+  const kwhPerSlot = kwhPerSlotOverride ?? (slotsPerHour === 4 ? chargePowerKw * 0.25 : chargePowerKw)
   const { bAvg, oAvg, savingsEur } = computeWindowSavings(windowPrices, energyPerSession, kwhPerSlot, slotsPerHour)
   return {
     marketSpreadCtKwh: Math.round((expensive.priceCtKwh - cheapest.priceCtKwh) * 100) / 100,

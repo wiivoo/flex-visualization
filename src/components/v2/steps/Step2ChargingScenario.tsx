@@ -34,7 +34,7 @@ const PLUGIN_HOUR_MIN = 14
 const PLUGIN_HOUR_MAX = 23
 
 // Chart margins — passed to Recharts (actual plot area measured from DOM)
-const CHART_MARGIN = { top: 42, right: 30, bottom: 25, left: 50 }
+const CHART_MARGIN = { top: 42, right: 30, bottom: 25, left: 20 }
 
 interface PriceData {
   hourly: HourlyPrice[]
@@ -87,10 +87,55 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
   const [showRenewable, setShowRenewable] = useState(false)
   const [renewableData, setRenewableData] = useState<Map<string, number>>(new Map())
+
+  // ── Edge-scroll: navigate days by pressing/holding chart edges ──
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const selectedDateRef = useRef(prices.selectedDate)
+  selectedDateRef.current = prices.selectedDate
+
+  const sortedDates = useMemo(() => {
+    const dates = prices.daily.map(d => d.date).sort()
+    const dateSet = new Set(dates)
+    return dates.filter(d => {
+      const nd = new Date(d + 'T12:00:00Z')
+      nd.setUTCDate(nd.getUTCDate() + 1)
+      return dateSet.has(nd.toISOString().slice(0, 10))
+    })
+  }, [prices.daily])
+
+  const sortedDatesRef = useRef(sortedDates)
+  sortedDatesRef.current = sortedDates
+
+  const startEdgeScroll = useCallback((dir: -1 | 1) => {
+    const step = () => {
+      const idx = sortedDatesRef.current.indexOf(selectedDateRef.current)
+      if (idx < 0) return
+      const next = sortedDatesRef.current[idx + dir]
+      if (next) prices.setSelectedDate(next)
+    }
+    step() // immediate first step
+    let speed = 400
+    const tick = () => {
+      step()
+      speed = Math.max(120, speed * 0.85)
+      scrollTimerRef.current = setTimeout(tick, speed)
+    }
+    scrollTimerRef.current = setTimeout(tick, speed)
+  }, [prices.setSelectedDate])
+
+  const stopEdgeScroll = useCallback(() => {
+    if (scrollTimerRef.current) {
+      clearTimeout(scrollTimerRef.current)
+      scrollTimerRef.current = null
+    }
+  }, [])
+
+  useEffect(() => () => stopEdgeScroll(), [stopEdgeScroll])
+
   // Latest available date for "Jump to latest" button
   const latestAvailableDate = useMemo(() => {
     const now = new Date()
-    now.setDate(now.getDate() - 1)
+    now.setUTCDate(now.getUTCDate() - 1)
     const yesterdayStr = now.toISOString().slice(0, 10)
     return prices.daily.find(d => d.date === yesterdayStr)?.date
       ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
@@ -287,8 +332,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
     const bPts = data.filter(d => d.baselinePrice !== null)
     const oPts = data.filter(d => d.optimizedPrice !== null)
-    const bAvg = bPts.length > 0 ? bPts.reduce((s, d) => s + d.priceVal, 0) / bPts.length : 0
-    const oAvg = oPts.length > 0 ? oPts.reduce((s, d) => s + d.priceVal, 0) / oPts.length : 0
+    // Use raw priceCtKwh from windowPrices for accurate averages (no per-slot rounding)
+    const baselineSlots = windowPrices.slice(0, slotsNeeded)
+    const optimizedSlots = sortedByPrice.slice(0, slotsNeeded)
+    const bAvg = baselineSlots.length > 0 ? baselineSlots.reduce((s, p) => s + p.priceCtKwh, 0) / baselineSlots.length : 0
+    const oAvg = optimizedSlots.length > 0 ? optimizedSlots.reduce((s, p) => s + p.priceCtKwh, 0) / optimizedSlots.length : 0
     cost = {
       baselineAvgCt: Math.round(bAvg * 100) / 100,
       optimizedAvgCt: Math.round(oAvg * 100) / 100,
@@ -521,7 +569,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         }
       }
     }
-  }, [isDragging, chartData, date1, date2, scenario, setScenario, plotArea])
+  }, [isDragging, chartData, date1, date2, date4, scenario, setScenario, plotArea, isFullDay, isThreeDay])
 
   useEffect(() => {
     if (!isDragging) return
@@ -606,8 +654,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // Split weekday vs weekend savings for accurate weighting
   const monthlySavingsData = useMemo(() => {
     if (overnightWindows.length === 0) return []
-    const mKwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
-    const mSlotsPerHour = isQH ? 4 : 1
+    // overnightWindows always uses hourly data → slotsPerHour=1, kwhPerSlot=chargePowerKw
+    const mKwhPerSlot = chargePowerKw
+    const mSlotsPerHour = 1
     const minHours = Math.ceil(deferredEnergyPerSession / chargePowerKw)
     // weekdayScale: fraction of weekdays user plugs in (e.g. 3/5 = 60%)
     const weekdayScale = deferredWeekdayPlugIns / 5
@@ -646,7 +695,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           weekendSavings: Math.round(weMonthly * 100) / 100,
         }
       })
-  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, isQH, chargePowerKw])
+  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw])
 
   // ── Quarterly rollup for Outcome Box ──
   const quarterlyData = useMemo(() => {
@@ -671,8 +720,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
   // Uses the same last-12-month window as the monthly savings chart for consistency
   const heatmapData = useMemo(() => {
     if (overnightWindows.length === 0) return []
-    const hKwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
-    const hSlotsPerHour = isQH ? 4 : 1
+    // overnightWindows always uses hourly data → slotsPerHour=1, kwhPerSlot=chargePowerKw
+    const hKwhPerSlot = chargePowerKw
+    const hSlotsPerHour = 1
     // Identify the same 12 months shown in the savings chart
     const allMonths = [...new Set(overnightWindows.map(w => w.month))].sort()
     const last12Months = new Set(allMonths.slice(-12))
@@ -700,13 +750,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       }
     }
     return grid
-  }, [overnightWindows, isQH, chargePowerKw])
+  }, [overnightWindows, chargePowerKw])
 
   // ── Yearly savings data (2022-2030) ──
   const yearlySavingsData = useMemo((): YearlySavingsEntry[] => {
     if (overnightWindows.length === 0) return []
-    const yKwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
-    const ySlotsPerHour = isQH ? 4 : 1
+    // overnightWindows always uses hourly data → slotsPerHour=1, kwhPerSlot=chargePowerKw
+    const yKwhPerSlot = chargePowerKw
+    const ySlotsPerHour = 1
     const minHours = Math.ceil(deferredEnergyPerSession / chargePowerKw)
     const weekdayScale = deferredWeekdayPlugIns / 5
     const weekendScale = deferredWeekendPlugIns / 2
@@ -743,7 +794,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           monthsCovered,
         }
       })
-  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, deferredWeeklyPlugIns, isQH, chargePowerKw])
+  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, deferredWeeklyPlugIns, chargePowerKw])
 
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
@@ -1008,7 +1059,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       ? `${fmtDateShort(date1)} ${arrivalLabel} → ${fmtDateShort(date2)} 24:00`
                       : `${fmtDateShort(date1)} evening → ${fmtDateShort(date2)} morning`}
                   <span className="text-gray-300 ml-2">·</span>
-                  <a href={`https://www.smard.de/home/marktdaten?marketDataAttributes=${encodeURIComponent(JSON.stringify({resolution:"hour",from:new Date(date1+'T00:00:00').getTime(),to:new Date((isThreeDay?date4:date2)+'T23:59:59').getTime(),moduleIds:[8004169],selectedCategory:null,activeChart:true,style:"color",categoriesModuleOrder:{},region:"DE"}))}`} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-gray-500 underline underline-offset-2 ml-1">SMARD.de</a>
+                  <span className="text-gray-400 ml-1">ct/kWh</span>
+                  <span className="text-gray-300 ml-2">·</span>
+                  {date1 && (isThreeDay ? date4 : date2) && (
+                    <a href={`https://www.smard.de/home/marktdaten?marketDataAttributes=${encodeURIComponent(JSON.stringify({resolution:"hour",from:new Date(date1+'T00:00:00').getTime(),to:new Date((isThreeDay?date4:date2)+'T23:59:59').getTime(),moduleIds:[8004169],selectedCategory:null,activeChart:true,style:"color",categoriesModuleOrder:{},region:"DE"}))}`} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-gray-500 underline underline-offset-2 ml-1">SMARD.de</a>
+                  )}
                   {hasForecastData && <span className="text-amber-400 ml-1">+ forecast</span>}
                 </p>
               </div>
@@ -1105,8 +1160,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           </CardHeader>
           <CardContent className="pb-1">
             {/* ── Chart container ── */}
-            <div className="relative h-[400px] select-none"
+            <div className="relative h-[400px] select-none outline-none"
               ref={chartRef}
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowLeft') { e.preventDefault(); const idx = sortedDatesRef.current.indexOf(selectedDateRef.current); const prev = sortedDatesRef.current[idx - 1]; if (prev) prices.setSelectedDate(prev) }
+                if (e.key === 'ArrowRight') { e.preventDefault(); const idx = sortedDatesRef.current.indexOf(selectedDateRef.current); const next = sortedDatesRef.current[idx + 1]; if (next) prices.setSelectedDate(next) }
+              }}
               onMouseMove={isDragging ? handleDrag : undefined}
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
@@ -1133,8 +1193,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     ticks={xTicks} tick={renderXTick as never} tickLine={false}
                     stroke="#9CA3AF" interval={0} height={midnightIdxSet.size > 0 ? 48 : 32}
                     allowDecimals={false} />
-                  <YAxis yAxisId="left" tick={{ fontSize: 12, fontWeight: 500 }} stroke="#9CA3AF"
-                    label={{ value: 'ct/kWh Day-Ahead Spot Price', angle: -90, position: 'insideLeft', offset: -8, style: { fontSize: 11, fill: '#6B7280', fontWeight: 400 } }} />
+                  <YAxis yAxisId="left" tick={{ fontSize: 11, fontWeight: 500 }} stroke="#9CA3AF" width={35}
+                    domain={[priceRange.min, priceRange.max]} allowDataOverflow allowDecimals={false} />
                   {showRenewable && (
                     <YAxis yAxisId="right" orientation="right" domain={[0, 100]} hide />
                   )}
@@ -1155,8 +1215,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                             </p>
                           )}
                           {d.optimizedPrice !== null && (
-                            <p className="text-emerald-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-emerald-500 rounded inline-block" /> Smart charging (cheapest hours)
+                            <p className="text-blue-600 text-xs mt-1 flex items-center gap-1">
+                              <span className="w-2 h-0.5 bg-blue-500 rounded inline-block" /> Smart charging (cheapest hours)
                             </p>
                           )}
                           {showRenewable && d.renewableShare != null && (
@@ -1196,7 +1256,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
                   ))}
                   {optimizedRanges.map((r, i) => (
-                    <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.08} ifOverflow="hidden" />
+                    <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
                   ))}
 
                   {/* Renewable generation share — very subtle background area */}
@@ -1229,8 +1289,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     connectNulls={false} />
 
                   {/* Optimized dots — green */}
-                  <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
-                    dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
+                  <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
+                    dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
                     connectNulls={false} />
 
                   {/* Forecast tint background */}
@@ -1333,51 +1393,77 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   : idxToPx(sessionCost.optimizedMidIdx)
                 const bY = priceToY(sessionCost.baselineAvgCt)
                 const oY = priceToY(sessionCost.optimizedAvgCt)
-                // Position: baseline below its line, optimized above its line
-                // Each pill is ~28px tall (label 14px + pill 14px gap), need 56px separation
-                const minGap = 56
-                let bYAdj = bY + 8, oYAdj = oY - 48
-                if (bYAdj - oYAdj < minGap) {
-                  const mid = (bYAdj + oYAdj) / 2
-                  bYAdj = mid + minGap / 2
-                  oYAdj = mid - minGap / 2
+                const chartBottom = plotArea.top + plotArea.height
+                const bPillH = 36  // red label height
+                const oPillH = 36  // blue label height (savings pill moved to top)
+                // Red: below its line. Blue: above the optimized line.
+                let bYAdj = bY + 16
+                if (bYAdj + bPillH > chartBottom - 10) bYAdj = bY - bPillH - 10
+                let oYAdj = oY - oPillH - 8
+                // If blue would go above chart top, push below
+                if (oYAdj < plotArea.top + 2) oYAdj = oY + 16
+                // Avoid overlap with red label
+                if (oYAdj < bYAdj + bPillH && oYAdj + oPillH > bYAdj) {
+                  oYAdj = bYAdj - oPillH - 8
+                  if (oYAdj < plotArea.top + 2) oYAdj = bYAdj + bPillH + 8
                 }
-                oYAdj = Math.max(plotArea.top + 2, Math.min(oYAdj, plotArea.top + plotArea.height - 48))
-                bYAdj = Math.max(plotArea.top + 2, Math.min(bYAdj, plotArea.top + plotArea.height - 48))
+                // Compute savings using same method as the cards (computeWindowSavings)
+                const pillUseQH = isQH && prices.hourlyQH.length > 0
+                const pillPrices = pillUseQH ? prices.hourlyQH : prices.hourly
+                const pillKwhPerSlot = pillUseQH ? chargePowerKw * 0.25 : chargePowerKw
+                const depDatePill = isThreeDay ? date4 : date2
+                const pillWindow = buildMultiDayWindow(pillPrices, date1, depDatePill, scenario.plugInTime, scenario.departureTime)
+                const pillSavings = computeWindowSavings(pillWindow, energyPerSession, pillKwhPerSlot, 1)
+                const savingsCt = Math.round((pillSavings.bAvg - pillSavings.oAvg) * 100) / 100
+                const savingsEur = Math.round(pillSavings.savingsEur * 100) / 100
                 return (
                   <>
-                    {/* Baseline (Charge now) */}
+                    {/* Baseline (Charge now) — centered on red dots, below line */}
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider">Charge now</span>
-                        <div className="bg-red-50/95 backdrop-blur-sm border border-red-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
+                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Charge now</span>
+                        <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
-                          <span className="text-red-700 text-[13px] font-bold tabular-nums whitespace-nowrap">
-                            {sessionCost.baselineAvgCt.toFixed(1)} ct/kWh avg
+                          <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                            {pillSavings.bAvg.toFixed(1)} ct/kWh
                           </span>
-                          <span className="text-red-400 text-[10px] tabular-nums whitespace-nowrap">
-                            {sessionCost.baselineEur.toFixed(2)} €
+                          <span className="text-red-400 text-[9px] tabular-nums whitespace-nowrap">
+                            {(pillSavings.bAvg * energyPerSession / 100).toFixed(2)} €
                           </span>
                         </div>
                       </div>
                     </div>
-                    {/* Smart charging */}
+                    {/* Smart charging — blue label on the line */}
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider">Smart charging</span>
-                        <div className="bg-emerald-50/95 backdrop-blur-sm border border-emerald-200/80 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
-                          <span className="text-emerald-700 text-[13px] font-bold tabular-nums whitespace-nowrap">
-                            {sessionCost.optimizedAvgCt.toFixed(1)} ct/kWh avg
+                        <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">Smart charging</span>
+                        <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
+                          <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                            {pillSavings.oAvg.toFixed(1)} ct/kWh
                           </span>
-                          <span className="text-emerald-400 text-[10px] tabular-nums whitespace-nowrap">
-                            {sessionCost.optimizedEur.toFixed(2)} €
+                          <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
+                            {(pillSavings.oAvg * energyPerSession / 100).toFixed(2)} €
                           </span>
                         </div>
                       </div>
                     </div>
+                    {/* Savings pill — top center, similar to plug-in/departure pills */}
+                    {savingsCt > 0 && (
+                      <div className="absolute pointer-events-none z-10"
+                        style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
+                        <div className="bg-emerald-50/80 backdrop-blur-sm border border-emerald-300/50 rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1">
+                          <span className="text-emerald-700 text-[12px] font-bold tabular-nums whitespace-nowrap">
+                            ▼ {savingsCt.toFixed(1)} ct/kWh
+                          </span>
+                          <span className="text-emerald-600 text-[9px] font-semibold tabular-nums whitespace-nowrap">
+                            {savingsEur.toFixed(2)} € saved
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )
               })()}
@@ -1438,25 +1524,43 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   )}
                 </>
               )}
+
+              {/* ── Edge-scroll zones — press & hold to scrub through days ── */}
+              {!isDragging && (
+                <>
+                  <div
+                    className="absolute left-0 top-0 w-12 h-full z-30 flex items-center justify-start pl-1 cursor-w-resize group"
+                    onMouseDown={(e) => { e.preventDefault(); startEdgeScroll(-1) }}
+                    onMouseUp={stopEdgeScroll}
+                    onMouseLeave={stopEdgeScroll}
+                    onTouchStart={(e) => { e.preventDefault(); startEdgeScroll(-1) }}
+                    onTouchEnd={stopEdgeScroll}
+                  >
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white/80 backdrop-blur-sm rounded-full p-1.5 shadow-sm border border-gray-200/60">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 group-active:text-[#EA1C0A] transition-colors">
+                        <polyline points="15 18 9 12 15 6"/>
+                      </svg>
+                    </div>
+                  </div>
+                  <div
+                    className="absolute right-0 top-0 w-12 h-full z-30 flex items-center justify-end pr-1 cursor-e-resize group"
+                    onMouseDown={(e) => { e.preventDefault(); startEdgeScroll(1) }}
+                    onMouseUp={stopEdgeScroll}
+                    onMouseLeave={stopEdgeScroll}
+                    onTouchStart={(e) => { e.preventDefault(); startEdgeScroll(1) }}
+                    onTouchEnd={stopEdgeScroll}
+                  >
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white/80 backdrop-blur-sm rounded-full p-1.5 shadow-sm border border-gray-200/60">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 group-active:text-[#EA1C0A] transition-colors">
+                        <polyline points="9 18 15 12 9 6"/>
+                      </svg>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
-          {/* ── Chart legend ── */}
-          <div className="flex items-center justify-center gap-4 px-4 pb-3 pt-1">
-            <span className="flex items-center gap-1.5 text-[11px] text-gray-500">
-              <span className="w-4 h-[2px] bg-gray-400 rounded inline-block" /> Market price
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px] text-red-600">
-              <span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" /> Charge now
-            </span>
-            <span className="flex items-center gap-1.5 text-[11px] text-emerald-600">
-              <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full inline-block" /> Smart charging
-            </span>
-            {showRenewable && (
-              <span className="flex items-center gap-1.5 text-[11px] text-emerald-500/70">
-                <span className="w-4 h-2 bg-emerald-100 border border-emerald-300/50 rounded-sm inline-block" /> Renewable %
-              </span>
-            )}
-          </div>
+          {/* legend removed — colors explained via tooltip + drag handle labels */}
           </CardContent>
         </Card>
 
@@ -1472,21 +1576,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const threeDayDep = mode === 'threeday' ? scenario.departureTime : scenario.plugInTime
 
         // Use QH prices when 15-min resolution is active, otherwise hourly
-        const spreadPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
-        const spreadSlotsPerHour = isQH && prices.hourlyQH.length > 0 ? 4 : 1
+        // QH data: each entry = 1 QH slot (0.25h), slotsPerHour=1, kwhPerSlot = chargePowerKw * 0.25
+        // Hourly data: each entry = 1 hour slot, slotsPerHour=1, kwhPerSlot = chargePowerKw
+        const useQH = isQH && prices.hourlyQH.length > 0
+        const spreadPrices = useQH ? prices.hourlyQH : prices.hourly
+        const spreadKwhPerSlot = useQH ? chargePowerKw * 0.25 : chargePowerKw
 
         // Overnight: plug-in evening → next morning
         const overnightSpreadWin = buildMultiDayWindow(spreadPrices, date1, date2, scenario.plugInTime, overnightDep)
-        const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw, spreadSlotsPerHour)
+        const overnightSp = computeSpread(overnightSpreadWin, energyPerSession, chargePowerKw, 1, spreadKwhPerSlot)
 
         // Full day: plug-in → departure on next day
         const fullDaySpreadWin = buildMultiDayWindow(spreadPrices, date1, date2, scenario.plugInTime, fullDayDep)
-        const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw, spreadSlotsPerHour)
+        const fullDaySp = computeSpread(fullDaySpreadWin, energyPerSession, chargePowerKw, 1, spreadKwhPerSlot)
 
         // 3-day: plug-in → departure on day+3
         const threeDaySpreadWin = hasDate3Data
           ? buildMultiDayWindow(spreadPrices, date1, date4, scenario.plugInTime, threeDayDep) : []
-        const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw, spreadSlotsPerHour) : null
+        const threeDaySp = hasDate3Data ? computeSpread(threeDaySpreadWin, energyPerSession, chargePowerKw, 1, spreadKwhPerSlot) : null
         const hasForecast3d = hasDate3Data && threeDaySpreadWin.some(p => p.isProjected)
 
         // Savings use the same windows
