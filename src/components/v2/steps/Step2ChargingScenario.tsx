@@ -1008,7 +1008,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       ? `${fmtDateShort(date1)} ${arrivalLabel} → ${fmtDateShort(date2)} 24:00`
                       : `${fmtDateShort(date1)} evening → ${fmtDateShort(date2)} morning`}
                   <span className="text-gray-300 ml-2">·</span>
-                  <a href="https://www.smard.de" target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-gray-500 underline underline-offset-2 ml-1">SMARD.de</a>
+                  <a href={`https://www.smard.de/home/marktdaten?marketDataAttributes=${encodeURIComponent(JSON.stringify({resolution:"hour",from:new Date(date1+'T00:00:00').getTime(),to:new Date((isThreeDay?date4:date2)+'T23:59:59').getTime(),moduleIds:[8004169],selectedCategory:null,activeChart:true,style:"color",categoriesModuleOrder:{},region:"DE"}))}`} target="_blank" rel="noopener noreferrer" className="text-gray-300 hover:text-gray-500 underline underline-offset-2 ml-1">SMARD.de</a>
                   {hasForecastData && <span className="text-amber-400 ml-1">+ forecast</span>}
                 </p>
               </div>
