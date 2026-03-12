@@ -29,10 +29,12 @@ export interface ChargingScenario {
   chargingMode: 'overnight' | 'fullday' | 'threeday'
   gridMode: 'v1g' | 'v2g'  // V1G = smart charging only, V2G = bidirectional
   // V2G-specific settings (only used when gridMode === 'v2g')
-  dischargePowerKw: number    // 5, 7, or 11 kW
-  roundTripEfficiency: number // 0.80-0.95 (default 0.88)
-  degradationCtKwh: number   // 1-8 ct/kWh (battery wear cost per kWh cycled)
-  minSocPercent: number       // 20-50% (minimum SoC to maintain)
+  v2gStartSoc: number          // percent 10-90 — battery level at plug-in
+  v2gTargetSoc: number         // percent 50-100 — required level at departure
+  dischargePowerKw: number     // 5, 7, or 11 kW
+  roundTripEfficiency: number  // 0.80-0.95 (default 0.88)
+  degradationCtKwh: number    // 1-8 ct/kWh (battery wear cost per kWh cycled)
+  minSocPercent: number        // 10-40% (floor SoC during session, never go below)
 }
 
 /** Total weekly plug-ins (weekday + weekend) */
@@ -52,10 +54,12 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
   chargePowerKw: 7,
   chargingMode: 'overnight',
   gridMode: 'v1g',
+  v2gStartSoc: 40,
+  v2gTargetSoc: 80,
   dischargePowerKw: 7,
   roundTripEfficiency: 0.88,
   degradationCtKwh: 3,
-  minSocPercent: 30,
+  minSocPercent: 20,
 }
 
 /** Average EV consumption in kWh per 100 km */
