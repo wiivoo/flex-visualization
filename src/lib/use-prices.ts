@@ -229,8 +229,15 @@ export function usePrices(): PriceData {
         setDaily(dailySummaries)
         setMonthly(deriveMonthlyStats(dailySummaries, prices))
 
-        // Default to second-to-last date (need t+1 for overnight chart)
-        if (dailySummaries.length > 1) {
+        // Default to yesterday (need t+1 for overnight chart, and yesterday has confirmed prices)
+        const yd = new Date()
+        yd.setDate(yd.getDate() - 1)
+        const yesterday = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, '0')}-${String(yd.getDate()).padStart(2, '0')}`
+        const yesterdayEntry = dailySummaries.find(d => d.date === yesterday)
+          ?? dailySummaries.filter(d => d.date <= yesterday).pop()
+        if (yesterdayEntry) {
+          setSelectedDate(yesterdayEntry.date)
+        } else if (dailySummaries.length > 1) {
           setSelectedDate(dailySummaries[dailySummaries.length - 2].date)
         } else if (dailySummaries.length > 0) {
           setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
@@ -301,10 +308,16 @@ export function usePrices(): PriceData {
       const lastNewDate = unique[unique.length - 1].date
       setLastRealDate(prev => lastNewDate > prev ? lastNewDate : prev)
 
-      // Advance selected date to second-to-last (need t+1 for overnight chart)
+      // Only advance selected date if it's empty — don't override user's choice
+      // and never advance past yesterday (today/tomorrow may have incomplete data)
       if (dailySummaries.length > 1) {
-        const secondToLast = dailySummaries[dailySummaries.length - 2].date
-        setSelectedDate(prev => (!prev || secondToLast > prev) ? secondToLast : prev)
+        const now = new Date()
+        const yest = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate() - 1).padStart(2, '0')}`
+        const target = dailySummaries.find(d => d.date === yest)?.date
+          ?? dailySummaries.filter(d => d.date <= yest).pop()?.date
+        if (target) {
+          setSelectedDate(prev => !prev ? target : prev)
+        }
       }
 
       console.log(`[usePrices] Incremental update: +${unique.length} price points (${startDate} → ${today})`)
