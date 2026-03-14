@@ -28,6 +28,8 @@ export interface MonthlySavingsEntry {
   isProjected?: boolean
   weekdaySavings?: number
   weekendSavings?: number
+  loadShiftingEur?: number  // V2G: load shifting portion
+  arbitrageEur?: number     // V2G: arbitrage portion
 }
 
 interface Props {
@@ -40,6 +42,8 @@ interface Props {
   avgDailyEur: number
   selectedDate: string
   chargingMode?: 'overnight' | 'fullday' | 'threeday'
+  isV2G?: boolean
+  v2gHasNetCharge?: boolean
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -51,7 +55,7 @@ const MODE_LABELS: Record<string, string> = {
 export function MonthlySavingsCard({
   monthlySavingsData, weeklyPlugIns, energyPerSession,
   sessionsPerYear, rollingAvgSavings, monthlySavings, avgDailyEur, selectedDate,
-  chargingMode = 'overnight',
+  chargingMode = 'overnight', isV2G = false, v2gHasNetCharge = false,
 }: Props) {
   const [methodologyOpen, setMethodologyOpen] = useState(false)
 
@@ -83,9 +87,11 @@ export function MonthlySavingsCard({
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
       <CardHeader className="pb-3 border-b border-gray-100">
-        <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings — Rolling 365-Day Average</CardTitle>
+        <CardTitle className="text-base font-bold text-[#313131]">
+          {isV2G ? (v2gHasNetCharge ? 'Monthly V2G Benefit' : 'Monthly Arbitrage') : 'Monthly Savings'} — Rolling 365-Day Average
+        </CardTitle>
         <p className="text-[11px] text-gray-500 mt-1">
-          {weeklyPlugIns}x/week · {energyPerSession} kWh/session · {MODE_LABELS[chargingMode] || 'day-ahead spot shifting'}
+          {weeklyPlugIns}x/week · {energyPerSession} kWh/session · {isV2G ? (v2gHasNetCharge ? 'load shifting + arbitrage' : 'pure arbitrage') : (MODE_LABELS[chargingMode] || 'day-ahead spot shifting')}
         </p>
       </CardHeader>
       <CardContent className="pt-5 space-y-4 flex-1 flex flex-col">
@@ -111,7 +117,21 @@ export function MonthlySavingsCard({
                     <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
                       <p className="text-gray-500 text-[10px]">{d.month} · {d.season}</p>
                       <p className="font-semibold tabular-nums" style={{ color }}>{d.savings.toFixed(2)} EUR/mo</p>
-                      {(d.weekdaySavings !== undefined && d.weekendSavings !== undefined) && (
+                      {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined && (
+                        <div className="text-[10px] space-y-0.5 mt-0.5">
+                          {(v2gHasNetCharge || d.loadShiftingEur > 0) && (
+                            <p className="text-emerald-600 tabular-nums flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-sm inline-block flex-shrink-0" />
+                              Load shifting: {d.loadShiftingEur.toFixed(2)} EUR
+                            </p>
+                          )}
+                          <p className="text-blue-600 tabular-nums flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-blue-500 rounded-sm inline-block flex-shrink-0" />
+                            Arbitrage: {d.arbitrageEur.toFixed(2)} EUR
+                          </p>
+                        </div>
+                      )}
+                      {!isV2G && (d.weekdaySavings !== undefined && d.weekendSavings !== undefined) && (
                         <p className="text-gray-400 tabular-nums text-[10px]">
                           <span className="text-gray-500">{d.weekdaySavings.toFixed(2)}</span> weekday + <span className="text-gray-500">{d.weekendSavings.toFixed(2)}</span> weekend
                         </p>
@@ -120,6 +140,12 @@ export function MonthlySavingsCard({
                     </div>
                   )
                 }} />
+              {isV2G ? (
+                <>
+                  <Bar yAxisId="left" dataKey="loadShiftingEur" stackId="v2g" radius={[0, 0, 0, 0]} maxBarSize={28} fill="#10B981" fillOpacity={0.65} />
+                  <Bar yAxisId="left" dataKey="arbitrageEur" stackId="v2g" radius={[3, 3, 0, 0]} maxBarSize={28} fill="#3B82F6" fillOpacity={0.65} />
+                </>
+              ) : (
               <Bar yAxisId="left" dataKey="savings" radius={[3, 3, 0, 0]} maxBarSize={28}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 shape={((props: any) => {
@@ -132,6 +158,7 @@ export function MonthlySavingsCard({
                     </g>
                   )
                 }) as any} />
+              )}
               <Line yAxisId="right" dataKey="cumulative" type="monotone"
                 stroke="#374151" strokeWidth={1.5} strokeDasharray="4 3"
                 dot={false} activeDot={{ r: 3, fill: '#374151' }} />
@@ -141,12 +168,27 @@ export function MonthlySavingsCard({
         {/* Season legend + cumulative note */}
         <div className="flex items-center justify-between text-[10px] text-gray-500 flex-wrap gap-2">
           <div className="flex items-center gap-3">
-            {(['winter', 'spring', 'summer', 'autumn'] as const).map(s => (
+            {isV2G ? (
+              <>
+                {v2gHasNetCharge && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" style={{ opacity: 0.65 }} />
+                  Load Shifting
+                </span>
+                )}
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500" style={{ opacity: 0.65 }} />
+                  Arbitrage
+                </span>
+              </>
+            ) : (
+            (['winter', 'spring', 'summer', 'autumn'] as const).map(s => (
               <span key={s} className="flex items-center gap-1 capitalize">
                 <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: SEASON_COLORS[s], opacity: 0.75 }} />
                 {s}
               </span>
-            ))}
+            ))
+            )}
           </div>
           <span className="flex items-center gap-1.5 text-gray-400">
             <span className="inline-block w-6 border-t border-dashed border-gray-400" />

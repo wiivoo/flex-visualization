@@ -136,19 +136,26 @@ export interface V2gResult {
   totalChargedKwh: number        // total kWh charged
   totalDischargedKwh: number     // total kWh discharged
   netEnergyKwh: number           // net kWh added to battery (charge - discharge/eff)
-  // Financials — all revenue is "savings" in V2G
+  // Financials — total benefit = load shifting + arbitrage
   chargeCostEur: number          // cost of buying energy
   dischargeRevenueEur: number    // revenue from selling energy
   degradationCostEur: number     // battery wear cost
-  profitEur: number              // revenue - cost - degradation = net profit per session
+  profitEur: number              // TOTAL benefit = loadShiftingBenefitEur + arbitrageUpliftEur
   profitCtKwh: number            // profit normalized per kWh discharged
+  // Dual value streams (PROJ-29)
+  loadShiftingBenefitEur: number // V1G-equivalent savings on net charge (startSoC→targetSoC)
+  arbitrageUpliftEur: number     // extra profit from discharge/recharge cycling
+  baselineChargeCostEur: number  // what charging immediately at plug-in would cost
+  optimizedChargeCostEur: number // what smart-timed net charge costs (cheapest slots)
   // SoC tracking
   startSoc: number               // % at plug-in
   endSoc: number                 // % at departure (should >= targetSoc)
   minSocReached: number          // lowest SoC during session
   // Chart rendering
   dischargeKeys: Set<string>     // `date-hour-minute` keys of discharge slots
-  chargeKeys: Set<string>        // `date-hour-minute` keys of charge slots
+  chargeKeys: Set<string>        // `date-hour-minute` keys of ALL charge slots
+  netChargeKeys: Set<string>     // keys of load-shifting charge slots (net energy needed)
+  arbChargeKeys: Set<string>     // keys of arbitrage charge slots (extra cycling energy)
 }
 
 const EMPTY_V2G: V2gResult = {
@@ -157,27 +164,26 @@ const EMPTY_V2G: V2gResult = {
   totalChargedKwh: 0, totalDischargedKwh: 0, netEnergyKwh: 0,
   chargeCostEur: 0, dischargeRevenueEur: 0, degradationCostEur: 0,
   profitEur: 0, profitCtKwh: 0,
+  loadShiftingBenefitEur: 0, arbitrageUpliftEur: 0,
+  baselineChargeCostEur: 0, optimizedChargeCostEur: 0,
   startSoc: 0, endSoc: 0, minSocReached: 0,
   dischargeKeys: new Set(), chargeKeys: new Set(),
+  netChargeKeys: new Set(), arbChargeKeys: new Set(),
 }
 
 /**
  * V2G optimizer: maximize battery arbitrage profit within a price window.
  *
  * Model: plug in at startSoc → trade the battery (buy low / sell high) →
- * must reach targetSoc by departure. All revenue IS the saving.
+ * must reach targetSoc by departure. Total benefit = load shifting + arbitrage.
  *
- * Supports multiple charge/discharge cycles per session: the battery can
- * charge→discharge→charge→discharge repeatedly, limited only by available
- * time slots, battery bounds, and pair profitability.
- *
- * Algorithm:
- * 1. Determine how many kWh must be net-charged: (targetSoc - startSoc) * batteryKwh / 100
+ * Algorithm (PROJ-29 — chronological ordering + dual value streams):
+ * 1. Compute V1G-equivalent load shifting benefit for net energy (startSoC→targetSoC)
  * 2. Reserve cheapest slots for mandatory net charge to reach targetSoc
- * 3. From remaining slots, greedily pair cheapest buy + most expensive sell
- * 4. Each pair is profitable if: sellPrice - buyPrice/efficiency - degradation > 0
- * 5. Multiple cycles allowed — usable battery window [minSoc, 100%] per cycle
- * 6. Total cycles limited by time: each cycle needs 1 charge + 1 discharge slot
+ * 3. Greedily pair cheapest buy + most expensive sell for arbitrage
+ * 4. Validate chronologically: walk slots in time order, track SoC, skip infeasible
+ * 5. Discharge only from energy already in battery (existing SoC or prior charge)
+ * 6. profitEur = loadShiftingBenefitEur + arbitrageUpliftEur
  */
 export function computeV2gWindowSavings(
   windowPrices: HourlyPrice[],
@@ -203,112 +209,154 @@ export function computeV2gWindowSavings(
   // Net kWh needed to reach target from start
   const netNeededKwh = Math.max(0, targetKwh - startKwh)
 
-  // Sort all prices cheap→expensive
-  const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+  // ── Load shifting benefit (V1G-equivalent for net energy) ──
+  let loadShiftingBenefitEur = 0
+  let baselineChargeCostEur = 0
+  let optimizedChargeCostEur = 0
+  if (netNeededKwh > 0) {
+    const ls = computeWindowSavings(windowPrices, netNeededKwh, chargeKwhPerSlot, 1)
+    baselineChargeCostEur = Math.round(ls.bAvg * netNeededKwh / 100 * 1000) / 1000
+    optimizedChargeCostEur = Math.round(ls.oAvg * netNeededKwh / 100 * 1000) / 1000
+    loadShiftingBenefitEur = baselineChargeCostEur - optimizedChargeCostEur
+  }
 
-  // Step 1: Reserve cheapest slots for net charging (must reach targetSoc)
+  // ── Greedy pairing: find optimal charge/discharge assignment ──
+  const sorted = [...windowPrices].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+  const slotKey = (p: HourlyPrice) => `${p.date}-${p.hour}-${p.minute ?? 0}`
+
+  // Reserve cheapest slots for net charging
   const netChargeSlotsNeeded = Math.ceil(netNeededKwh / chargeKwhPerSlot)
   const netChargeSlots = sorted.slice(0, netChargeSlotsNeeded)
-  const netChargeKeys = new Set(netChargeSlots.map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+  const netChargeKeys = new Set(netChargeSlots.map(slotKey))
 
-  // Step 2: From remaining slots, find ALL profitable charge/discharge pairs
-  // Multiple cycles allowed — battery can go min→max→min→max repeatedly
-  const remaining = sorted.filter(p => !netChargeKeys.has(`${p.date}-${p.hour}-${p.minute ?? 0}`))
-  const buyLow = [...remaining] // cheap→expensive
-  const sellHigh = [...remaining].reverse() // expensive→cheap
-
-  const arbitrageChargeSlots: HourlyPrice[] = []
-  const arbitrageDischargeSlots: HourlyPrice[] = []
+  // From remaining slots, find profitable arbitrage pairs
+  const remaining = sorted.filter(p => !netChargeKeys.has(slotKey(p)))
+  const buyLow = [...remaining]
+  const sellHigh = [...remaining].reverse()
+  const candidateChargeSlots: HourlyPrice[] = []
+  const candidateDischargeSlots: HourlyPrice[] = []
   const usedKeys = new Set<string>()
-
-  // Usable battery capacity per cycle
   const usableBatteryKwh = maxKwh - minKwh
-
-  // Track energy within the current cycle — reset when a full cycle completes
   let currentCycleKwh = 0
-
   let bIdx = 0
-  for (const sell of sellHigh) {
-    const sellKey = `${sell.date}-${sell.hour}-${sell.minute ?? 0}`
-    if (usedKeys.has(sellKey)) continue
 
-    // Find cheapest unused buy slot
+  for (const sell of sellHigh) {
+    const sk = slotKey(sell)
+    if (usedKeys.has(sk)) continue
     while (bIdx < buyLow.length) {
-      const bk = `${buyLow[bIdx].date}-${buyLow[bIdx].hour}-${buyLow[bIdx].minute ?? 0}`
-      if (!usedKeys.has(bk) && bk !== sellKey) break
+      const bk = slotKey(buyLow[bIdx])
+      if (!usedKeys.has(bk) && bk !== sk) break
       bIdx++
     }
     if (bIdx >= buyLow.length) break
-
     const buy = buyLow[bIdx]
-    // Profitability: sell revenue > buy cost (adj for RT efficiency) + degradation
     const profit = sell.priceCtKwh - (buy.priceCtKwh / roundTripEfficiency) - degradationCtKwh
-    if (profit <= 0) break // remaining pairs will be less profitable
-
+    if (profit <= 0) break
     const tradeKwh = Math.min(dischargeKwhPerSlot, chargeKwhPerSlot)
-
-    // Check if this pair fits in the current cycle, or start a new cycle
-    if (currentCycleKwh + tradeKwh > usableBatteryKwh) {
-      currentCycleKwh = 0 // new cycle
-    }
-
-    arbitrageDischargeSlots.push(sell)
-    arbitrageChargeSlots.push(buy)
-    usedKeys.add(sellKey)
-    usedKeys.add(`${buy.date}-${buy.hour}-${buy.minute ?? 0}`)
+    if (currentCycleKwh + tradeKwh > usableBatteryKwh) currentCycleKwh = 0
+    candidateDischargeSlots.push(sell)
+    candidateChargeSlots.push(buy)
+    usedKeys.add(sk)
+    usedKeys.add(slotKey(buy))
     currentCycleKwh += tradeKwh
     bIdx++
   }
 
-  // Combine all charge and discharge slots
-  const allChargeSlots = [...netChargeSlots, ...arbitrageChargeSlots]
-  const allDischargeSlots = arbitrageDischargeSlots
+  // ── Chronological validation: walk in time order, enforce SoC constraints ──
+  const assignmentMap = new Map<string, 'netCharge' | 'arbCharge' | 'discharge'>()
+  for (const p of netChargeSlots) assignmentMap.set(slotKey(p), 'netCharge')
+  for (const p of candidateChargeSlots) assignmentMap.set(slotKey(p), 'arbCharge')
+  for (const p of candidateDischargeSlots) assignmentMap.set(slotKey(p), 'discharge')
 
-  const totalChargedKwh = allChargeSlots.length * chargeKwhPerSlot
-  const totalDischargedKwh = allDischargeSlots.length * dischargeKwhPerSlot
-  const cyclesCompleted = usableBatteryKwh > 0 ? totalDischargedKwh / usableBatteryKwh : 0
+  const execCharge: HourlyPrice[] = []
+  const execDischarge: HourlyPrice[] = []
+  let socKwh = startKwh
+  let minSocKwh = startKwh
 
-  // Financials
-  const chargeAvgCt = allChargeSlots.length > 0
-    ? allChargeSlots.reduce((s, p) => s + p.priceCtKwh, 0) / allChargeSlots.length : 0
-  const dischargeAvgCt = allDischargeSlots.length > 0
-    ? allDischargeSlots.reduce((s, p) => s + p.priceCtKwh, 0) / allDischargeSlots.length : 0
+  for (const slot of windowPrices) {
+    const key = slotKey(slot)
+    const action = assignmentMap.get(key)
+    if (action === 'discharge' && socKwh - dischargeKwhPerSlot >= minKwh - 0.01) {
+      execDischarge.push(slot)
+      socKwh -= dischargeKwhPerSlot
+      socKwh = Math.max(socKwh, minKwh)
+      minSocKwh = Math.min(minSocKwh, socKwh)
+    } else if ((action === 'netCharge' || action === 'arbCharge') && socKwh + chargeKwhPerSlot <= maxKwh + 0.01) {
+      execCharge.push(slot)
+      socKwh = Math.min(socKwh + chargeKwhPerSlot, maxKwh)
+    }
+  }
 
-  const dischargeRevenueEur = allDischargeSlots.reduce((s, p) => s + p.priceCtKwh * dischargeKwhPerSlot, 0) / 100
+  // Post-processing: if targetSoc not reached, add cheapest unused charge slots
+  if (socKwh < targetKwh - 0.01) {
+    const execKeys = new Set([...execCharge.map(slotKey), ...execDischarge.map(slotKey)])
+    const available = sorted.filter(p => !execKeys.has(slotKey(p)))
+    for (const slot of available) {
+      if (socKwh >= targetKwh - 0.01) break
+      if (socKwh + chargeKwhPerSlot <= maxKwh + 0.01) {
+        execCharge.push(slot)
+        socKwh = Math.min(socKwh + chargeKwhPerSlot, maxKwh)
+      }
+    }
+  }
+
+  // ── Financials ──
+  const totalChargedKwh = execCharge.length * chargeKwhPerSlot
+  const totalDischargedKwh = execDischarge.length * dischargeKwhPerSlot
+
+  const chargeAvgCt = execCharge.length > 0
+    ? execCharge.reduce((s, p) => s + p.priceCtKwh, 0) / execCharge.length : 0
+  const dischargeAvgCt = execDischarge.length > 0
+    ? execDischarge.reduce((s, p) => s + p.priceCtKwh, 0) / execDischarge.length : 0
+
+  const dischargeRevenueEur = execDischarge.reduce((s, p) => s + p.priceCtKwh * dischargeKwhPerSlot, 0) / 100
   const degradationCostEur = degradationCtKwh * totalDischargedKwh / 100
-  // Arbitrage profit: sell revenue - buy cost (adjusted for round-trip efficiency) - degradation
-  const arbChargeCost = arbitrageChargeSlots.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot / roundTripEfficiency, 0) / 100
-  const arbProfit = dischargeRevenueEur - arbChargeCost - degradationCostEur
-  // Net charge cost = cheapest slots to reach target
-  const netChargeCostEur = netChargeSlots.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot, 0) / 100
 
-  // SoC tracking (simplified — greedy doesn't guarantee chronological feasibility,
-  // but for the dashboard visualization this is sufficient)
-  const endSocKwh = startKwh + totalChargedKwh - totalDischargedKwh
-  const endSoc = Math.min(100, Math.max(0, endSocKwh / batteryKwh * 100))
+  // Split charge into net vs arb: cheapest executed charges are "net", rest are "arb recharge"
+  const sortedExecCharge = [...execCharge].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
+  const arbChargeExec = sortedExecCharge.slice(Math.min(netChargeSlotsNeeded, sortedExecCharge.length))
+  const netChargeExec = sortedExecCharge.slice(0, Math.min(netChargeSlotsNeeded, sortedExecCharge.length))
 
-  // Build key sets
-  const chargeKeys = new Set(allChargeSlots.map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
-  const dischargeKeys = new Set(allDischargeSlots.map(p => `${p.date}-${p.hour}-${p.minute ?? 0}`))
+  const netChargeCostEur = netChargeExec.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot, 0) / 100
+  const arbChargeCostEur = arbChargeExec.reduce((s, p) => s + p.priceCtKwh * chargeKwhPerSlot / roundTripEfficiency, 0) / 100
+
+  // Arbitrage uplift: discharge revenue - arb recharge cost - degradation
+  const arbitrageUpliftEur = Math.max(0, dischargeRevenueEur - arbChargeCostEur - degradationCostEur)
+
+  // Total benefit = load shifting + arbitrage
+  const profitEur = loadShiftingBenefitEur + arbitrageUpliftEur
+
+  const endSoc = Math.min(100, Math.max(0, socKwh / batteryKwh * 100))
+
+  const chargeKeys = new Set(execCharge.map(slotKey))
+  const dischargeKeys = new Set(execDischarge.map(slotKey))
+  const netChargeKeysSet = new Set(netChargeExec.map(slotKey))
+  const arbChargeKeysSet = new Set(arbChargeExec.map(slotKey))
 
   return {
-    chargeSlots: allChargeSlots,
-    dischargeSlots: allDischargeSlots,
+    chargeSlots: execCharge,
+    dischargeSlots: execDischarge,
     chargeAvgCt,
     dischargeAvgCt,
     totalChargedKwh,
     totalDischargedKwh,
     netEnergyKwh: totalChargedKwh - totalDischargedKwh,
-    chargeCostEur: netChargeCostEur + arbChargeCost,
+    chargeCostEur: netChargeCostEur + arbChargeCostEur,
     dischargeRevenueEur,
     degradationCostEur,
-    profitEur: arbProfit,
-    profitCtKwh: totalDischargedKwh > 0 ? arbProfit * 100 / totalDischargedKwh : 0,
+    profitEur,
+    profitCtKwh: totalDischargedKwh > 0 ? arbitrageUpliftEur * 100 / totalDischargedKwh : 0,
+    loadShiftingBenefitEur,
+    arbitrageUpliftEur,
+    baselineChargeCostEur,
+    optimizedChargeCostEur,
     startSoc: startSocPercent,
     endSoc,
-    minSocReached: minSocPercent,
+    minSocReached: Math.min(100, Math.max(0, minSocKwh / batteryKwh * 100)),
     dischargeKeys,
     chargeKeys,
+    netChargeKeys: netChargeKeysSet,
+    arbChargeKeys: arbChargeKeysSet,
   }
 }
 

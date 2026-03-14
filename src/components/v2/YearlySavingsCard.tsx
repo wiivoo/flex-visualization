@@ -9,6 +9,8 @@ export interface YearlySavingsEntry {
   isProjected: boolean
   isPartial: boolean
   monthsCovered: number
+  loadShiftingEur?: number  // V2G: load shifting portion
+  arbitrageEur?: number     // V2G: arbitrage portion
 }
 
 interface Props {
@@ -16,6 +18,7 @@ interface Props {
   weeklyPlugIns: number
   energyPerSession: number
   chargingMode?: 'overnight' | 'fullday' | 'threeday'
+  isV2G?: boolean
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -24,7 +27,7 @@ const MODE_LABELS: Record<string, string> = {
   threeday: '3-day',
 }
 
-export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession, chargingMode = 'overnight' }: Props) {
+export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession, chargingMode = 'overnight', isV2G = false }: Props) {
   if (!yearlySavingsData || yearlySavingsData.length === 0) return null
 
   const currentYear = new Date().getFullYear()
@@ -87,16 +90,37 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
                     style={{ width: `${refPct}%`, opacity: 0.35 }}
                   />
                 )}
-                {/* Actual year bar (on top) */}
+                {/* V2G: stacked bar (green load shifting + blue arbitrage) */}
+                {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined && d.savings > 0 ? (
+                  <div className="relative h-full flex" style={{ width: `${barPct}%` }}>
+                    <div
+                      className="h-full rounded-l-full bg-emerald-500"
+                      style={{ width: `${(d.loadShiftingEur / d.savings) * 100}%`, opacity: isCurrent ? 0.75 : 0.4 }}
+                    />
+                    <div
+                      className="h-full rounded-r-full bg-blue-500"
+                      style={{ width: `${(d.arbitrageEur / d.savings) * 100}%`, opacity: isCurrent ? 0.75 : 0.4 }}
+                    />
+                  </div>
+                ) : (
                 <div
                   className={`relative h-full rounded-full transition-all ${isCurrent ? 'bg-emerald-500' : 'bg-emerald-300'}`}
                   style={{ width: `${barPct}%`, opacity: isCurrent ? 0.85 : 0.45 }}
                 />
+                )}
               </div>
               <div className="flex items-center justify-between text-[9px] text-gray-400 mt-0.5 tabular-nums">
                 <span>{d.sessionsCount} sessions · {partial}</span>
-                {isCurrent && ytdRef2025 > 0 && (
+                {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined ? (
+                  <span>
+                    <span className="text-emerald-500">{'\u20AC'}{Math.round(d.loadShiftingEur)} shift</span>
+                    <span className="mx-1">+</span>
+                    <span className="text-blue-500">{'\u20AC'}{Math.round(d.arbitrageEur)} arb</span>
+                  </span>
+                ) : (
+                isCurrent && ytdRef2025 > 0 && (
                   <span className="text-amber-600/70">{'\u20AC'}{Math.round(ytdRef2025)} in &apos;25</span>
+                )
                 )}
               </div>
             </div>

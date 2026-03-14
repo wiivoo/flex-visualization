@@ -35,6 +35,7 @@ export interface ChargingScenario {
   roundTripEfficiency: number  // 0.80-0.95 (default 0.88)
   degradationCtKwh: number    // 1-8 ct/kWh (battery wear cost per kWh cycled)
   minSocPercent: number        // 10-40% (floor SoC during session, never go below)
+  v2gBatteryKwh: number        // 20-120 kWh in 10 kWh steps (V2G battery size)
 }
 
 /** Total weekly plug-ins (weekday + weekend) */
@@ -60,6 +61,7 @@ export const DEFAULT_SCENARIO: ChargingScenario = {
   roundTripEfficiency: 0.88,
   degradationCtKwh: 3,
   minSocPercent: 20,
+  v2gBatteryKwh: 60,
 }
 
 /** Average EV consumption in kWh per 100 km */

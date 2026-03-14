@@ -60,8 +60,10 @@ interface Props {
 export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) {
   const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
   const isV2G = scenario.gridMode === 'v2g'
+  // V2G: does the battery need net charging? (startSoC < targetSoC)
+  const v2gHasNetCharge = isV2G && scenario.v2gStartSoc < scenario.v2gTargetSoc
   const vehiclePreset = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId) ?? VEHICLE_PRESETS[1]
-  const batteryKwh = vehiclePreset.battery_kwh
+  const batteryKwh = isV2G ? (scenario.v2gBatteryKwh ?? 60) : vehiclePreset.battery_kwh
   const weeklyPlugIns = Math.max(1, totalWeeklyPlugIns(scenario))
   const energyPerSession = deriveEnergyPerSession(scenario.yearlyMileageKm, scenario.weekdayPlugIns, scenario.weekendPlugIns)
   const kmPerCharge = Math.round(scenario.yearlyMileageKm / (weeklyPlugIns * 52))
@@ -230,7 +232,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; dischargePrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
@@ -304,6 +306,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     // V2G: compute discharge slots
     let v2gDischargeKeys = new Set<string>()
     let v2gChargeKeys = new Set<string>()
+    let v2gNetChargeKeys = new Set<string>()
+    let v2gArbChargeKeys = new Set<string>()
     let v2g: ReturnType<typeof computeV2gWindowSavings> | null = null
     if (isV2G && windowPrices.length > 0) {
       v2g = computeV2gWindowSavings(
@@ -313,6 +317,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       )
       v2gDischargeKeys = v2g.dischargeKeys
       v2gChargeKeys = v2g.chargeKeys
+      v2gNetChargeKeys = v2g.netChargeKeys
+      v2gArbChargeKeys = v2g.arbChargeKeys
     }
 
     let idx = 0
@@ -340,6 +346,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         baselinePrice: baselineKeys.has(key) ? ct : null,
         optimizedPrice: optKey ? ct : null,
         dischargePrice: v2gDischargeKeys.has(key) ? ct : null,
+        netChargePrice: v2gNetChargeKeys.has(key) ? ct : null,
+        arbChargePrice: v2gArbChargeKeys.has(key) ? ct : null,
         isInWindow,
         isProjected: projected,
         renewableShare: renewableData.get(`${p.date}-${p.hour}`),
@@ -624,7 +632,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
 
   // Compute charging blocks (contiguous hour ranges) for clear visualization
   // Band for hour at index i spans [i, i+1], clamped to [arrivalIdx, departureIdx]
-  const { baselineRanges, optimizedRanges, dischargeRanges } = useMemo(() => {
+  const { baselineRanges, optimizedRanges, dischargeRanges, netChargeRanges, arbChargeRanges } = useMemo(() => {
     const aIdx = arrivalIdx >= 0 ? arrivalIdx : 0
     const dIdx = departureIdx >= 0 ? departureIdx : N - 1
     function findRanges(key: 'baselinePrice' | 'optimizedPrice') {
@@ -661,7 +669,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       if (start !== null) ranges.push({ x1: Math.max(start, aIdx), x2: Math.min(end! + 1, dIdx) })
       return ranges
     }
-    return { baselineRanges: findRanges('baselinePrice'), optimizedRanges: findRanges('optimizedPrice'), dischargeRanges: findRangesGeneric('dischargePrice') }
+    return {
+      baselineRanges: findRanges('baselinePrice'),
+      optimizedRanges: findRanges('optimizedPrice'),
+      dischargeRanges: findRangesGeneric('dischargePrice'),
+      netChargeRanges: findRangesGeneric('netChargePrice'),
+      arbChargeRanges: findRangesGeneric('arbChargePrice'),
+    }
   }, [chartData, arrivalIdx, departureIdx, N])
 
   // ── Pre-compute overnight windows (shared by monthly + heatmap) ──
@@ -707,26 +721,30 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     // weekdayScale: fraction of weekdays user plugs in (e.g. 3/5 = 60%)
     const weekdayScale = deferredWeekdayPlugIns / 5
     const weekendScale = deferredWeekendPlugIns / 2
-    const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number }>()
+    const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; wdLS: number; weLS: number; wdArb: number; weArb: number }>()
     for (const w of overnightWindows) {
       if (w.prices.length < minHours) continue
       let savEur: number
+      let lsEur = 0, arbEur = 0
       if (isV2G) {
-        savEur = computeV2gWindowSavings(
+        const v2gR = computeV2gWindowSavings(
           w.prices, batteryKwh, chargePowerKw, scenario.dischargePowerKw,
           scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent,
           scenario.roundTripEfficiency, scenario.degradationCtKwh, mKwhPerSlot,
-        ).profitEur
+        )
+        savEur = v2gR.profitEur
+        lsEur = v2gR.loadShiftingBenefitEur
+        arbEur = v2gR.arbitrageUpliftEur
       } else {
         savEur = computeWindowSavings(w.prices, deferredEnergyPerSession, mKwhPerSlot, mSlotsPerHour).savingsEur
       }
-      const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0 }
+      const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, wdLS: 0, weLS: 0, wdArb: 0, weArb: 0 }
       if (w.isWeekend) {
-        entry.weSavings += savEur
-        entry.weDays++
+        entry.weSavings += savEur; entry.weDays++
+        entry.weLS += lsEur; entry.weArb += arbEur
       } else {
-        entry.wdSavings += savEur
-        entry.wdDays++
+        entry.wdSavings += savEur; entry.wdDays++
+        entry.wdLS += lsEur; entry.wdArb += arbEur
       }
       monthMap.set(w.month, entry)
     }
@@ -739,6 +757,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const wdMonthly = wdAvg * weekdayScale * 21.74  // ~21.74 weekdays/month
         const weMonthly = weAvg * weekendScale * 8.70    // ~8.70 weekend days/month
         const monthlySav = Math.round((wdMonthly + weMonthly) * 100) / 100
+        // V2G split
+        const wdLSAvg = data.wdDays > 0 ? data.wdLS / data.wdDays : 0
+        const weLSAvg = data.weDays > 0 ? data.weLS / data.weDays : 0
+        const wdArbAvg = data.wdDays > 0 ? data.wdArb / data.wdDays : 0
+        const weArbAvg = data.weDays > 0 ? data.weArb / data.weDays : 0
+        const lsMonthly = Math.round((wdLSAvg * weekdayScale * 21.74 + weLSAvg * weekendScale * 8.70) * 100) / 100
+        const arbMonthly = Math.round((wdArbAvg * weekdayScale * 21.74 + weArbAvg * weekendScale * 8.70) * 100) / 100
         const [y, m] = month.split('-').map(Number)
         const label = new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'short' })
         const mNum = m
@@ -748,6 +773,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           month, label, savings: monthlySav, season, year: y,
           weekdaySavings: Math.round(wdMonthly * 100) / 100,
           weekendSavings: Math.round(weMonthly * 100) / 100,
+          ...(isV2G ? { loadShiftingEur: lsMonthly, arbitrageEur: arbMonthly } : {}),
         }
       })
   }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
@@ -824,19 +850,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const weekendScale = deferredWeekendPlugIns / 2
 
     // Group windows by year, split weekday/weekend
-    const yearMap = new Map<number, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; months: Set<string> }>()
+    const yearMap = new Map<number, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; months: Set<string>; wdLS: number; weLS: number; wdArb: number; weArb: number }>()
     for (const w of overnightWindows) {
       if (w.prices.length < minHours) continue
       const yr = parseInt(w.date.slice(0, 4))
-      const entry = yearMap.get(yr) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, months: new Set<string>() }
+      const entry = yearMap.get(yr) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, months: new Set<string>(), wdLS: 0, weLS: 0, wdArb: 0, weArb: 0 }
       let savEur: number
+      let lsEur = 0, arbEur = 0
       if (isV2G) {
-        savEur = computeV2gWindowSavings(w.prices, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, yKwhPerSlot).profitEur
+        const v2gR = computeV2gWindowSavings(w.prices, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, yKwhPerSlot)
+        savEur = v2gR.profitEur
+        lsEur = v2gR.loadShiftingBenefitEur
+        arbEur = v2gR.arbitrageUpliftEur
       } else {
         savEur = computeWindowSavings(w.prices, deferredEnergyPerSession, yKwhPerSlot, ySlotsPerHour).savingsEur
       }
-      if (w.isWeekend) { entry.weSavings += savEur; entry.weDays++ }
-      else { entry.wdSavings += savEur; entry.wdDays++ }
+      if (w.isWeekend) { entry.weSavings += savEur; entry.weDays++; entry.weLS += lsEur; entry.weArb += arbEur }
+      else { entry.wdSavings += savEur; entry.wdDays++; entry.wdLS += lsEur; entry.wdArb += arbEur }
       entry.months.add(w.month)
       yearMap.set(yr, entry)
     }
@@ -850,6 +880,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const wdYearly = wdAvg * weekdayScale * 21.74 * monthsCovered
         const weYearly = weAvg * weekendScale * 8.70 * monthsCovered
         const yearlySav = Math.round((wdYearly + weYearly) * 100) / 100
+        // V2G split
+        const wdLSAvg = data.wdDays > 0 ? data.wdLS / data.wdDays : 0
+        const weLSAvg = data.weDays > 0 ? data.weLS / data.weDays : 0
+        const wdArbAvg = data.wdDays > 0 ? data.wdArb / data.wdDays : 0
+        const weArbAvg = data.weDays > 0 ? data.weArb / data.weDays : 0
+        const lsYearly = Math.round((wdLSAvg * weekdayScale * 21.74 + weLSAvg * weekendScale * 8.70) * monthsCovered * 100) / 100
+        const arbYearly = Math.round((wdArbAvg * weekdayScale * 21.74 + weArbAvg * weekendScale * 8.70) * monthsCovered * 100) / 100
         const plugDaysPerMonth = (deferredWeeklyPlugIns / 7) * 30.44
         return {
           year,
@@ -858,6 +895,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
           isProjected: false,
           isPartial: monthsCovered < 12,
           monthsCovered,
+          ...(isV2G ? { loadShiftingEur: lsYearly, arbitrageEur: arbYearly } : {}),
         }
       })
   }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, deferredWeeklyPlugIns, chargePowerKw, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
@@ -964,12 +1002,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             <div className="flex items-center gap-0.5 bg-gray-200/60 rounded-full p-0.5">
               <button
                 onClick={() => setScenario({ ...scenario, gridMode: 'v1g' })}
+                title="V1G: Smart charging — shift your charge to the cheapest hours"
                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
                   scenario.gridMode === 'v1g' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
                 }`}
               >V1G</button>
               <button
                 onClick={() => setScenario({ ...scenario, gridMode: 'v2g' })}
+                title="V2G: Bidirectional — load shifting + sell energy back at peak prices"
                 className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
                   scenario.gridMode === 'v2g' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
                 }`}
@@ -1121,32 +1161,33 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             {/* V2G Settings — conditional, same visual style as V1G sliders */}
             {isV2G && (
               <div className="space-y-4">
-                {/* Battery Size — slider snaps to presets */}
+                {/* Battery Size — continuous 10 kWh steps */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
                     <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Battery</span>
                     <span className="text-2xl font-bold text-[#313131] tabular-nums">{batteryKwh}<span className="text-xs font-normal text-gray-400 ml-1">kWh</span></span>
                   </div>
                   <div>
-                    <input type="range" min={0} max={VEHICLE_PRESETS.length - 1} step={1}
-                      value={VEHICLE_PRESETS.findIndex(v => v.id === scenario.vehicleId)}
-                      onChange={(e) => {
-                        const preset = VEHICLE_PRESETS[Number(e.target.value)]
-                        if (preset) setScenario({ ...scenario, vehicleId: preset.id })
-                      }}
+                    <input type="range" min={20} max={120} step={10}
+                      value={batteryKwh}
+                      onChange={(e) => setScenario({ ...scenario, v2gBatteryKwh: Number(e.target.value) })}
                       className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
                     <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                      {VEHICLE_PRESETS.map(v => <span key={v.id}>{v.battery_kwh} kWh</span>)}
+                      <span>20 kWh</span>
+                      <span>120 kWh</span>
                     </div>
                   </div>
-                  <p className="text-[10px] text-gray-400 text-center">{vehiclePreset.label}: {vehiclePreset.examples}</p>
+                  <p className="text-[10px] text-gray-400 text-center">
+                    {Math.round(batteryKwh * (scenario.v2gTargetSoc - scenario.v2gStartSoc) / 100)} kWh net charge ({scenario.v2gStartSoc}% → {scenario.v2gTargetSoc}%)
+                    {scenario.v2gStartSoc >= scenario.v2gTargetSoc && <span className="text-amber-500 ml-1">· no net charge needed</span>}
+                  </p>
                 </div>
 
                 {/* Start SoC */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Start SoC</span>
-                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.v2gStartSoc}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500" title="Battery level when you plug in the car">Start SoC</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.v2gStartSoc}<span className="text-xs font-normal text-gray-400 ml-1">% · {Math.round(batteryKwh * scenario.v2gStartSoc / 100)} kWh</span></span>
                   </div>
                   <div>
                     <input type="range" min={10} max={90} step={5}
@@ -1163,8 +1204,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 {/* Target SoC */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Target SoC</span>
-                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.v2gTargetSoc}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500" title="Required battery level at departure time">Target SoC</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.v2gTargetSoc}<span className="text-xs font-normal text-gray-400 ml-1">% · {Math.round(batteryKwh * scenario.v2gTargetSoc / 100)} kWh</span></span>
                   </div>
                   <div>
                     <input type="range" min={50} max={100} step={5}
@@ -1181,8 +1222,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 {/* Min SoC */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Min Battery</span>
-                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.minSocPercent}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500" title="Floor SoC — battery will never discharge below this level">Min Battery</span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.minSocPercent}<span className="text-xs font-normal text-gray-400 ml-1">% · {Math.round(batteryKwh * scenario.minSocPercent / 100)} kWh</span></span>
                   </div>
                   <div>
                     <input type="range" min={10} max={40} step={5}
@@ -1196,10 +1237,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   </div>
                 </div>
 
+                {/* SoC context summary */}
+                <div className="rounded-md bg-gray-50 border border-gray-100 px-3 py-2 text-[10px] text-gray-500 space-y-0.5">
+                  {scenario.v2gStartSoc < scenario.v2gTargetSoc ? (
+                    <>
+                      <p><span className="font-semibold text-emerald-600">Load shifting</span>: {Math.round(batteryKwh * (scenario.v2gTargetSoc - scenario.v2gStartSoc) / 100)} kWh net charge ({scenario.v2gStartSoc}% → {scenario.v2gTargetSoc}%) shifted to cheapest slots</p>
+                      <p><span className="font-semibold text-blue-600">Arbitrage</span>: additional charge/discharge cycles for profit within {scenario.minSocPercent}%–100% range</p>
+                    </>
+                  ) : (
+                    <>
+                      <p><span className="font-semibold text-amber-600">Pure arbitrage</span>: no net charge needed (Start {scenario.v2gStartSoc}% ≥ Target {scenario.v2gTargetSoc}%)</p>
+                      <p>Battery cycles between {scenario.minSocPercent}% and 100% — buy low, sell high</p>
+                    </>
+                  )}
+                </div>
+
                 {/* Round-trip Efficiency */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Round-trip Eff.</span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500" title="Energy lost in each charge/discharge cycle (AC→DC→AC)">Round-trip Eff.</span>
                     <span className="text-2xl font-bold text-[#313131] tabular-nums">{Math.round(scenario.roundTripEfficiency * 100)}<span className="text-xs font-normal text-gray-400 ml-1">%</span></span>
                   </div>
                   <div>
@@ -1217,7 +1273,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 {/* Degradation Cost */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Degradation</span>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-gray-500" title="Battery wear cost per kWh discharged — accounts for reduced battery lifespan from V2G cycling">Degradation</span>
                     <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.degradationCtKwh.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-1">ct/kWh</span></span>
                   </div>
                   <div>
@@ -1427,29 +1483,44 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     <YAxis yAxisId="right" orientation="right" domain={[0, 100]} hide />
                   )}
 
-                  {/* Custom tooltip — shows price once, indicates charging type */}
+                  {/* Custom tooltip — shows price + role of each slot */}
                   <Tooltip
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null
                       const d = chartData[Number(label)]
                       if (!d) return null
                       return (
-                        <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px]">
+                        <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px] max-w-[260px]">
                           <p className="text-gray-500 text-xs mb-1">{fmtDateShort(d.date)} {d.label}</p>
                           <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} ct/kWh{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
-                          {!isV2G && d.baselinePrice !== null && (
+                          {d.baselinePrice !== null && (
                             <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-red-500 rounded inline-block" /> Charge now (starts at plug-in)
+                              <span className="w-2 h-2 bg-red-500 rounded-full inline-block flex-shrink-0" style={isV2G ? { opacity: 0.4 } : undefined} />
+                              {isV2G ? 'Baseline — unmanaged charge at plug-in time' : 'Charge now — starts immediately at plug-in'}
                             </p>
                           )}
-                          {d.optimizedPrice !== null && (
+                          {d.netChargePrice !== null && (
+                            <p className="text-emerald-600 text-xs mt-1 flex items-center gap-1">
+                              <span className="w-2 h-2 bg-emerald-500 rounded-full inline-block flex-shrink-0" />
+                              Load shifting — net charge moved to cheapest slot
+                            </p>
+                          )}
+                          {d.arbChargePrice !== null && (
                             <p className="text-blue-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-blue-500 rounded inline-block" /> {isV2G ? 'V2G Charge (buy low)' : 'Smart charging (cheapest hours)'}
+                              <span className="w-2 h-2 bg-blue-500 rounded-full inline-block flex-shrink-0" />
+                              Arb recharge — buy low to sell back later
+                            </p>
+                          )}
+                          {!isV2G && d.optimizedPrice !== null && (
+                            <p className="text-blue-600 text-xs mt-1 flex items-center gap-1">
+                              <span className="w-2 h-2 bg-blue-500 rounded-full inline-block flex-shrink-0" />
+                              Smart charging — cheapest available slot
                             </p>
                           )}
                           {isV2G && d.dischargePrice !== null && (
-                            <p className="text-emerald-600 text-xs mt-1 flex items-center gap-1">
-                              <span className="w-2 h-0.5 bg-emerald-500 rounded inline-block" /> V2G Discharge (sell high)
+                            <p className="text-amber-600 text-xs mt-1 flex items-center gap-1">
+                              <span className="w-2 h-2 bg-amber-500 rounded-full inline-block flex-shrink-0" />
+                              Sell high — discharge at peak price
                             </p>
                           )}
                           {showRenewable && d.renewableShare != null && (
@@ -1485,15 +1556,28 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   })()}
 
                   {/* Charging hour bands — clear colored backgrounds per block */}
-                  {!isV2G && baselineRanges.map((r, i) => (
-                    <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
+                  {/* Baseline bands — red (V1G: full opacity, V2G: subtle reference, hidden if no net charge) */}
+                  {(!isV2G || v2gHasNetCharge) && baselineRanges.map((r, i) => (
+                    <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={isV2G ? 0.05 : 0.08} ifOverflow="hidden" />
                   ))}
-                  {optimizedRanges.map((r, i) => (
-                    <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
-                  ))}
-                  {/* V2G discharge bands — green */}
+                  {/* V2G: separate load shifting (green) and arbitrage charge (blue) bands */}
+                  {isV2G ? (
+                    <>
+                      {netChargeRanges.map((r, i) => (
+                        <ReferenceArea key={`nc-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.10} ifOverflow="hidden" />
+                      ))}
+                      {arbChargeRanges.map((r, i) => (
+                        <ReferenceArea key={`ac-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+                      ))}
+                    </>
+                  ) : (
+                    optimizedRanges.map((r, i) => (
+                      <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+                    ))
+                  )}
+                  {/* V2G discharge bands — amber */}
                   {dischargeRanges.map((r, i) => (
-                    <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.10} ifOverflow="hidden" />
+                    <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#F59E0B" fillOpacity={0.10} ifOverflow="hidden" />
                   ))}
 
                   {/* Renewable generation share — very subtle background area */}
@@ -1520,22 +1604,36 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     </>
                   )}
 
-                  {/* Baseline dots — red (V1G only) */}
-                  {!isV2G && (
-                    <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isQH ? 2 : 3}
-                      dot={isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 }}
+                  {/* Baseline dots — red (V1G: prominent, V2G: subtle reference, hidden if pure arbitrage) */}
+                  {(!isV2G || v2gHasNetCharge) && (
+                    <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isV2G ? 1 : (isQH ? 2 : 3)}
+                      strokeOpacity={isV2G ? 0.4 : 1}
+                      dot={isV2G
+                        ? { r: isQH ? 1.5 : 2.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 1 }
+                        : (isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 })}
                       connectNulls={false} />
                   )}
 
-                  {/* Optimized / V2G charge dots — blue */}
-                  <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
-                    dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
-                    connectNulls={false} />
+                  {/* V2G: separate net charge (green) and arb charge (blue) dots */}
+                  {isV2G ? (
+                    <>
+                      <Line type="monotone" dataKey="netChargePrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
+                        dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
+                        connectNulls={false} />
+                      <Line type="monotone" dataKey="arbChargePrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
+                        dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
+                        connectNulls={false} />
+                    </>
+                  ) : (
+                    <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
+                      dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
+                      connectNulls={false} />
+                  )}
 
-                  {/* V2G discharge dots — green */}
+                  {/* V2G discharge dots — amber */}
                   {isV2G && (
-                    <Line type="monotone" dataKey="dischargePrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
-                      dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
+                    <Line type="monotone" dataKey="dischargePrice" yAxisId="left" stroke="#F59E0B" strokeWidth={isQH ? 2 : 3}
+                      dot={isQH ? { r: 2, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1.5 }}
                       connectNulls={false} />
                   )}
 
@@ -1639,20 +1737,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   : idxToPx(sessionCost.optimizedMidIdx)
                 const bY = priceToY(sessionCost.baselineAvgCt)
                 const oY = priceToY(sessionCost.optimizedAvgCt)
+                const chartTop = plotArea.top
                 const chartBottom = plotArea.top + plotArea.height
-                const bPillH = 36  // red label height
-                const oPillH = 36  // blue label height (savings pill moved to top)
-                // Red: below its line. Blue: above the optimized line.
-                let bYAdj = bY + 16
-                if (bYAdj + bPillH > chartBottom - 10) bYAdj = bY - bPillH - 10
-                let oYAdj = oY - oPillH - 8
-                // If blue would go above chart top, push below
-                if (oYAdj < plotArea.top + 2) oYAdj = oY + 16
-                // Avoid overlap with red label
-                if (oYAdj < bYAdj + bPillH && oYAdj + oPillH > bYAdj) {
-                  oYAdj = bYAdj - oPillH - 8
-                  if (oYAdj < plotArea.top + 2) oYAdj = bYAdj + bPillH + 8
-                }
+                const PILL_H = 36  // label pill height
+                const GAP = 6     // minimum gap between labels
+
                 // Compute savings using same method as the cards (computeWindowSavings)
                 const pillUseQH = isQH && prices.hourlyQH.length > 0
                 const pillPrices = pillUseQH ? prices.hourlyQH : prices.hourly
@@ -1670,21 +1759,92 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 ) : null
                 const totalSavingsCt = isV2G && pillV2g ? pillV2g.profitCtKwh : savingsCt
                 const totalSavingsEur = isV2G && pillV2g ? Math.round(pillV2g.profitEur * 100) / 100 : savingsEur
+                // V2G: compute centers for net charge and arb charge labels
+                const ncCenter = netChargeRanges.length > 0
+                  ? netChargeRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / netChargeRanges.length
+                  : oCenter
+                const acCenter = arbChargeRanges.length > 0
+                  ? arbChargeRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / arbChargeRanges.length
+                  : null
                 // V2G discharge label center
                 const dCenter = dischargeRanges.length > 0
                   ? dischargeRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / dischargeRanges.length
                   : null
-                const dY = pillV2g ? priceToY(pillV2g.dischargeAvgCt) : 0
-                let dYAdj = dY + 16
-                if (dYAdj + 36 > chartBottom - 10) dYAdj = dY - 36 - 10
+
+                // V2G arb charge avg price
+                const acAvgCt = pillV2g && pillV2g.arbChargeKeys.size > 0
+                  ? [...pillV2g.arbChargeKeys].reduce((s, k) => {
+                      const pt = chartData.find(d => `${d.date}-${d.hour}-${d.minute}` === k)
+                      return s + (pt?.priceVal ?? 0)
+                    }, 0) / pillV2g.arbChargeKeys.size
+                  : 0
+
+                // ── Collision-free label positioning ──
+                // Collect all active labels with ideal Y and X center
+                type LabelSlot = { id: string; x: number; idealY: number; y: number }
+                const labels: LabelSlot[] = []
+
+                if (isV2G && pillV2g) {
+                  // V2G labels
+                  if (v2gHasNetCharge) {
+                    labels.push({ id: 'baseline', x: bCenter, idealY: bY + 16, y: 0 })
+                    if (pillV2g.netChargeKeys.size > 0) {
+                      labels.push({ id: 'netCharge', x: ncCenter, idealY: oY - PILL_H - 8, y: 0 })
+                    }
+                  }
+                  if (acCenter && pillV2g.arbChargeKeys.size > 0) {
+                    labels.push({ id: 'arbCharge', x: acCenter, idealY: priceToY(acAvgCt) - PILL_H - 8, y: 0 })
+                  }
+                  if (dCenter && pillV2g.dischargeSlots.length > 0) {
+                    labels.push({ id: 'discharge', x: dCenter, idealY: priceToY(pillV2g.dischargeAvgCt) + 16, y: 0 })
+                  }
+                } else {
+                  // V1G labels
+                  labels.push({ id: 'baseline', x: bCenter, idealY: bY + 16, y: 0 })
+                  labels.push({ id: 'netCharge', x: oCenter, idealY: oY - PILL_H - 8, y: 0 })
+                }
+
+                // Clamp ideal Y to chart bounds
+                for (const l of labels) {
+                  l.y = Math.max(chartTop + 22, Math.min(chartBottom - PILL_H - 4, l.idealY))
+                }
+
+                // Resolve overlaps: for labels whose X centers are within 100px, ensure no vertical overlap
+                // Sort by Y, then push overlapping ones apart
+                const X_OVERLAP_THRESHOLD = 100
+                for (let pass = 0; pass < 4; pass++) {
+                  labels.sort((a, b) => a.y - b.y)
+                  for (let i = 0; i < labels.length - 1; i++) {
+                    for (let j = i + 1; j < labels.length; j++) {
+                      if (Math.abs(labels[i].x - labels[j].x) > X_OVERLAP_THRESHOLD) continue
+                      const overlap = (labels[i].y + PILL_H + GAP) - labels[j].y
+                      if (overlap > 0) {
+                        // Push them apart symmetrically
+                        const shift = overlap / 2
+                        labels[i].y -= shift
+                        labels[j].y += shift
+                        // Re-clamp
+                        labels[i].y = Math.max(chartTop + 22, labels[i].y)
+                        labels[j].y = Math.min(chartBottom - PILL_H - 4, labels[j].y)
+                      }
+                    }
+                  }
+                }
+
+                // Extract resolved positions
+                const pos = (id: string) => labels.find(l => l.id === id)?.y ?? 0
+                const bYAdj = pos('baseline')
+                const oYAdj = pos('netCharge')
+                const acYAdj = pos('arbCharge')
+                const dYAdj = pos('discharge')
                 return (
                   <>
-                    {/* Baseline (Charge now) — V1G only */}
-                    {!isV2G && (
+                    {/* Baseline (Charge now) — shown when there's net charge to shift */}
+                    {(!isV2G || v2gHasNetCharge) && (
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
-                      style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)' }}>
+                      style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)', opacity: isV2G ? 0.55 : 1 }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Charge now</span>
+                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">{isV2G ? 'Baseline' : 'Charge now'}</span>
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
@@ -1697,34 +1857,76 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       </div>
                     </div>
                     )}
-                    {/* Smart charging / V2G Charge — blue label on the line */}
-                    <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
-                      style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
-                      <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">{isV2G ? 'V2G Charge' : 'Smart charging'}</span>
-                        <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
-                          <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {isV2G && pillV2g ? pillV2g.chargeAvgCt.toFixed(1) : pillSavings.oAvg.toFixed(1)} ct/kWh
-                          </span>
-                          <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
-                            {isV2G && pillV2g ? pillV2g.chargeCostEur.toFixed(2) : (pillSavings.oAvg * energyPerSession / 100).toFixed(2)} €
-                          </span>
+                    {/* V2G: separate load shifting (green) and arb charge (blue) labels */}
+                    {isV2G && pillV2g ? (
+                      <>
+                        {/* Load shifting charge — green (only when net charge exists) */}
+                        {v2gHasNetCharge && pillV2g.netChargeKeys.size > 0 && (
+                        <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
+                          style={{ left: ncCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">Load Shifting</span>
+                            <div className="bg-emerald-50/40 backdrop-blur-[2px] border border-emerald-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
+                              <span className="text-emerald-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                                {pillV2g.optimizedChargeCostEur > 0 ? (pillV2g.optimizedChargeCostEur * 100 / (pillV2g.totalChargedKwh - pillV2g.totalDischargedKwh || 1)).toFixed(1) : pillSavings.oAvg.toFixed(1)} ct/kWh
+                              </span>
+                              <span className="text-emerald-400 text-[9px] tabular-nums whitespace-nowrap">
+                                {pillV2g.loadShiftingBenefitEur.toFixed(2)} € saved
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        )}
+                        {/* Arb charge — blue (only if arb slots exist) */}
+                        {acCenter && pillV2g.arbChargeKeys.size > 0 && (
+                          <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
+                            style={{ left: acCenter, top: acYAdj, transform: 'translateX(-50%)' }}>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">Buy Low</span>
+                              <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
+                                <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                                  {acAvgCt.toFixed(1)} ct/kWh
+                                </span>
+                                <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
+                                  arb recharge
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      /* V1G: Smart charging — blue label */
+                      <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
+                        style={{ left: oCenter, top: oYAdj, transform: 'translateX(-50%)' }}>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">Smart charging</span>
+                          <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
+                            <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                              {pillSavings.oAvg.toFixed(1)} ct/kWh
+                            </span>
+                            <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
+                              {(pillSavings.oAvg * energyPerSession / 100).toFixed(2)} €
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    {/* V2G discharge label — green, on the discharge dots */}
+                    )}
+                    {/* V2G discharge label — amber, on the discharge dots */}
                     {isV2G && pillV2g && dCenter && pillV2g.dischargeSlots.length > 0 && (
                       <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                         style={{ left: dCenter, top: dYAdj, transform: 'translateX(-50%)' }}>
                         <div className="flex flex-col items-center gap-0.5">
-                          <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-wider">V2G Discharge</span>
-                          <div className="bg-emerald-50/40 backdrop-blur-[2px] border border-emerald-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
-                            <span className="text-emerald-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                          <span className="text-[8px] font-bold text-amber-500 uppercase tracking-wider">Sell High</span>
+                          <div className="bg-amber-50/40 backdrop-blur-[2px] border border-amber-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0" />
+                            <span className="text-amber-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
                               {pillV2g.dischargeAvgCt.toFixed(1)} ct/kWh
                             </span>
-                            <span className="text-emerald-400 text-[9px] tabular-nums whitespace-nowrap">
+                            <span className="text-amber-400 text-[9px] tabular-nums whitespace-nowrap">
                               +{pillV2g.dischargeRevenueEur.toFixed(2)} €
                             </span>
                           </div>
@@ -1740,7 +1942,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                             {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(1)} ct/kWh
                           </span>
                           <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                            {totalSavingsEur.toFixed(2)} € {isV2G ? 'profit' : 'saved'}
+                            {totalSavingsEur.toFixed(2)} € {isV2G ? (v2gHasNetCharge ? 'benefit' : 'arbitrage') : 'saved'}
                           </span>
                         </div>
                       </div>
@@ -1992,20 +2194,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       {row.spreadRange}
                     </p>
                   </div>
-                  {/* Selected day — V2G: profit, V1G: savings */}
+                  {/* Selected day — V2G: total benefit, V1G: savings */}
                   {isV2G && row.v2gProfit ? (
                     <div className="mb-2">
-                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Profit on selected day</p>
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">
+                        {v2gHasNetCharge ? 'V2G benefit' : 'Arbitrage'} on selected day
+                      </p>
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {row.v2gProfit.profitEur.toFixed(2)}
                       </span>
                       <span className="text-[10px] text-gray-400 ml-1">EUR</span>
-                      <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        {row.v2gProfit.profitCtKwh.toFixed(1)} ct/kWh · {row.v2gProfit.totalDischargedKwh.toFixed(1)} kWh discharged
-                      </p>
                       <div className="flex gap-3 mt-1 text-[9px]">
-                        <span className="text-blue-500">Buy: {row.v2gProfit.chargeCostEur.toFixed(2)} €</span>
-                        <span className="text-emerald-500">Sell: {row.v2gProfit.dischargeRevenueEur.toFixed(2)} €</span>
+                        {v2gHasNetCharge && <span className="text-emerald-500">Shift: {row.v2gProfit.loadShiftingBenefitEur.toFixed(2)} €</span>}
+                        <span className="text-blue-500">Arb: {row.v2gProfit.arbitrageUpliftEur.toFixed(2)} €</span>
                         <span className="text-gray-400">Wear: {row.v2gProfit.degradationCostEur.toFixed(2)} €</span>
                       </div>
                     </div>
@@ -2092,85 +2293,144 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-bold text-[#313131]">
-                  V2G Arbitrage — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">(15 min)</span>}
+                  {v2gHasNetCharge ? 'V2G Benefit' : 'V2G Arbitrage'} — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">(15 min)</span>}
                 </p>
                 <div className="flex items-center gap-3">
                   <p className="text-[10px] text-gray-400">
-                    {batteryKwh} kWh battery · {scenario.v2gStartSoc}% → {scenario.v2gTargetSoc}% SoC
+                    {batteryKwh} kWh · {scenario.v2gStartSoc}% → {scenario.v2gTargetSoc}%
+                    {v2gHasNetCharge
+                      ? ` · ${Math.round(batteryKwh * (scenario.v2gTargetSoc - scenario.v2gStartSoc) / 100)} kWh net`
+                      : ' · no net charge'}
                   </p>
                   <button onClick={() => setCostDetailMode(null)} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                {/* Charge slots (buy low) — blue */}
-                <div className="bg-blue-50/60 rounded-lg p-3 border border-blue-100/80">
-                  <p className="text-[10px] font-bold text-blue-500 uppercase tracking-wider mb-2">
+                {/* Charge slots — split by net charge (green) vs arb charge (blue) */}
+                <div className="rounded-lg p-3 border border-gray-200/80 bg-gray-50/40">
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-2">
                     Charge · {chargeSlotsSorted.length} slots · {v2gDetail.totalChargedKwh.toFixed(1)} kWh
                   </p>
                   <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
-                    {chargeSlotsSorted.map((p: HourlyPrice, i: number) => (
-                      <div key={i} className="flex justify-between text-[11px] leading-snug">
-                        <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
-                        <span className="tabular-nums font-semibold text-blue-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                    {chargeSlotsSorted.map((p: HourlyPrice, i: number) => {
+                      const key = `${p.date}-${p.hour}-${p.minute ?? 0}`
+                      const isNet = v2gDetail.netChargeKeys.has(key)
+                      return (
+                        <div key={i} className="flex justify-between text-[11px] leading-snug">
+                          <span className="font-mono text-gray-500">
+                            <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${isNet ? 'bg-emerald-500' : 'bg-blue-500'}`} />
+                            {fmtSlot(p)}
+                          </span>
+                          <span className={`tabular-nums font-semibold ${isNet ? 'text-emerald-700' : 'text-blue-700'}`}>{p.priceCtKwh.toFixed(1)} ct</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  <div className="border-t border-gray-200/80 mt-2 pt-1.5 text-[10px] space-y-0.5">
+                    {v2gDetail.netChargeKeys.size > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-emerald-600 font-medium">{v2gDetail.netChargeKeys.size} net charge</span>
+                        <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.optimizedChargeCostEur.toFixed(2)} EUR</span>
                       </div>
-                    ))}
-                  </div>
-                  <div className="border-t border-blue-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
-                    <span className="text-gray-500 font-medium">avg buy</span>
-                    <span className="font-bold text-blue-700 tabular-nums">{v2gDetail.chargeAvgCt.toFixed(2)} ct/kWh</span>
-                  </div>
-                  <div className="flex justify-between text-[10px] mt-0.5">
-                    <span className="text-gray-400">cost</span>
-                    <span className="font-semibold text-blue-600 tabular-nums">{v2gDetail.chargeCostEur.toFixed(2)} EUR</span>
+                    )}
+                    {v2gDetail.arbChargeKeys.size > 0 && (
+                      <div className="flex justify-between">
+                        <span className="text-blue-600 font-medium">{v2gDetail.arbChargeKeys.size} arb recharge</span>
+                        <span className="font-semibold text-blue-600 tabular-nums">{(v2gDetail.chargeCostEur - v2gDetail.optimizedChargeCostEur).toFixed(2)} EUR</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Discharge slots (sell high) — green */}
-                <div className="bg-emerald-50/60 rounded-lg p-3 border border-emerald-100/80">
-                  <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider mb-2">
+                {/* Discharge slots (sell high) — amber */}
+                <div className="bg-amber-50/60 rounded-lg p-3 border border-amber-100/80">
+                  <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mb-2">
                     Discharge · {dischargeSlotsSorted.length} slots · {v2gDetail.totalDischargedKwh.toFixed(1)} kWh
                   </p>
                   <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
                     {dischargeSlotsSorted.map((p: HourlyPrice, i: number) => (
                       <div key={i} className="flex justify-between text-[11px] leading-snug">
                         <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
-                        <span className="tabular-nums font-semibold text-emerald-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                        <span className="tabular-nums font-semibold text-amber-700">{p.priceCtKwh.toFixed(1)} ct</span>
                       </div>
                     ))}
                   </div>
-                  <div className="border-t border-emerald-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
+                  <div className="border-t border-amber-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
                     <span className="text-gray-500 font-medium">avg sell</span>
-                    <span className="font-bold text-emerald-700 tabular-nums">{v2gDetail.dischargeAvgCt.toFixed(2)} ct/kWh</span>
+                    <span className="font-bold text-amber-700 tabular-nums">{v2gDetail.dischargeAvgCt.toFixed(2)} ct/kWh</span>
                   </div>
                   <div className="flex justify-between text-[10px] mt-0.5">
                     <span className="text-gray-400">revenue</span>
-                    <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
+                    <span className="font-semibold text-amber-600 tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
                   </div>
                 </div>
               </div>
 
-              {/* V2G Summary: revenue - cost - degradation = profit */}
+              {/* V2G Summary: total benefit = load shifting + arbitrage */}
               <div className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-100 space-y-1">
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-gray-500">Discharge revenue</span>
-                  <span className="font-semibold text-emerald-600 tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
-                </div>
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-gray-500">Charge cost (arb. cycles)</span>
-                  <span className="font-semibold text-blue-600 tabular-nums">-{(v2gDetail.chargeCostEur).toFixed(2)} EUR</span>
-                </div>
-                <div className="flex justify-between text-[10px]">
-                  <span className="text-gray-500">Battery degradation ({scenario.degradationCtKwh} ct/kWh)</span>
-                  <span className="font-semibold text-gray-500 tabular-nums">-{v2gDetail.degradationCostEur.toFixed(2)} EUR</span>
-                </div>
-                <div className="flex items-center justify-between border-t border-gray-200 pt-1.5 mt-1">
-                  <span className="text-[10px] font-semibold text-gray-500">Net arbitrage profit</span>
+                {/* Total benefit headline */}
+                <div className="flex items-center justify-between pb-1.5 mb-1 border-b border-gray-200">
+                  <span className="text-[10px] font-semibold text-gray-500">
+                    {v2gHasNetCharge ? 'Total V2G Benefit' : 'Arbitrage Profit'}
+                  </span>
                   <div className="text-right">
                     <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{v2gDetail.profitEur.toFixed(2)} EUR</span>
                     <span className="text-[10px] text-gray-400 ml-1">/session</span>
                   </div>
                 </div>
+                {/* Load shifting portion — only when startSoC < targetSoC */}
+                {v2gHasNetCharge && (
+                  <>
+                    <div className="flex justify-between text-[10px]">
+                      <span className="text-emerald-600 font-medium">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />
+                        Load Shifting
+                      </span>
+                      <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.loadShiftingBenefitEur.toFixed(2)} EUR</span>
+                    </div>
+                    <div className="flex justify-between text-[9px] text-gray-400 pl-4">
+                      <span>
+                        {Math.round(batteryKwh * (scenario.v2gTargetSoc - scenario.v2gStartSoc) / 100)} kWh net charge:
+                        baseline {v2gDetail.baselineChargeCostEur.toFixed(2)} → optimized {v2gDetail.optimizedChargeCostEur.toFixed(2)} EUR
+                      </span>
+                    </div>
+                  </>
+                )}
+                {!v2gHasNetCharge && (
+                  <div className="text-[9px] text-gray-400 pl-2">
+                    Start SoC ({scenario.v2gStartSoc}%) ≥ Target ({scenario.v2gTargetSoc}%) — no net charge needed, pure arbitrage
+                  </div>
+                )}
+                {/* Arbitrage portion */}
+                <div className="flex justify-between text-[10px]">
+                  <span className="text-blue-600 font-medium">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
+                    {v2gHasNetCharge ? 'Arbitrage Uplift' : 'Arbitrage'}
+                  </span>
+                  <span className="font-semibold text-blue-600 tabular-nums">{v2gDetail.arbitrageUpliftEur.toFixed(2)} EUR</span>
+                </div>
+                {v2gDetail.arbitrageUpliftEur > 0 && (
+                  <div className="text-[9px] text-gray-400 pl-4 space-y-0.5">
+                    <div className="flex justify-between">
+                      <span>Sell {v2gDetail.totalDischargedKwh.toFixed(1)} kWh at avg {v2gDetail.dischargeAvgCt.toFixed(1)} ct</span>
+                      <span className="tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Recharge cost (eff. adjusted)</span>
+                      <span className="tabular-nums">-{(v2gDetail.chargeCostEur - (v2gHasNetCharge ? v2gDetail.optimizedChargeCostEur : 0)).toFixed(2)} EUR</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Battery degradation ({scenario.degradationCtKwh} ct/kWh)</span>
+                      <span className="tabular-nums">-{v2gDetail.degradationCostEur.toFixed(2)} EUR</span>
+                    </div>
+                  </div>
+                )}
+                {v2gDetail.arbitrageUpliftEur === 0 && v2gDetail.dischargeSlots.length === 0 && (
+                  <div className="text-[9px] text-gray-400 pl-4">
+                    No profitable discharge/recharge cycles found for this price window
+                  </div>
+                )}
               </div>
             </div>
           )
@@ -2284,6 +2544,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
             avgDailyEur={sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0}
             selectedDate={date1}
             chargingMode={scenario.chargingMode}
+            isV2G={isV2G}
+            v2gHasNetCharge={v2gHasNetCharge}
           />
           {yearlySavingsData.length > 0 && (
             <YearlySavingsCard
@@ -2291,6 +2553,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               weeklyPlugIns={weeklyPlugIns}
               energyPerSession={energyPerSession}
               chargingMode={scenario.chargingMode}
+              isV2G={isV2G}
             />
           )}
         </div>
