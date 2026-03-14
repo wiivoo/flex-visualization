@@ -42,7 +42,9 @@
 | PROJ-14 | Portfolio Scale (unbuilt) | [archived](_archive/PROJ-14-v2-portfolio-scale.md) |
 | PROJ-15 | Market Context (unbuilt) | [archived](_archive/PROJ-15-v2-market-context.md) |
 
-## Next Available ID: PROJ-29
+| PROJ-29 | V2G Dual Value Streams | In Progress | [spec](PROJ-29-v2g-dual-value-streams.md) | `lib/charging-helpers.ts`, `components/v2/SessionCostCard.tsx`, `components/v2/MonthlySavingsCard.tsx` |
+
+## Next Available ID: PROJ-30
 
 ## Architecture
 
