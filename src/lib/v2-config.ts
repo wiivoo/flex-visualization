@@ -2,6 +2,9 @@
  * V2 Configuration — shared types and constants for the storytelling flow
  */
 
+/** Feature flag: set to true to show the V1G/V2G toggle in the UI */
+export const ENABLE_V2G = false
+
 export interface VehiclePreset {
   id: 'compact' | 'mid' | 'suv'
   label: string

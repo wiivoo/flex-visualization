@@ -7,7 +7,7 @@ import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import { deriveEnergyPerSession, totalWeeklyPlugIns, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr, computeV2gWindowSavings, type V2gResult } from '@/lib/charging-helpers'
-import { VEHICLE_PRESETS } from '@/lib/v2-config'
+import { VEHICLE_PRESETS, ENABLE_V2G } from '@/lib/v2-config'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { SessionCostCard } from '@/components/v2/SessionCostCard'
 import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
@@ -999,6 +999,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         <CardHeader className="pb-2 bg-gray-50/80 border-b border-gray-100">
           <div className="flex items-center justify-between">
             <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Customer Profile</CardTitle>
+            {ENABLE_V2G && (
             <div className="flex items-center gap-0.5 bg-gray-200/60 rounded-full p-0.5">
               <button
                 onClick={() => setScenario({ ...scenario, gridMode: 'v1g' })}
@@ -1015,6 +1016,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                 }`}
               >V2G</button>
             </div>
+            )}
           </div>
         </CardHeader>
         <CardContent className="pt-4 pb-4">
