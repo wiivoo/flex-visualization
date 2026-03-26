@@ -1,0 +1,88 @@
+# FlexMon Dashboard — Requirements
+
+## v1 Requirements (Validated — Deployed)
+
+### Data Integration
+- [x] **DATA-01**: User sees real German day-ahead electricity prices (hourly) — PROJ-1
+- [x] **DATA-02**: User sees quarter-hourly price resolution — PROJ-1
+- [x] **DATA-03**: Prices auto-update via GitHub Actions with SMARD data — PROJ-1
+- [x] **DATA-04**: Incremental price fetching fills gaps between static data and today — PROJ-1
+- [x] **DATA-05**: Supabase cache prevents redundant API calls — PROJ-1
+
+### Optimization
+- [x] **OPT-01**: User sees baseline (immediate) vs. optimized (smart) charging cost — PROJ-2
+- [x] **OPT-02**: Optimization respects plug-in window, departure time, and charge power — PROJ-2
+- [x] **OPT-03**: Grid fees (§14a Module 3) applied for 10 DSOs — PROJ-2
+
+### Visualization
+- [x] **VIZ-01**: Interactive price chart with day-ahead curve and charging blocks — PROJ-12
+- [x] **VIZ-02**: Chart zoom levels: 12h, 24h, 72h — PROJ-12
+- [x] **VIZ-03**: Renewable generation overlay (solar, wind) — PROJ-12
+- [x] **VIZ-04**: Session cost breakdown card (baseline vs. optimized) — PROJ-19
+- [x] **VIZ-05**: Monthly savings bar chart — PROJ-20
+- [x] **VIZ-06**: Savings sensitivity heatmap (mileage × frequency matrix) — PROJ-21
+- [x] **VIZ-07**: Savings potential summary box — PROJ-22
+- [x] **VIZ-08**: Spread indicators & scenario cards — PROJ-27
+- [x] **VIZ-09**: Fleet portfolio view — PROJ-25
+
+### User Configuration
+- [x] **CFG-01**: User can set yearly mileage — PROJ-17
+- [x] **CFG-02**: User can set weekday/weekend plug-in frequency — PROJ-24
+- [x] **CFG-03**: User can set plug-in time and departure time — PROJ-17
+- [x] **CFG-04**: User can set charge power — PROJ-17
+
+### Navigation & UX
+- [x] **NAV-01**: Date picker with spread-colored indicators — PROJ-18, PROJ-28
+- [x] **NAV-02**: DateStrip with year/month navigation — PROJ-28
+- [x] **NAV-03**: URL state persistence & sharing — PROJ-23
+- [x] **NAV-04**: Two-column layout with sidebar — PROJ-28
+- [x] **NAV-05**: Tutorial/guide overlay — PROJ-28
+
+### Auth
+- [x] **AUTH-01**: Password-protected dashboard access — PROJ-6
+
+## Active Requirements (In Progress)
+
+### V2G
+- [ ] **V2G-01**: User sees V2G (vehicle-to-grid) discharge value alongside charging savings — PROJ-29
+- [ ] **V2G-02**: Dual value stream visualization (charging savings + discharge revenue) — PROJ-29
+
+### Multi-Country
+- [ ] **INTL-01**: User can switch between DE and NL price data — code exists, UI disabled
+- [ ] **INTL-02**: NL prices fetched via ENTSO-E with separate cache — implemented
+- [ ] **INTL-03**: Country-aware data flows (no cross-contamination) — implemented
+
+### Intraday
+- [ ] **INTRA-01**: EPEX intraday price display alongside day-ahead — scraper exists
+
+## v2 Requirements (Deferred)
+
+- Theory/education overlay explaining load shifting concepts
+- Additional countries beyond DE/NL (AT, FR, BE, etc.)
+- Mobile-responsive layout optimization
+- Real-time price updates (WebSocket)
+- Export/download functionality (PDF, CSV)
+
+## Out of Scope
+
+- User accounts / multi-tenant auth — single password sufficient for demo
+- Real-time bidding / trading integration — visualization only
+- Battery degradation modeling — too complex for demo scope
+- Mobile app — web dashboard only
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| DATA-01..05 | — | Validated (deployed) |
+| OPT-01..03 | — | Validated (deployed) |
+| VIZ-01..09 | — | Validated (deployed) |
+| CFG-01..04 | — | Validated (deployed) |
+| NAV-01..05 | — | Validated (deployed) |
+| AUTH-01 | — | Validated (deployed) |
+| V2G-01..02 | Phase 1 | In Progress |
+| INTL-01..03 | Phase 2 | Implemented, UI disabled |
+| INTRA-01 | Phase 3 | Scraper exists |
+
+---
+*Last updated: 2026-03-26 after initialization*
