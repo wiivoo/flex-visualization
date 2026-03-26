@@ -37,7 +37,7 @@ export function SessionCostCard({
 }: Props) {
   const [formulaOpen, setFormulaOpen] = useState(false)
 
-  const modeLabel = chargingMode === 'threeday' ? '3-Day' : chargingMode === 'fullday' ? 'Full Day' : 'Overnight'
+  const modeLabel = chargingMode === 'threeday' ? '72h' : chargingMode === 'fullday' ? '24h' : 'Overnight'
 
   return (
     <Card className="shadow-sm border-gray-200/80 flex flex-col">
@@ -145,12 +145,12 @@ export function SessionCostCard({
             </button>
             <button onClick={() => onModeChange('fullday')}
               className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'fullday' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              Full Day
+              24h
             </button>
             <button onClick={() => onModeChange('threeday')}
               disabled={!hasDate3Data}
               className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'threeday' ? 'bg-white text-[#313131] shadow-sm' : !hasDate3Data ? 'text-gray-300 cursor-not-allowed' : 'text-gray-400 hover:text-gray-600'}`}>
-              3 Days
+              72h
             </button>
           </div>
         </div>

@@ -41,7 +41,8 @@ while [ $attempt -lt $MAX_RETRIES ]; do
   echo "Attempt $attempt/$MAX_RETRIES..."
 
   # Run the scraper (default: yesterday + day before)
-  output=$("$NODE" "$SCRIPT" 2>&1) || true
+  # cd into project dir so .env.local is found by process.cwd()
+  output=$(cd "$PROJECT_DIR" && "$NODE" "$SCRIPT" 2>&1) || true
   echo "$output"
 
   # Check if it succeeded (look for "saved to Supabase" or "already cached")

@@ -26,8 +26,6 @@ export interface MonthlySavingsEntry {
   season: string
   year: number
   isProjected?: boolean
-  weekdaySavings?: number
-  weekendSavings?: number
   loadShiftingEur?: number  // V2G: load shifting portion
   arbitrageEur?: number     // V2G: arbitrage portion
 }
@@ -130,11 +128,6 @@ export function MonthlySavingsCard({
                             Arbitrage: {d.arbitrageEur.toFixed(2)} EUR
                           </p>
                         </div>
-                      )}
-                      {!isV2G && (d.weekdaySavings !== undefined && d.weekendSavings !== undefined) && (
-                        <p className="text-gray-400 tabular-nums text-[10px]">
-                          <span className="text-gray-500">{d.weekdaySavings.toFixed(2)}</span> weekday + <span className="text-gray-500">{d.weekendSavings.toFixed(2)}</span> weekend
-                        </p>
                       )}
                       <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} EUR so far</p>
                     </div>

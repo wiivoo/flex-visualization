@@ -23,6 +23,7 @@ export interface PriceData {
   generation: GenerationData[]
   generationLoading: boolean
   lastRealDate: string  // YYYY-MM-DD boundary between real and projected data
+  intradayId3: HourlyPrice[]
 }
 
 function isNightHour(hour: number): boolean {
@@ -145,6 +146,7 @@ export function usePrices(): PriceData {
   const [generation, setGeneration] = useState<GenerationData[]>([])
   const [generationLoading, setGenerationLoading] = useState(false)
   const [lastRealDate, setLastRealDate] = useState<string>('')
+  const [intradayId3, setIntradayId3] = useState<HourlyPrice[]>([])
   const fetched = useRef(false)
   const generationCache = useRef<Map<string, GenerationData[]>>(new Map())
   const allGeneration = useRef<CompactGen[]>([])
@@ -452,6 +454,41 @@ export function usePrices(): PriceData {
     if (selectedDate) loadGenerationForDate(selectedDate)
   }, [selectedDate, loadGenerationForDate])
 
+  // Fetch intraday ID3 prices for selected date
+  useEffect(() => {
+    if (!selectedDate) return
+    const controller = new AbortController()
+    const nd = nextDay(selectedDate)
+    fetch(`/api/prices/batch?startDate=${selectedDate}&endDate=${nd}&type=intraday&index=id3`,
+      { signal: controller.signal })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data?.prices?.length) { setIntradayId3([]); return }
+        // EPEX timestamps are CET delivery periods stored with Z suffix
+        // Parse hour/minute from string directly, not from Date object
+        const id3: HourlyPrice[] = data.prices
+          .filter((p: { price_ct_kwh?: number }) => p.price_ct_kwh != null && p.price_ct_kwh !== 0)
+          .map((p: { timestamp: string; price_ct_kwh: number }) => {
+            const ts = p.timestamp as string
+            const dateStr = ts.slice(0, 10)
+            const hour = parseInt(ts.slice(11, 13))
+            const minute = parseInt(ts.slice(14, 16))
+            const priceCtKwh = p.price_ct_kwh
+            return {
+              timestamp: new Date(`${dateStr}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00`).getTime(),
+              priceEurMwh: priceCtKwh * 10,
+              priceCtKwh,
+              hour,
+              minute,
+              date: dateStr,
+            }
+          })
+        setIntradayId3(id3)
+      })
+      .catch(() => setIntradayId3([]))
+    return () => controller.abort()
+  }, [selectedDate, nextDay])
+
   const selectedDayPrices = useMemo(
     () => hourly.filter(p => p.date === selectedDate),
     [hourly, selectedDate]
@@ -482,5 +519,6 @@ export function usePrices(): PriceData {
     generation,
     generationLoading,
     lastRealDate,
+    intradayId3,
   }
 }

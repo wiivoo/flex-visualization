@@ -79,6 +79,7 @@ const batchQuerySchema = z.object({
   endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'endDate must be in YYYY-MM-DD format'),
   type: z.enum(['day-ahead', 'intraday', 'forward']).default('day-ahead'),
   resolution: z.enum(['hour', 'quarterhour']).default('hour'),
+  index: z.enum(['id_full', 'id1', 'id3']).optional(),
 })
 
 interface PricePoint {
@@ -242,7 +243,8 @@ async function getCachedDays(
   startDate: Date,
   endDate: Date,
   type: 'day-ahead' | 'intraday' | 'forward',
-  resolution: 'hour' | 'quarterhour'
+  resolution: 'hour' | 'quarterhour',
+  indexField?: string
 ): Promise<Map<string, PricePoint[]>> {
   const cachedDays = new Map<string, PricePoint[]>()
   const days = eachDayOfInterval({ start: startDate, end: endDate })
@@ -261,7 +263,9 @@ async function getCachedDays(
       const { dateStr, cached } = result.value
       cachedDays.set(dateStr, cached.prices_json.map(p => ({
         timestamp: p.timestamp,
-        price_ct_kwh: p.price_ct_kwh ?? 0,
+        price_ct_kwh: indexField
+          ? ((p as Record<string, unknown>)[indexField] as number ?? p.price_ct_kwh ?? 0)
+          : (p.price_ct_kwh ?? 0),
       })))
     }
   }
@@ -343,6 +347,7 @@ export async function GET(request: NextRequest) {
     endDate: searchParams.get('endDate'),
     type: searchParams.get('type') || 'day-ahead',
     resolution: searchParams.get('resolution') || 'hour',
+    index: searchParams.get('index') || undefined,
   })
 
   if (!parseResult.success) {
@@ -352,7 +357,8 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const { startDate: startDateStr, endDate: endDateStr, type, resolution } = parseResult.data
+  const { startDate: startDateStr, endDate: endDateStr, type, resolution, index } = parseResult.data
+  const indexField = type === 'intraday' && index ? `${index}_ct` : undefined
   const startDate = parseISO(startDateStr)
   const endDate = parseISO(endDateStr)
 
@@ -367,7 +373,7 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Step 1: Check Supabase cache (resolution-aware) ──
-  const cachedDays = await getCachedDays(startDate, endDate, type, resolution)
+  const cachedDays = await getCachedDays(startDate, endDate, type, resolution, indexField)
   const allDays = eachDayOfInterval({ start: startDate, end: endDate })
   const uncachedDays = allDays.filter(d => !cachedDays.has(format(d, 'yyyy-MM-dd')))
 
@@ -399,21 +405,22 @@ export async function GET(request: NextRequest) {
       const result = await fetchHourlyChain(uncachedStart, uncachedEnd)
       fetchedPrices = result.prices
       source = result.source
+    } else if (type === 'intraday') {
+      // Intraday only from Supabase cache (EPEX scraper) — no external fetch
     } else {
-      // Intraday/Forward: CSV only
-      const csvType = type === 'forward' ? 'day-ahead' : (type as 'day-ahead' | 'intraday')
-      fetchedPrices = await fetchCsvBatch(uncachedStart, uncachedEnd, csvType)
+      // Forward: CSV fallback
+      fetchedPrices = await fetchCsvBatch(uncachedStart, uncachedEnd, 'day-ahead')
       if (fetchedPrices?.length) source = 'csv'
     }
 
-    // Final fallback: demo data
-    if (!fetchedPrices?.length) {
+    // Final fallback: demo data (skip for intraday - only from EPEX scraper cache)
+    if (!fetchedPrices?.length && type !== 'intraday') {
       fetchedPrices = generateDemoBatchPrices(uncachedStart, uncachedEnd)
       source = 'demo'
     }
 
     // ── Step 3: Cache fresh data (skip demo) ──
-    if (source !== 'demo' && fetchedPrices.length > 0) {
+    if (source !== 'demo' && fetchedPrices && fetchedPrices.length > 0) {
       try {
         await cachePricesByDay(fetchedPrices, type, resolution, source)
       } catch (error) {
