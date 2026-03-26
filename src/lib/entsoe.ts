@@ -15,6 +15,12 @@ import { format, addDays } from 'date-fns'
 
 const ENTSOE_BASE_URL = 'https://web-api.tp.entsoe.eu/api'
 const DE_LU_DOMAIN = '10Y1001A1001A82H'
+const NL_DOMAIN = '10YNL----------L'
+
+export const ENTSOE_DOMAINS: Record<string, string> = {
+  'DE': DE_LU_DOMAIN,
+  'NL': NL_DOMAIN,
+}
 
 /**
  * Parse ENTSO-E XML response into price points.
@@ -74,18 +80,21 @@ function formatEntsoeDate(date: Date): string {
 /**
  * Load day-ahead prices from ENTSO-E for a single day.
  */
-export async function fetchEntsoeDayAhead(date: Date): Promise<PricePoint[]> {
-  return fetchEntsoeRange(date, date)
+export async function fetchEntsoeDayAhead(date: Date, domain?: string): Promise<PricePoint[]> {
+  return fetchEntsoeRange(date, date, domain)
 }
 
 /**
  * Load day-ahead prices from ENTSO-E for a date range.
  * ENTSO-E periodEnd is exclusive, so we add 1 day.
  * Max range per request: ~1 year.
+ *
+ * @param domain - EIC bidding zone code (default: DE-LU)
  */
 export async function fetchEntsoeRange(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  domain: string = DE_LU_DOMAIN
 ): Promise<PricePoint[]> {
   const token = process.env.ENTSOE_API_TOKEN
   if (!token) {
@@ -95,7 +104,7 @@ export async function fetchEntsoeRange(
   const periodStart = formatEntsoeDate(startDate)
   const periodEnd = formatEntsoeDate(addDays(endDate, 1))
 
-  const url = `${ENTSOE_BASE_URL}?securityToken=${token}&documentType=A44&in_Domain=${DE_LU_DOMAIN}&out_Domain=${DE_LU_DOMAIN}&periodStart=${periodStart}&periodEnd=${periodEnd}`
+  const url = `${ENTSOE_BASE_URL}?securityToken=${token}&documentType=A44&in_Domain=${domain}&out_Domain=${domain}&periodStart=${periodStart}&periodEnd=${periodEnd}`
 
   const response = await fetch(url, {
     next: { revalidate: 3600 }, // 1 hour cache

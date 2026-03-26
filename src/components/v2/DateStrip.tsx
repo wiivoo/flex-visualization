@@ -11,12 +11,18 @@ interface DateStripProps {
   latestDate?: string | undefined
 }
 
-function spreadColor(spread: number): string {
-  if (spread > 200) return 'bg-red-500'
-  if (spread > 150) return 'bg-orange-400'
-  if (spread > 100) return 'bg-yellow-400'
-  if (spread > 50) return 'bg-green-300'
-  return 'bg-green-100'
+function makeSpreadColor(daily: DailySummary[]): (spread: number) => string {
+  if (daily.length === 0) return () => 'bg-green-100'
+  const spreads = daily.map(d => d.spread).sort((a, b) => a - b)
+  const p = (pct: number) => spreads[Math.min(Math.floor(pct * spreads.length), spreads.length - 1)]
+  const p25 = p(0.25), p50 = p(0.50), p75 = p(0.75), p90 = p(0.90)
+  return (spread: number) => {
+    if (spread > p90) return 'bg-red-500'
+    if (spread > p75) return 'bg-orange-400'
+    if (spread > p50) return 'bg-yellow-400'
+    if (spread > p25) return 'bg-green-300'
+    return 'bg-green-100'
+  }
 }
 
 const DAY_NAMES = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
@@ -24,6 +30,8 @@ const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug
 
 export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate }: DateStripProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const spreadColor = useMemo(() => makeSpreadColor(daily), [daily])
 
   const allDates = useMemo(() => new Set(daily.map(d => d.date)), [daily])
 

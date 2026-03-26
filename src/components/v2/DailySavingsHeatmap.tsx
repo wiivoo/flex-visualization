@@ -37,14 +37,40 @@ function fmtDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
-// Spread buckets matching MiniCalendar thresholds (EUR/MWh ÷ 10 = ct/kWh)
-const SPREAD_BUCKETS = [
-  { min: 0, max: 5, color: '#DCFCE7', label: '0–5' },
-  { min: 5, max: 10, color: '#86EFAC', label: '5–10' },
-  { min: 10, max: 15, color: '#FACC15', label: '10–15' },
-  { min: 15, max: 20, color: '#FB923C', label: '15–20' },
-  { min: 20, max: Infinity, color: '#EF4444', label: '20+' },
-] as const
+const BUCKET_COLORS = ['#DCFCE7', '#86EFAC', '#FACC15', '#FB923C', '#EF4444'] as const
+
+/** Build 5 adaptive buckets from quintiles of the actual savings data */
+function buildBuckets(savings: number[]): { min: number; max: number; color: string; label: string }[] {
+  if (savings.length === 0) {
+    return BUCKET_COLORS.map((c, i) => ({ min: i, max: i + 1, color: c, label: `${i}–${i + 1}` }))
+  }
+  const sorted = [...savings].sort((a, b) => a - b)
+  const pct = (p: number) => sorted[Math.min(Math.floor(p * sorted.length), sorted.length - 1)]
+  // Quintile boundaries, rounded to 1 decimal
+  const raw = [0, pct(0.2), pct(0.4), pct(0.6), pct(0.8)]
+  // Round to nice steps: <1 → 0.1, <10 → 0.5, else → 1
+  const nice = (v: number) => {
+    if (v <= 0) return 0
+    if (v < 1) return Math.round(v * 10) / 10
+    if (v < 10) return Math.round(v * 2) / 2
+    return Math.round(v)
+  }
+  const edges = raw.map(nice)
+  // Deduplicate: ensure strictly increasing
+  for (let i = 1; i < edges.length; i++) {
+    if (edges[i] <= edges[i - 1]) edges[i] = edges[i - 1] + (edges[i - 1] < 1 ? 0.1 : edges[i - 1] < 10 ? 0.5 : 1)
+  }
+  const fmt = (v: number) => v % 1 === 0 ? String(v) : v.toFixed(1)
+  return edges.map((e, i) => {
+    const max = i < edges.length - 1 ? edges[i + 1] : Infinity
+    return {
+      min: e,
+      max,
+      color: BUCKET_COLORS[i],
+      label: max === Infinity ? `${fmt(e)}+` : `${fmt(e)}–${fmt(max)}`,
+    }
+  })
+}
 
 export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost }: Props) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null)
@@ -106,25 +132,28 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
 
   const isFiltering = activeBuckets !== null
 
+  // Adaptive quintile-based buckets from actual savings data
+  const savingsBuckets = useMemo(() => buildBuckets(allEntries.map(e => e.ctSav)), [allEntries])
+
   // Count entries per bucket for badge display
   const bucketCounts = useMemo(() => {
-    const counts = new Array(SPREAD_BUCKETS.length).fill(0)
+    const counts = new Array(savingsBuckets.length).fill(0)
     for (const e of allEntries) {
-      const bi = SPREAD_BUCKETS.findIndex(b => e.entry.spreadCt >= b.min && e.entry.spreadCt < b.max)
+      const bi = savingsBuckets.findIndex(b => e.ctSav >= b.min && e.ctSav < b.max)
       if (bi >= 0) counts[bi]++
-      else if (e.entry.spreadCt >= 20) counts[4]++ // 20+ bucket
+      else if (e.ctSav >= savingsBuckets[savingsBuckets.length - 1].min) counts[savingsBuckets.length - 1]++
     }
     return counts
-  }, [allEntries])
+  }, [allEntries, savingsBuckets])
 
   const filtered = useMemo(() => {
     if (!isFiltering) return allEntries
     return allEntries.filter(e => {
-      const bi = SPREAD_BUCKETS.findIndex(b => e.entry.spreadCt >= b.min && e.entry.spreadCt < b.max)
-      const idx = bi >= 0 ? bi : (e.entry.spreadCt >= 20 ? 4 : -1)
+      const bi = savingsBuckets.findIndex(b => e.ctSav >= b.min && e.ctSav < b.max)
+      const idx = bi >= 0 ? bi : (e.ctSav >= savingsBuckets[savingsBuckets.length - 1].min ? savingsBuckets.length - 1 : -1)
       return idx >= 0 && activeBuckets!.has(idx)
     })
-  }, [allEntries, isFiltering, activeBuckets])
+  }, [allEntries, isFiltering, activeBuckets, savingsBuckets])
 
   const stats = useMemo(() => {
     if (filtered.length === 0) return { count: 0, avgCt: 0, avgEur: 0, totalEur: 0, avgBAvg: 0, avgOAvg: 0, avgSpread: 0 }
@@ -138,49 +167,44 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
     return { count, avgCt, avgEur, totalEur, avgBAvg, avgOAvg, avgSpread }
   }, [filtered])
 
+  const bucketCount = savingsBuckets.length
   const toggleBucket = useCallback((idx: number) => {
     setActiveBuckets(prev => {
-      if (prev === null) {
-        // First click: select only this bucket
-        return new Set([idx])
-      }
+      if (prev === null) return new Set([idx])
       const next = new Set(prev)
       if (next.has(idx)) {
         next.delete(idx)
-        // If all removed, reset to show all
         return next.size === 0 ? null : next
       }
       next.add(idx)
-      // If all 5 selected, reset to show all
-      return next.size === SPREAD_BUCKETS.length ? null : next
+      return next.size === bucketCount ? null : next
     })
-  }, [])
+  }, [bucketCount])
 
   if (grid.length === 0) return null
 
-  const modeLabel = chargingMode === 'threeday' ? '72h' : chargingMode === 'fullday' ? '24h' : 'Overnight'
+  const modeLabel = chargingMode === 'threeday' ? '72h' : chargingMode === 'fullday' ? '24h' : '12h'
   const annualSavings = rollingAvgSavings ?? stats.totalEur
   const avgPerSession = sessionsPerYear && sessionsPerYear > 0 ? annualSavings / sessionsPerYear : stats.avgEur
+
+  function getBucketIdx(sav: number): number {
+    const bi = savingsBuckets.findIndex(b => sav >= b.min && sav < b.max)
+    return bi >= 0 ? bi : (sav >= savingsBuckets[savingsBuckets.length - 1].min ? savingsBuckets.length - 1 : -1)
+  }
 
   function isInFilter(entry: DailyEntry | null): boolean {
     if (!entry) return false
     if (!isFiltering) return true
-    const bi = SPREAD_BUCKETS.findIndex(b => entry.spreadCt >= b.min && entry.spreadCt < b.max)
-    const idx = bi >= 0 ? bi : (entry.spreadCt >= 20 ? 4 : -1)
+    const idx = getBucketIdx(entry.bAvg - entry.oAvg)
     return idx >= 0 && activeBuckets!.has(idx)
   }
 
-  // Discrete color buckets matching MiniCalendar spread logic (green→yellow→orange→red)
   function cellColor(entry: DailyEntry | null, inFilter: boolean): string {
     if (!entry) return '#F3F4F6'
-    const spread = entry.spreadCt // ct/kWh, same metric as calendar (EUR/MWh ÷ 10)
-    if (spread <= 0) return inFilter ? '#FEE2E2' : '#FAFAFA'
-    // Thresholds match MiniCalendar: 50,100,150,200 EUR/MWh = 5,10,15,20 ct/kWh
-    if (spread > 20) return '#EF4444'  // red-500
-    if (spread > 15) return '#FB923C'  // orange-400
-    if (spread > 10) return '#FACC15'  // yellow-400
-    if (spread > 5)  return '#86EFAC'  // green-300
-    return '#DCFCE7'                    // green-100
+    const sav = entry.bAvg - entry.oAvg
+    if (sav <= 0) return inFilter ? '#FEE2E2' : '#FAFAFA'
+    const idx = getBucketIdx(sav)
+    return idx >= 0 ? savingsBuckets[idx].color : '#DCFCE7'
   }
 
   const cellSize = Math.max(12, Math.min(16, Math.floor(1000 / weeks)))
@@ -196,18 +220,6 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
   const displayEntry = hoveredEntry ?? previewEntry ?? selectedEntry
   const displayDateStr = hoveredDate ?? previewDate ?? selectedDate
 
-  // Min/max spread across all entries
-  const { minSpread, maxSpread } = useMemo(() => {
-    if (allEntries.length === 0) return { minSpread: 0, maxSpread: 0 }
-    let mn = Infinity, mx = -Infinity
-    for (const e of allEntries) {
-      if (e.entry.spreadCt < mn) mn = e.entry.spreadCt
-      if (e.entry.spreadCt > mx) mx = e.entry.spreadCt
-    }
-    return { minSpread: mn, maxSpread: mx }
-  }, [allEntries])
-
-
   return (
     <Card className="shadow-sm border-gray-200/80">
       <CardHeader className="pb-2 border-b border-gray-100">
@@ -219,15 +231,14 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
             </p>
           </div>
           <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
-            <span className="text-[9px] font-semibold uppercase tracking-wider mr-0.5">Spread</span>
-            <span className="text-[8px] font-mono tabular-nums text-gray-400">{minSpread.toFixed(0)}</span>
+            <span className="text-[9px] font-semibold uppercase tracking-wider mr-0.5">Saving</span>
             <div className="flex gap-px">
-              {SPREAD_BUCKETS.map((b, i) => {
+              {savingsBuckets.map((b, i) => {
                 const active = !isFiltering || activeBuckets!.has(i)
                 return (
                   <button key={i} onClick={() => toggleBucket(i)}
                     className="rounded-sm transition-all relative group cursor-pointer"
-                    title={`${b.label} ct/kWh · ${bucketCounts[i]} days`}
+                    title={`${b.label} ct/kWh saving · ${bucketCounts[i]} days`}
                     style={{
                       width: cellSize + 4, height: cellSize + 4,
                       background: b.color,
@@ -242,7 +253,6 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 )
               })}
             </div>
-            <span className="text-[8px] font-mono tabular-nums text-gray-400">{maxSpread.toFixed(0)}</span>
             <span className="text-[8px] text-gray-300 ml-0.5">ct/kWh</span>
             {isFiltering && (
               <button onClick={() => setActiveBuckets(null)}
@@ -360,8 +370,8 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 <span className="text-gray-300">·</span>
                 {[...activeBuckets!].sort().map(i => (
                   <span key={i} className="inline-flex items-center gap-0.5">
-                    <span className="inline-block w-2 h-2 rounded-sm" style={{ background: SPREAD_BUCKETS[i].color }} />
-                    <span className="font-mono tabular-nums">{SPREAD_BUCKETS[i].label}</span>
+                    <span className="inline-block w-2 h-2 rounded-sm" style={{ background: savingsBuckets[i].color }} />
+                    <span className="font-mono tabular-nums">{savingsBuckets[i].label}</span>
                   </span>
                 ))}
               </div>
@@ -372,7 +382,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
           <div className="w-[280px] flex-shrink-0 border-l border-gray-100 pl-5 flex flex-col gap-2">
             {/* 52-week hero */}
             <div className="rounded-lg bg-emerald-50/70 border border-emerald-100 px-3.5 py-2.5 flex flex-col justify-center">
-              <p className="text-[9px] font-semibold text-emerald-600/60 uppercase tracking-wider">Projected Savings · Last {allEntries.length} Days</p>
+              <p className="text-[9px] font-semibold text-emerald-600/60 uppercase tracking-wider">Projected Savings · 52 Weeks</p>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-[28px] font-bold tabular-nums text-emerald-700 leading-none tracking-tight">
                   {annualSavings.toFixed(0)}
@@ -391,7 +401,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
             <div className="rounded-lg bg-gray-50/60 border border-gray-100 px-3.5 py-2.5 flex flex-col justify-center">
               <div className="flex items-center justify-between">
                 <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">
-                  {isFiltering ? `Filtered ${filtered.length}/${allEntries.length} Days` : `Avg Last ${allEntries.length} Days`}
+                  {isFiltering ? `Filtered ${filtered.length}/${allEntries.length} Days` : 'Avg 52 Weeks'}
                 </p>
                 <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{stats.avgCt.toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
               </div>

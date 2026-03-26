@@ -37,12 +37,12 @@ export function cacheTypeKey(
   return type
 }
 
-/** Smart TTL: past=24h, today=2h, future=1h */
+/** Smart TTL: past=never expires, today=2h, future=1h */
 function getTtlHours(date: string): number {
   const today = format(new Date(), 'yyyy-MM-dd')
-  if (date < today) return 24  // Historical — final data
-  if (date === today) return 2  // Today — may update
-  return 1                      // Future — forecast, replace quickly
+  if (date < today) return Infinity  // Historical — final data, never expires
+  if (date === today) return 2       // Today — may get updates
+  return 1                           // Future — forecast, replace quickly
 }
 
 /**

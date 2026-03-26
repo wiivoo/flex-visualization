@@ -1,23 +1,12 @@
 'use client'
 
-import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea,
+  ResponsiveContainer,
 } from 'recharts'
 
-const SEASON_COLORS: Record<string, string> = {
-  winter: '#7EB8E8',
-  spring: '#6AC09A',
-  summer: '#E8C94A',
-  autumn: '#E8A066',
-}
-
-const SEASON_BG: Record<string, string> = {
-  winter: '#EFF6FF', spring: '#F0FDF4', summer: '#FEFCE8', autumn: '#FFF7ED',
-}
+const BAR_COLOR = '#10B981'  // emerald-500
 
 export interface MonthlySavingsEntry {
   month: string
@@ -45,9 +34,9 @@ interface Props {
 }
 
 const MODE_LABELS: Record<string, string> = {
-  overnight: 'overnight shifting',
-  fullday: 'full-day shifting',
-  threeday: '3-day shifting',
+  overnight: '12h window',
+  fullday: '24h window',
+  threeday: '72h window',
 }
 
 export function MonthlySavingsCard({
@@ -55,8 +44,6 @@ export function MonthlySavingsCard({
   sessionsPerYear, rollingAvgSavings, monthlySavings, avgDailyEur, selectedDate,
   chargingMode = 'overnight', isV2G = false, v2gHasNetCharge = false,
 }: Props) {
-  const [methodologyOpen, setMethodologyOpen] = useState(false)
-
   const selectedMonth = selectedDate ? selectedDate.slice(0, 7) : undefined
   const filteredMonths = selectedMonth
     ? monthlySavingsData.filter(d => d.month <= selectedMonth)
@@ -67,18 +54,6 @@ export function MonthlySavingsCard({
   }))
   let runSum = 0
   const last12c = last12.map(d => { runSum += d.savings; return { ...d, cumulative: Math.round(runSum * 10) / 10 } })
-
-  // Season background bands
-  const bands: { x1: string; x2: string; season: string }[] = []
-  let cur = '', start = ''
-  for (let i = 0; i < last12c.length; i++) {
-    const d = last12c[i]
-    if (d.season !== cur) {
-      if (cur && start) bands.push({ x1: start, x2: last12c[i - 1].displayLabel, season: cur })
-      cur = d.season; start = d.displayLabel
-    }
-  }
-  if (cur && start) bands.push({ x1: start, x2: last12c[last12c.length - 1].displayLabel, season: cur })
 
   const totalSum = last12c[last12c.length - 1]?.cumulative ?? 0
 
@@ -96,10 +71,6 @@ export function MonthlySavingsCard({
         <div className="flex-1 min-h-[180px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={last12c} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
-              {bands.map((b, i) => (
-                <ReferenceArea key={i} x1={b.x1} x2={b.x2}
-                  fill={SEASON_BG[b.season] || '#F9FAFB'} fillOpacity={1} ifOverflow="hidden" />
-              ))}
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
               <XAxis dataKey="displayLabel" tick={{ fontSize: 10, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} interval={0} />
               <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
@@ -110,11 +81,10 @@ export function MonthlySavingsCard({
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null
                   const d = payload[0].payload as (typeof last12c)[number]
-                  const color = SEASON_COLORS[d.season] || '#6B7280'
                   return (
                     <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
-                      <p className="text-gray-500 text-[10px]">{d.month} · {d.season}</p>
-                      <p className="font-semibold tabular-nums" style={{ color }}>{d.savings.toFixed(2)} EUR/mo</p>
+                      <p className="text-gray-500 text-[10px]">{d.month}</p>
+                      <p className="font-semibold tabular-nums text-emerald-600">{d.savings.toFixed(2)} EUR/mo</p>
                       {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined && (
                         <div className="text-[10px] space-y-0.5 mt-0.5">
                           {(v2gHasNetCharge || d.loadShiftingEur > 0) && (
@@ -140,17 +110,7 @@ export function MonthlySavingsCard({
                 </>
               ) : (
               <Bar yAxisId="left" dataKey="savings" radius={[3, 3, 0, 0]} maxBarSize={28}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                shape={((props: any) => {
-                  const { x = 0, y = 0, width = 0, height = 0, season = '' } = props as { x: number; y: number; width: number; height: number; season: string }
-                  const fill = SEASON_COLORS[season] || '#6B7280'
-                  const h = Math.max(height, 0)
-                  return (
-                    <g>
-                      <rect x={x} y={y} width={width} height={h} rx={3} ry={3} fill={fill} fillOpacity={0.75} />
-                    </g>
-                  )
-                }) as any} />
+                fill={BAR_COLOR} fillOpacity={0.7} />
               )}
               <Line yAxisId="right" dataKey="cumulative" type="monotone"
                 stroke="#374151" strokeWidth={1.5} strokeDasharray="4 3"
@@ -175,12 +135,10 @@ export function MonthlySavingsCard({
                 </span>
               </>
             ) : (
-            (['winter', 'spring', 'summer', 'autumn'] as const).map(s => (
-              <span key={s} className="flex items-center gap-1 capitalize">
-                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: SEASON_COLORS[s], opacity: 0.75 }} />
-                {s}
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" style={{ opacity: 0.7 }} />
+                Monthly savings
               </span>
-            ))
             )}
           </div>
           <span className="flex items-center gap-1.5 text-gray-400">
@@ -189,29 +147,6 @@ export function MonthlySavingsCard({
           </span>
         </div>
 
-        {/* Methodology — collapsible */}
-        <div className="border border-gray-200/60 rounded-lg overflow-hidden">
-          <button
-            onClick={() => setMethodologyOpen(v => !v)}
-            className="w-full flex items-center justify-between bg-gray-50/80 px-3.5 py-2 text-left hover:bg-gray-100/60 transition-colors">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Methodology</span>
-            <span className="text-[10px] text-gray-400 ml-2">{methodologyOpen ? '▲' : '▼'}</span>
-          </button>
-          {methodologyOpen && (
-            <div className="px-3.5 py-3 text-[11px] space-y-1.5 bg-gray-50/40">
-              <p className="text-gray-500">
-                For each day, the optimal vs. baseline charging cost is computed from actual SMARD spot prices.
-                Monthly bars show the sum of daily savings scaled to {weeklyPlugIns} sessions/week.
-              </p>
-              <div className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 border-t border-gray-200 pt-1.5 mt-1">
-                <span className="text-gray-400 font-mono">avg savings / session</span>
-                <span className="tabular-nums font-semibold text-gray-700 text-right">{avgDailyEur.toFixed(3)} EUR</span>
-                <span className="text-gray-400 font-mono">× {sessionsPerYear} sessions/yr</span>
-                <AnimatedNumber value={rollingAvgSavings} decimals={0} prefix="≈ " suffix=" EUR/yr" className="font-bold text-emerald-700 tabular-nums text-right" />
-              </div>
-            </div>
-          )}
-        </div>
       </CardContent>
     </Card>
   )

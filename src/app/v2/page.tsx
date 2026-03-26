@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useMemo, useEffect, useCallback, Suspense } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
 import { runOptimization, type OptimizeResult } from '@/lib/optimizer'
 import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, type ChargingScenario } from '@/lib/v2-config'
 import { Step2ChargingScenario } from '@/components/v2/steps/Step2ChargingScenario'
 import { TutorialOverlay } from '@/components/v2/TutorialOverlay'
+import { TheoryOverlay } from '@/components/v2/TheoryOverlay'
 
 // Parse scenario from URL search params, falling back to defaults
 function parseScenario(params: URLSearchParams): ChargingScenario {
@@ -69,8 +70,20 @@ function V2Inner() {
   const [scenario, setScenario] = useState<ChargingScenario>(() => parseScenario(searchParams))
   const [copied, setCopied] = useState(false)
   const [showTutorial, setShowTutorial] = useState(false)
+  const [showTheory, setShowTheory] = useState(false)
+  const [country, setCountry] = useState<'DE' | 'NL'>('DE')
+  const prevCountryRef = useRef(country)
 
-  const prices = usePrices()
+  const prices = usePrices(country)
+
+  // If a non-DE country fails to load, auto-revert to DE
+  useEffect(() => {
+    if (prices.error && country !== 'DE') {
+      console.warn(`[country] ${country} failed: ${prices.error} — reverting to DE`)
+      setCountry('DE')
+    }
+    prevCountryRef.current = country
+  }, [prices.error, country])
 
   // On mount: if URL has a date param, apply it once prices are loaded
   const urlDate = searchParams.get('date')
@@ -156,6 +169,16 @@ function V2Inner() {
         <div className="max-w-[1440px] mx-auto px-8 py-2 flex items-center justify-between">
           <h1 className="text-sm font-semibold text-gray-400">EV Flex Charging — Load Shifting Visualization</h1>
           <div className="flex items-center gap-2">
+            {/* Theory button — disabled until content is finalized
+            <button
+              onClick={() => setShowTheory(true)}
+              className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+              Theory
+            </button>
+            */}
             <button
               onClick={() => setShowTutorial(true)}
               className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
@@ -194,11 +217,14 @@ function V2Inner() {
           scenario={scenario}
           setScenario={setScenario}
           optimization={optimization}
+          country={country}
+          setCountry={setCountry}
         />
       </main>
 
       {/* Tutorial overlay */}
       <TutorialOverlay active={showTutorial} onClose={() => setShowTutorial(false)} />
+      {showTheory && <TheoryOverlay onClose={() => setShowTheory(false)} />}
     </div>
   )
 }

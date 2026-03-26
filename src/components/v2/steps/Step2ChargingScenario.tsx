@@ -43,6 +43,8 @@ interface PriceData {
   hourlyQH: HourlyPrice[]
   daily: DailySummary[]
   monthly: MonthlyStats[]
+  loading: boolean
+  error: string | null
   selectedDate: string
   setSelectedDate: (date: string) => void
   selectedDayPrices: HourlyPrice[]
@@ -56,10 +58,12 @@ interface Props {
   scenario: ChargingScenario
   setScenario: (s: ChargingScenario) => void
   optimization: OptimizeResult | null
+  country?: 'DE' | 'NL'
+  setCountry?: (c: 'DE' | 'NL') => void
 }
 
 /* ────── Main Component ────── */
-export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) {
+export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry }: Props) {
   const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
   const isV2G = scenario.gridMode === 'v2g'
   // V2G: does the battery need net charging? (startSoC < targetSoC)
@@ -296,10 +300,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     if (padded.length === 0) return { chartData: [], sessionCost: null }
 
     // Build ID3 intraday price map
+    // ID3 data is always QH (96 pts/day). When chart is hourly, aggregate to hourly avg.
     const id3Map = new Map<string, number>()
     if (prices.intradayId3) {
-      for (const p of prices.intradayId3) {
-        id3Map.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p.priceCtKwh)
+      if (isQH) {
+        for (const p of prices.intradayId3) {
+          id3Map.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p.priceCtKwh)
+        }
+      } else {
+        // Aggregate QH → hourly: average the 4 quarter-hour prices per hour
+        const hourBuckets = new Map<string, number[]>()
+        for (const p of prices.intradayId3) {
+          const hKey = `${p.date}-${p.hour}-0`
+          const arr = hourBuckets.get(hKey) || []
+          arr.push(p.priceCtKwh)
+          hourBuckets.set(hKey, arr)
+        }
+        for (const [hKey, vals] of hourBuckets) {
+          id3Map.set(hKey, Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 100) / 100)
+        }
       }
     }
 
@@ -333,9 +352,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     }
 
     // Intraday ID3 re-optimization uplift (computed before chart mapping so keys are available)
-    // ID3 data is only usable if it covers ALL time slots in the shown window
-    const id3WindowCoverage = windowPrices.filter(p => id3Map.has(`${p.date}-${p.hour}-${p.minute ?? 0}`)).length
-    const hasIntradayData = id3WindowCoverage > 0 && id3WindowCoverage === windowPrices.length
+    // ID3 data is usable if enough slots have prices for re-optimization (>= slotsNeeded)
+    const id3WindowPricesAll = windowPrices.filter(p => id3Map.has(`${p.date}-${p.hour}-${p.minute ?? 0}`))
+    const hasIntradayData = id3WindowPricesAll.length >= slotsNeeded
     let intradayUpliftEurVal = 0
     let intradayUpliftCtVal = 0
     let id3OptimizedKeys = new Set<string>()
@@ -539,12 +558,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
       const z: ModeSavings = { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }
       return { overnight: z, fullday: z, threeday: z }
     }
-    const kwhSlot = chargePowerKw
-    const minH = Math.ceil(deferredEnergyPerSession / chargePowerKw)
     const end52 = date1
-    const start52 = new Date(new Date(end52 + 'T12:00:00Z').getTime() - 364 * 86400000).toISOString().slice(0, 10)
+    const start52 = new Date(new Date(end52 + 'T12:00:00Z').getTime() - 365 * 86400000).toISOString().slice(0, 10)
     const start4w = new Date(new Date(end52 + 'T12:00:00Z').getTime() - 28 * 86400000).toISOString().slice(0, 10)
 
+    // Build per-date lookup for hourly data
     const byDate = new Map<string, HourlyPrice[]>()
     for (const p of prices.hourly) {
       if (p.date >= start52 && p.date <= end52) {
@@ -553,22 +571,42 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         byDate.set(p.date, arr)
       }
     }
+    // Build per-date lookup for QH data (when available)
+    const byDateQH = new Map<string, HourlyPrice[]>()
+    if (isQH && prices.hourlyQH.length > 0) {
+      for (const p of prices.hourlyQH) {
+        if (p.date >= start52 && p.date <= end52) {
+          const arr = byDateQH.get(p.date) || []
+          arr.push(p)
+          byDateQH.set(p.date, arr)
+        }
+      }
+    }
 
-    function calcMode(buildWindow: (dDate: string) => HourlyPrice[] | null): { s4w: number; d4w: number; s52w: number; d52w: number } {
-      let s4w = 0, d4w = 0, s52w = 0, d52w = 0
+    function calcMode(buildWindow: (dDate: string, useQH: boolean, lookup: Map<string, HourlyPrice[]>) => HourlyPrice[] | null): { wdS4w: number; wdD4w: number; weS4w: number; weD4w: number; wdS52w: number; wdD52w: number; weS52w: number; weD52w: number } {
+      let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
+      let wdS52w = 0, wdD52w = 0, weS52w = 0, weD52w = 0
       for (const dDate of byDate.keys()) {
-        const win = buildWindow(dDate)
-        if (!win || win.length < minH) continue
+        // Use QH data for this day if available, otherwise hourly
+        const dPricesQH = byDateQH.get(dDate)
+        const useQH = !!dPricesQH && dPricesQH.length > 0
+        const lookup = useQH ? byDateQH : byDate
+        const kwhSlot = useQH ? chargePowerKw * 0.25 : chargePowerKw
+        const minSlots = Math.ceil(deferredEnergyPerSession / kwhSlot)
+        const win = buildWindow(dDate, useQH, lookup)
+        if (!win || win.length < minSlots) continue
         let savEur: number
         if (isV2G) {
           savEur = computeV2gWindowSavings(win, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, kwhSlot).profitEur
         } else {
           savEur = computeWindowSavings(win, deferredEnergyPerSession, kwhSlot, 1).savingsEur
         }
-        s52w += savEur; d52w++
-        if (dDate >= start4w) { s4w += savEur; d4w++ }
+        const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
+        const isWe = dow === 0 || dow === 6
+        if (isWe) { weS52w += savEur; weD52w++; if (dDate >= start4w) { weS4w += savEur; weD4w++ } }
+        else { wdS52w += savEur; wdD52w++; if (dDate >= start4w) { wdS4w += savEur; wdD4w++ } }
       }
-      return { s4w, d4w, s52w, d52w }
+      return { wdS4w, wdD4w, weS4w, weD4w, wdS52w, wdD52w, weS52w, weD52w }
     }
 
     // Each mode: use actual departure when active, canonical when inactive
@@ -577,49 +615,55 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
     const fullDayDep = curMode === 'fullday' ? deferredDepartureTime : deferredPlugInTime
     const threeDayDep = curMode === 'threeday' ? deferredDepartureTime : deferredPlugInTime
 
-    const overnight = calcMode((dDate) => {
+    const overnight = calcMode((dDate, _useQH, lookup) => {
       const nd = addDaysStr(dDate, 1)
-      const nP = byDate.get(nd)
+      const nP = lookup.get(nd)
       if (!nP || nP.length === 0) return null
-      const dP = byDate.get(dDate)
+      const dP = lookup.get(dDate)
       if (!dP) return null
       return [...dP.filter(p => p.hour >= deferredPlugInTime), ...nP.filter(p => p.hour < overnightDep)]
     })
 
-    const fullday = calcMode((dDate) => {
+    const fullday = calcMode((dDate, _useQH, lookup) => {
       const nd = addDaysStr(dDate, 1)
-      const nP = byDate.get(nd)
+      const nP = lookup.get(nd)
       if (!nP || nP.length === 0) return null
-      const dP = byDate.get(dDate)
+      const dP = lookup.get(dDate)
       if (!dP) return null
       return [...dP.filter(p => p.hour >= deferredPlugInTime), ...nP.filter(p => p.hour < fullDayDep)]
     })
 
-    const threeday = calcMode((dDate) => {
+    const threeday = calcMode((dDate, _useQH, lookup) => {
       const d2 = addDaysStr(dDate, 1), d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
-      const dP = byDate.get(dDate), p2 = byDate.get(d2), p3 = byDate.get(d3)
+      const dP = lookup.get(dDate), p2 = lookup.get(d2), p3 = lookup.get(d3)
       if (!dP || !p2) return null
       const all = [...dP.filter(p => p.hour >= deferredPlugInTime), ...p2]
       if (p3) all.push(...p3)
-      const p4 = byDate.get(d4)
+      const p4 = lookup.get(d4)
       if (p4) all.push(...p4.filter(p => p.hour < threeDayDep))
       return all
     })
 
-    function toResult(r: { s4w: number; d4w: number; s52w: number; d52w: number }): ModeSavings {
-      const avgPerDay4w = r.d4w > 0 ? r.s4w / r.d4w : 0
-      const avgPerDay52w = r.d52w > 0 ? r.s52w / r.d52w : 0
-      const weekly4w = avgPerDay4w * deferredWeeklyPlugIns
-      const weekly52w = avgPerDay52w * deferredWeeklyPlugIns
-      const eur4w = Math.round(weekly4w * 4 * 100) / 100 // 4 weeks
+    function toResult(r: { wdS4w: number; wdD4w: number; weS4w: number; weD4w: number; wdS52w: number; wdD52w: number; weS52w: number; weD52w: number }): ModeSavings {
+      // Weekday/weekend weighted average — same method as rollingAvgSavings
+      const avgWd4w = r.wdD4w > 0 ? r.wdS4w / r.wdD4w : 0
+      const avgWe4w = r.weD4w > 0 ? r.weS4w / r.weD4w : 0
+      const weekly4w = avgWd4w * deferredWeekdayPlugIns + avgWe4w * deferredWeekendPlugIns
+      const avgWd52w = r.wdD52w > 0 ? r.wdS52w / r.wdD52w : 0
+      const avgWe52w = r.weD52w > 0 ? r.weS52w / r.weD52w : 0
+      const weekly52w = avgWd52w * deferredWeekdayPlugIns + avgWe52w * deferredWeekendPlugIns
+      const eur4w = Math.round(weekly4w * 4 * 100) / 100
       const eur52w = Math.round(weekly52w * 52 * 100) / 100
-      const ctKwh4w = deferredEnergyPerSession > 0 ? avgPerDay4w / deferredEnergyPerSession * 100 : 0
-      const ctKwh52w = deferredEnergyPerSession > 0 ? avgPerDay52w / deferredEnergyPerSession * 100 : 0
+      // ct/kWh: weighted average savings per session ÷ energy
+      const avgSavPerSession4w = (r.wdD4w + r.weD4w) > 0 ? (r.wdS4w + r.weS4w) / (r.wdD4w + r.weD4w) : 0
+      const avgSavPerSession52w = (r.wdD52w + r.weD52w) > 0 ? (r.wdS52w + r.weS52w) / (r.wdD52w + r.weD52w) : 0
+      const ctKwh4w = deferredEnergyPerSession > 0 ? avgSavPerSession4w / deferredEnergyPerSession * 100 : 0
+      const ctKwh52w = deferredEnergyPerSession > 0 ? avgSavPerSession52w / deferredEnergyPerSession * 100 : 0
       return { ctKwh4w, eur4w, ctKwh52w, eur52w }
     }
 
     return { overnight: toResult(overnight), fullday: toResult(fullday), threeday: toResult(threeday) }
-  }, [prices.hourly, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeeklyPlugIns, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+  }, [prices.hourly, prices.hourlyQH, isQH, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -1461,6 +1505,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               <div>
                 <CardTitle className="text-base font-bold text-[#313131]">
                   Price Curve
+                  <span className="text-xs font-normal text-gray-400 ml-2">Shift EV charging to cheapest hours</span>
                 </CardTitle>
                 <p className="text-[11px] text-gray-400 mt-0.5">
                   {isThreeDay
@@ -1482,9 +1527,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       <TooltipContent side="bottom" className="max-w-[220px] text-left p-3">
                         <p className="text-[11px] text-gray-500 leading-relaxed">
                           Day-Ahead · EPEX SPOT SE auction, published daily ~12:15 CET via{' '}
-                          {date1 && (isThreeDay ? date4 : date2) ? (
-                            <a href={`https://www.smard.de/home/marktdaten?marketDataAttributes=${encodeURIComponent(JSON.stringify({resolution:"hour",from:new Date(date1+'T00:00:00').getTime(),to:new Date((isThreeDay?date4:date2)+'T23:59:59').getTime(),moduleIds:[8004169],selectedCategory:null,activeChart:true,style:"color",categoriesModuleOrder:{},region:"DE"}))}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-700">SMARD.de</a>
-                          ) : 'SMARD.de'}
+                          {country === 'DE' ? (
+                            date1 && (isThreeDay ? date4 : date2) ? (
+                              <a href={`https://www.smard.de/home/marktdaten?marketDataAttributes=${encodeURIComponent(JSON.stringify({resolution:"hour",from:new Date(date1+'T00:00:00').getTime(),to:new Date((isThreeDay?date4:date2)+'T23:59:59').getTime(),moduleIds:[8004169],selectedCategory:null,activeChart:true,style:"color",categoriesModuleOrder:{},region:"DE"}))}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-700">SMARD.de</a>
+                            ) : 'SMARD.de'
+                          ) : (
+                            <a href="https://transparency.entsoe.eu/" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-700">ENTSO-E</a>
+                          )}
                         </p>
                       </TooltipContent>
                     </UITooltip>
@@ -1528,6 +1577,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     </button>
                   </div>
                 )}
+                {/* Country toggle — disabled until ENTSO-E is reliably available
+                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                  <button
+                    onClick={() => setCountry?.('DE')}
+                    title="Germany (DE-LU bidding zone)"
+                    className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'DE' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]"><rect width="14" height="3.33" fill="#000"/><rect y="3.33" width="14" height="3.34" fill="#D00"/><rect y="6.67" width="14" height="3.33" fill="#FC0"/></svg>
+                    DE
+                  </button>
+                  <button
+                    onClick={() => { if (!prices.loading) setCountry?.('NL') }}
+                    disabled={prices.loading && country !== 'NL'}
+                    title={prices.loading && country !== 'NL' ? 'Loading...' : 'Netherlands (NL bidding zone) — ENTSO-E'}
+                    className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'NL' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+                    <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]"><rect width="14" height="3.33" fill="#AE1C28"/><rect y="3.33" width="14" height="3.34" fill="#FFF"/><rect y="6.67" width="14" height="3.33" fill="#21468B"/></svg>
+                    NL
+                  </button>
+                </div>
+                */}
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                   <button onClick={() => {
@@ -1537,7 +1605,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     setScenario({ ...scenario, chargingMode: 'overnight', plugInTime: newPlugIn, departureTime: depDefault })
                   }}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!isFullDay ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                    Overnight
+                    12h
                   </button>
                   <button onClick={() => {
                     // Full day default: departure = same hour next day (24h window)
@@ -1558,16 +1626,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5">
-                {/* Renewable overlay toggle */}
-                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-                  <button
-                    onClick={() => setShowRenewable(v => !v)}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showRenewable ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                    title="Toggle renewable generation overlay (solar + wind)"
-                  >
-                    {'\u2600\uFE0E'} Renew.
-                  </button>
-                </div>
                 {isQH && isQHSynthesized && (
                   <TooltipProvider delayDuration={100}>
                     <UITooltip>
@@ -1614,6 +1672,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     15 min
                   </button>
                 </div>
+                {/* Renewable overlay toggle (DE only — SMARD generation data) */}
+                {country === 'DE' && (
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                    <button
+                      onClick={() => setShowRenewable(v => !v)}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showRenewable ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                      title="Toggle renewable generation overlay (solar + wind)"
+                    >
+                      {'\u2600\uFE0E'} Renew.
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1631,7 +1701,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={CHART_MARGIN} className="transition-all duration-300">
+                <ComposedChart data={chartData} margin={CHART_MARGIN}>
                   <defs>
                     <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#94A3B8" stopOpacity={0.08} />
@@ -1660,7 +1730,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   )}
 
                   {/* Custom tooltip — shows price + role of each slot */}
-                  <Tooltip
+                  <Tooltip isAnimationActive={!isDragging}
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null
                       const d = chartData[Number(label)]
@@ -1774,25 +1844,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                   {showRenewable && (
                     <Area type="monotone" dataKey="renewableShare" yAxisId="right"
                       fill="url(#renewGrad)" stroke="#22C55E" strokeWidth={0.5} strokeOpacity={0.25}
-                      connectNulls dot={false} />
+                      connectNulls dot={false} isAnimationActive={!isDragging} />
                   )}
 
                   {/* Base price curve — subtle gray (faded when ID3 overlay active) */}
                   <Area type="monotone" dataKey="price" yAxisId="left" fill="url(#priceGrad)" stroke="none"
-                    fillOpacity={showIntraday && hasIntraday ? 0.3 : 1} />
+                    fillOpacity={showIntraday && hasIntraday ? 0.3 : 1} isAnimationActive={!isDragging} />
                   <Line type="monotone" dataKey="price" yAxisId="left" stroke="#94A3B8" strokeWidth={1.5}
                     strokeOpacity={showIntraday && hasIntraday ? 0.35 : 1}
                     dot={isQH ? { r: 1.5, fill: '#94A3B8', stroke: 'none', fillOpacity: showIntraday && hasIntraday ? 0.3 : 1 } : false}
                     activeDot={isQH ? { r: 4, fill: '#94A3B8', stroke: '#fff', strokeWidth: 2 } : undefined}
-                    connectNulls />
+                    connectNulls isAnimationActive={!isDragging} />
                   {/* Forecast price — dashed amber line + matching area fill */}
                   {hasForecastData && (
                     <>
-                      <Area type="monotone" dataKey="priceForecast" yAxisId="left" fill="url(#forecastGrad)" stroke="none" connectNulls={false} />
+                      <Area type="monotone" dataKey="priceForecast" yAxisId="left" fill="url(#forecastGrad)" stroke="none" connectNulls={false} isAnimationActive={!isDragging} />
                       <Line type="monotone" dataKey="priceForecast" yAxisId="left" stroke="#D97706" strokeWidth={1.5}
                         strokeDasharray="6 3"
                         dot={isQH ? { r: 1.5, fill: '#D97706', stroke: 'none' } : false}
-                        connectNulls={false} />
+                        connectNulls={false} isAnimationActive={!isDragging} />
                     </>
                   )}
 
@@ -1803,7 +1873,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       dot={isV2G
                         ? { r: isQH ? 1.5 : 2.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 1 }
                         : (isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 })}
-                      connectNulls={false} />
+                      connectNulls={false} isAnimationActive={!isDragging} />
                   )}
 
                   {/* V2G: separate net charge (green) and arb charge (blue) dots */}
@@ -1811,14 +1881,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     <>
                       <Line type="monotone" dataKey="netChargePrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
                         dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
-                        connectNulls={false} />
+                        connectNulls={false} isAnimationActive={!isDragging} />
                       <Line type="monotone" dataKey="arbChargePrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
                         dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
-                        connectNulls={false} />
+                        connectNulls={false} isAnimationActive={!isDragging} />
                     </>
                   ) : (
                     <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
-                      connectNulls={false}
+                      connectNulls={false} isAnimationActive={!isDragging}
                       dot={isQH
                         ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 }
                         : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }} />
@@ -1829,14 +1899,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                       dot={isQH
                         ? { r: 2.5, fill: '#3B82F6', stroke: '#EF4444', strokeWidth: 1.5, fillOpacity: 0.25 }
                         : { r: 4, fill: '#3B82F6', stroke: '#EF4444', strokeWidth: 2, fillOpacity: 0.25 }}
-                      connectNulls={false} />
+                      connectNulls={false} isAnimationActive={!isDragging} />
                   )}
 
                   {/* V2G discharge dots — amber */}
                   {isV2G && (
                     <Line type="monotone" dataKey="dischargePrice" yAxisId="left" stroke="#F59E0B" strokeWidth={isQH ? 2 : 3}
                       dot={isQH ? { r: 2, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#F59E0B', stroke: '#fff', strokeWidth: 1.5 }}
-                      connectNulls={false} />
+                      connectNulls={false} isAnimationActive={!isDragging} />
                   )}
 
                   {/* Intraday ID3 price line — dark gray dashed */}
@@ -1844,11 +1914,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
                     <>
                       <Line type="monotone" dataKey="intradayId3Price" yAxisId="left"
                         stroke="#374151" strokeWidth={1.5} strokeDasharray="5 3"
-                        dot={false} connectNulls={true} name="ID3 Intraday" />
+                        dot={false} connectNulls={true} name="ID3 Intraday" isAnimationActive={!isDragging} />
                       {/* ID3 re-optimized slots — prominent sky dots (new positions bought) */}
                       <Line type="monotone" dataKey="id3OptimizedPrice" yAxisId="left" stroke="#0EA5E9" strokeWidth={0}
                         dot={isQH ? { r: 3, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 1.5 } : { r: 4.5, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 2 }}
-                        connectNulls={false} />
+                        connectNulls={false} isAnimationActive={!isDragging} />
                     </>
                   )}
 
@@ -2335,8 +2405,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         if (overnightSp) {
           rows.push({
             key: 'overnight',
-            label: 'Overnight',
-            tooltip: { title: 'Overnight window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)} next morning.` },
+            label: '12h',
+            tooltip: { title: '12h window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)} next morning.` },
             spread: overnightSp, savings: savingsOvernight, v2gProfit: v2gOvernightProfit, windowPrices: overnightSpreadWin,
             spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(overnightDep)} ${fmtDateShort(date2)}`,
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)}`,
@@ -2345,8 +2415,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         if (fullDaySp) {
           rows.push({
             key: 'fullday',
-            label: 'Full Day',
-            tooltip: { title: 'Full day window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)} next day.` },
+            label: '24h',
+            tooltip: { title: '24h window', desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)} next day.` },
             spread: fullDaySp, savings: savingsFullDay, v2gProfit: v2gFullDayProfit, windowPrices: fullDaySpreadWin,
             spreadRange: `${fmtHour(scenario.plugInTime)} ${fmtDateShort(date1)} → ${fmtHour(fullDayDep)} ${fmtDateShort(date2)}`,
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)}`,
@@ -2355,9 +2425,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         if (threeDaySp) {
           rows.push({
             key: '3day',
-            label: '3-Day',
+            label: '72h',
             tooltip: {
-              title: '3-day window',
+              title: '72h window',
               desc: `${fmtHour(scenario.plugInTime)} → ${fmtHour(threeDayDep)} on ${fmtDateShort(date4)}.`,
               extra: hasForecast3d ? 'Includes forecast prices.' : undefined,
             },
@@ -2499,9 +2569,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario }: Props) 
         const detailPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
         const detailIsQH = isQH && prices.hourlyQH.length > 0
         const winMap: Record<string, { prices: HourlyPrice[]; label: string }> = {
-          overnight: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, overnightDepD), label: 'Overnight' },
-          fullday: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, fullDayDepD), label: 'Full Day' },
-          '3day': { prices: hasDate3Data ? buildMultiDayWindow(detailPrices, date1, date4, scenario.plugInTime, threeDayDepD) : [], label: '3-Day' },
+          overnight: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, overnightDepD), label: '12h' },
+          fullday: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, fullDayDepD), label: '24h' },
+          '3day': { prices: hasDate3Data ? buildMultiDayWindow(detailPrices, date1, date4, scenario.plugInTime, threeDayDepD) : [], label: '72h' },
         }
         const detail = winMap[costDetailMode]
         if (!detail || detail.prices.length === 0) return null

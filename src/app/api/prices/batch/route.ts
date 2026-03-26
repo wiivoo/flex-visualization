@@ -66,7 +66,7 @@ import {
 import { convertSmardPrice, SMARD_FILTER } from '@/lib/smard'
 import type { SmardPricePoint } from '@/lib/smard'
 import { fetchAwattarRange } from '@/lib/awattar'
-import { fetchEntsoeRange } from '@/lib/entsoe'
+import { fetchEntsoeRange, ENTSOE_DOMAINS } from '@/lib/entsoe'
 import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { fetchCsvPrices } from '@/lib/csv-prices'
@@ -80,6 +80,7 @@ const batchQuerySchema = z.object({
   type: z.enum(['day-ahead', 'intraday', 'forward']).default('day-ahead'),
   resolution: z.enum(['hour', 'quarterhour']).default('hour'),
   index: z.enum(['id_full', 'id1', 'id3']).optional(),
+  country: z.enum(['DE', 'NL']).default('DE'),
 })
 
 interface PricePoint {
@@ -348,6 +349,7 @@ export async function GET(request: NextRequest) {
     type: searchParams.get('type') || 'day-ahead',
     resolution: searchParams.get('resolution') || 'hour',
     index: searchParams.get('index') || undefined,
+    country: searchParams.get('country') || 'DE',
   })
 
   if (!parseResult.success) {
@@ -357,7 +359,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const { startDate: startDateStr, endDate: endDateStr, type, resolution, index } = parseResult.data
+  const { startDate: startDateStr, endDate: endDateStr, type, resolution, index, country } = parseResult.data
   const indexField = type === 'intraday' && index ? `${index}_ct` : undefined
   const startDate = parseISO(startDateStr)
   const endDate = parseISO(endDateStr)
@@ -372,8 +374,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Maximum date range: 400 days' }, { status: 400 })
   }
 
-  // ── Step 1: Check Supabase cache (resolution-aware) ──
-  const cachedDays = await getCachedDays(startDate, endDate, type, resolution, indexField)
+  // ── Step 1: Check Supabase cache (resolution-aware, country-aware) ──
+  // Non-DE countries use prefixed cache type (e.g., 'nl:day-ahead') for separate cache slots
+  const cachePrefix = country !== 'DE' ? `${country.toLowerCase()}:` : ''
+  const effectiveType = `${cachePrefix}${type}` as 'day-ahead' | 'intraday' | 'forward'
+  const cachedDays = await getCachedDays(startDate, endDate, effectiveType, resolution, indexField)
   const allDays = eachDayOfInterval({ start: startDate, end: endDate })
   const uncachedDays = allDays.filter(d => !cachedDays.has(format(d, 'yyyy-MM-dd')))
 
@@ -386,7 +391,23 @@ export async function GET(request: NextRequest) {
     const uncachedStart = uncachedDays[0]
     const uncachedEnd = uncachedDays[uncachedDays.length - 1]
 
-    if (type === 'day-ahead' && resolution === 'quarterhour') {
+    if (country !== 'DE') {
+      // Non-DE countries: ENTSO-E only
+      const domain = ENTSOE_DOMAINS[country]
+      if (domain && type === 'day-ahead') {
+        try {
+          fetchedPrices = await fetchEntsoeRange(uncachedStart, uncachedEnd, domain)
+          if (fetchedPrices?.length) source = 'smard' as const // reuse type for cache
+        } catch (error) {
+          console.error(`ENTSO-E ${country} error:`, error)
+        }
+        if (resolution === 'quarterhour' && fetchedPrices?.length) {
+          // ENTSO-E NL only has hourly — expand to QH
+          fetchedPrices = expandHourlyToQH(fetchedPrices)
+          isHourlyAvg = true
+        }
+      }
+    } else if (type === 'day-ahead' && resolution === 'quarterhour') {
       // QH chain: SMARD QH → hourly avg expansion → demo
       fetchedPrices = await fetchSmardBatch(uncachedStart, uncachedEnd, 'quarterhour')
       if (fetchedPrices?.length) {
@@ -413,8 +434,9 @@ export async function GET(request: NextRequest) {
       if (fetchedPrices?.length) source = 'csv'
     }
 
-    // Final fallback: demo data (skip for intraday - only from EPEX scraper cache)
-    if (!fetchedPrices?.length && type !== 'intraday') {
+    // Final fallback: demo data (DE only, skip for intraday - only from EPEX scraper cache)
+    // Non-DE countries must not get demo data — better to show an error than fake prices
+    if (!fetchedPrices?.length && type !== 'intraday' && country === 'DE') {
       fetchedPrices = generateDemoBatchPrices(uncachedStart, uncachedEnd)
       source = 'demo'
     }
@@ -422,7 +444,7 @@ export async function GET(request: NextRequest) {
     // ── Step 3: Cache fresh data (skip demo) ──
     if (source !== 'demo' && fetchedPrices && fetchedPrices.length > 0) {
       try {
-        await cachePricesByDay(fetchedPrices, type, resolution, source)
+        await cachePricesByDay(fetchedPrices, effectiveType, resolution, source)
       } catch (error) {
         console.error('Cache write error (non-fatal):', error)
       }

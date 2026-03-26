@@ -37,7 +37,7 @@ export function SessionCostCard({
 }: Props) {
   const [formulaOpen, setFormulaOpen] = useState(false)
 
-  const modeLabel = chargingMode === 'threeday' ? '72h' : chargingMode === 'fullday' ? '24h' : 'Overnight'
+  const modeLabel = chargingMode === 'threeday' ? '72h' : chargingMode === 'fullday' ? '24h' : '12h'
 
   return (
     <Card className="shadow-sm border-gray-200/80 flex flex-col">
@@ -141,7 +141,7 @@ export function SessionCostCard({
           <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
             <button onClick={() => onModeChange('overnight')}
               className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'overnight' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-              Overnight
+              12h
             </button>
             <button onClick={() => onModeChange('fullday')}
               className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chargingMode === 'fullday' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
