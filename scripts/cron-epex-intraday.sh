@@ -34,36 +34,58 @@ if [ ! -x "$NODE" ]; then
   fi
 fi
 
-# Run scraper with retries
-attempt=0
-while [ $attempt -lt $MAX_RETRIES ]; do
-  attempt=$((attempt + 1))
-  echo "Attempt $attempt/$MAX_RETRIES..."
+# Change to project dir so .env.local is found by process.cwd()
+cd "$PROJECT_DIR"
 
-  # Run the scraper (default: yesterday + day before)
-  # cd into project dir so .env.local is found by process.cwd()
-  output=$(cd "$PROJECT_DIR" && "$NODE" "$SCRIPT" 2>&1) || true
-  echo "$output"
+# Load .env.local into shell environment as fallback
+if [ -f "$PROJECT_DIR/.env.local" ]; then
+  set -a
+  . "$PROJECT_DIR/.env.local"
+  set +a
+fi
 
-  # Check if it succeeded (look for "saved to Supabase" or "already cached")
-  if echo "$output" | grep -qE "(saved to Supabase|already cached|Nothing to scrape)"; then
-    echo "SUCCESS at $(date '+%H:%M:%S')"
-    exit 0
-  fi
+run_scraper() {
+  local area="${1:-}"
+  local label="${area:-DE}"
+  local area_flag=""
+  [ -n "$area" ] && area_flag="--area $area"
 
-  # Check if WAF blocked us
-  if echo "$output" | grep -q "WAF CAPTCHA"; then
-    if [ $attempt -lt $MAX_RETRIES ]; then
-      delay=${DELAYS[$((attempt - 1))]}
-      echo "WAF blocked. Waiting ${delay}s before retry..."
-      sleep "$delay"
+  echo ""
+  echo "--- $label intraday ---"
+
+  attempt=0
+  while [ $attempt -lt $MAX_RETRIES ]; do
+    attempt=$((attempt + 1))
+    echo "Attempt $attempt/$MAX_RETRIES..."
+
+    output=$("$NODE" "$SCRIPT" $area_flag 2>&1) || true
+    echo "$output"
+
+    if echo "$output" | grep -qE "(saved to Supabase|already cached|Nothing to scrape)"; then
+      echo "$label SUCCESS at $(date '+%H:%M:%S')"
+      return 0
     fi
-  else
-    # Non-WAF error, don't retry
-    echo "Non-WAF error, not retrying"
-    break
-  fi
-done
 
-echo "FAILED after $MAX_RETRIES attempts at $(date '+%H:%M:%S')"
-exit 1
+    if echo "$output" | grep -q "WAF CAPTCHA"; then
+      if [ $attempt -lt $MAX_RETRIES ]; then
+        delay=${DELAYS[$((attempt - 1))]}
+        echo "WAF blocked. Waiting ${delay}s before retry..."
+        sleep "$delay"
+      fi
+    else
+      echo "Non-WAF error, not retrying"
+      break
+    fi
+  done
+
+  echo "$label FAILED after $MAX_RETRIES attempts at $(date '+%H:%M:%S')"
+  return 1
+}
+
+# Scrape DE then NL (with gap to avoid WAF)
+run_scraper "" || true
+sleep 10
+run_scraper "NL" || true
+
+echo ""
+echo "===== Done at $(date '+%H:%M:%S') ====="

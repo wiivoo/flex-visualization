@@ -2,7 +2,7 @@
 /**
  * EPEX Spot Intraday Continuous Price Scraper
  *
- * Scrapes 15-min intraday continuous results from EPEX SPOT for DE.
+ * Scrapes 15-min intraday continuous results from EPEX SPOT for DE and NL.
  * Extracts: ID Full, ID1, ID3 (EUR/MWh), stored in Supabase price_cache.
  *
  * Table structure: 168 rows per day = 24 hours × 7 rows each:
@@ -15,9 +15,11 @@
  *   [6] HH:45-HH+1  (QH 4) ← we want these
  *
  * Usage:
- *   node scripts/scrape-epex-intraday.mjs                     # Yesterday + day before
- *   node scripts/scrape-epex-intraday.mjs --date 2026-03-24   # Specific date
- *   node scripts/scrape-epex-intraday.mjs --dry-run            # Scrape but don't write to DB
+ *   node scripts/scrape-epex-intraday.mjs                         # DE yesterday + day before
+ *   node scripts/scrape-epex-intraday.mjs --area NL               # NL yesterday + day before
+ *   node scripts/scrape-epex-intraday.mjs --date 2026-03-24       # Specific date (DE)
+ *   node scripts/scrape-epex-intraday.mjs --area NL --date 2026-03-24
+ *   node scripts/scrape-epex-intraday.mjs --dry-run               # Scrape but don't write to DB
  */
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
@@ -43,6 +45,12 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 const EPEX_URL = 'https://www.epexspot.com/en/market-results'
 
+// Supported market areas
+const MARKET_AREAS = {
+  DE: { epexCode: 'DE', cachePrefix: '', label: 'Germany' },
+  NL: { epexCode: 'NL', cachePrefix: 'nl:', label: 'Netherlands' },
+}
+
 // --- Column indices (from EPEX table headers) ---
 // '', Low, High, Last, Weight Avg, ID Full, ID1, ID3, Buy Volume, Sell Volume, Volume
 const COL = { LOW: 0, HIGH: 1, LAST: 2, WAVG: 3, ID_FULL: 4, ID1: 5, ID3: 6 }
@@ -50,8 +58,8 @@ const COL = { LOW: 0, HIGH: 1, LAST: 2, WAVG: 3, ID_FULL: 4, ID1: 5, ID3: 6 }
 // QH row indices within each 7-row hourly group
 const QH_OFFSETS = [2, 3, 5, 6]
 
-function buildUrl(deliveryDate) {
-  return `${EPEX_URL}?market_area=DE&delivery_date=${deliveryDate}&modality=Continuous&product=15&data_mode=table`
+function buildUrl(deliveryDate, marketArea = 'DE') {
+  return `${EPEX_URL}?market_area=${marketArea}&delivery_date=${deliveryDate}&modality=Continuous&product=15&data_mode=table`
 }
 
 function parseNum(v) {
@@ -63,9 +71,9 @@ function parseNum(v) {
 /**
  * Scrape a single date. Returns 96 quarter-hour entries or null.
  */
-async function scrapeDate(page, deliveryDate) {
+async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
   console.log(`  ${deliveryDate}: loading...`)
-  await page.goto(buildUrl(deliveryDate), { waitUntil: 'networkidle', timeout: 60000 })
+  await page.goto(buildUrl(deliveryDate, marketArea), { waitUntil: 'networkidle', timeout: 60000 })
   await page.waitForTimeout(5000)
 
   // Check WAF
@@ -152,8 +160,9 @@ function extractQH(deliveryDate, allCells) {
 /**
  * Write to Supabase price_cache.
  * Stores prices in ct/kWh (EUR/MWh ÷ 10).
+ * Uses country-prefixed cache type for non-DE areas (e.g., 'nl:intraday').
  */
-async function writeToSupabase(dateStr, entries) {
+async function writeToSupabase(dateStr, entries, cachePrefix = '') {
   const pricesJson = entries.map(e => ({
     timestamp: e.timestamp,
     price_ct_kwh: e.id_full !== null ? Math.round(e.id_full * 10) / 100 : (e.weight_avg !== null ? Math.round(e.weight_avg * 10) / 100 : null),
@@ -165,11 +174,13 @@ async function writeToSupabase(dateStr, entries) {
     high_ct: e.high !== null ? Math.round(e.high * 10) / 100 : null,
   }))
 
+  const cacheType = `${cachePrefix}intraday`
+
   const { error } = await supabase
     .from('price_cache')
     .upsert({
       date: dateStr,
-      type: 'intraday',
+      type: cacheType,
       cached_at: new Date().toISOString(),
       source: 'epex',
       prices_json: pricesJson,
@@ -179,16 +190,17 @@ async function writeToSupabase(dateStr, entries) {
     console.error(`  ${dateStr}: Supabase error — ${error.message}`)
     return false
   }
-  console.log(`  ${dateStr}: saved to Supabase (${pricesJson.filter(p => p.price_ct_kwh !== null).length} valid points)`)
+  console.log(`  ${dateStr}: saved to Supabase as ${cacheType} (${pricesJson.filter(p => p.price_ct_kwh !== null).length} valid points)`)
   return true
 }
 
-async function isAlreadyCached(dateStr) {
+async function isAlreadyCached(dateStr, cachePrefix = '') {
+  const cacheType = `${cachePrefix}intraday`
   const { data } = await supabase
     .from('price_cache')
     .select('cached_at')
     .eq('date', dateStr)
-    .eq('type', 'intraday')
+    .eq('type', cacheType)
     .single()
   if (!data) return false
   return new Date(data.cached_at) > new Date(Date.now() - 12 * 3600000)
@@ -205,6 +217,13 @@ async function main() {
     }
   }
 
+  const areaKey = (flags.area || 'DE').toUpperCase()
+  const area = MARKET_AREAS[areaKey]
+  if (!area) {
+    console.error(`Unknown market area: ${areaKey}. Supported: ${Object.keys(MARKET_AREAS).join(', ')}`)
+    process.exit(1)
+  }
+
   const today = new Date()
   const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
   const dayBefore = new Date(today); dayBefore.setDate(dayBefore.getDate() - 2)
@@ -215,13 +234,13 @@ async function main() {
 
   const dryRun = !!flags['dry-run']
 
-  console.log('EPEX Intraday Scraper — DE Continuous 15min')
+  console.log(`EPEX Intraday Scraper — ${area.label} (${areaKey}) Continuous 15min`)
   console.log(`  Dates: ${dates.join(', ')} | Mode: ${dryRun ? 'DRY RUN' : 'Supabase'}`)
 
   // Skip cached dates
   const toScrape = []
   for (const d of dates) {
-    if (!dryRun && await isAlreadyCached(d)) {
+    if (!dryRun && await isAlreadyCached(d, area.cachePrefix)) {
       console.log(`  ${d}: already cached, skipping`)
     } else {
       toScrape.push(d)
@@ -246,7 +265,7 @@ async function main() {
 
   let scraped = 0
   for (const dateStr of toScrape) {
-    const entries = await scrapeDate(page, dateStr)
+    const entries = await scrapeDate(page, dateStr, area.epexCode)
     if (!entries) continue
 
     if (dryRun) {
@@ -255,7 +274,7 @@ async function main() {
         console.log(`    ${e.timestamp}: ID Full=${e.id_full} | ID1=${e.id1} | ID3=${e.id3} EUR/MWh`)
       )
     } else {
-      await writeToSupabase(dateStr, entries)
+      await writeToSupabase(dateStr, entries, area.cachePrefix)
     }
     scraped++
 
