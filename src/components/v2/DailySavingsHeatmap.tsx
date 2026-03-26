@@ -37,13 +37,24 @@ function fmtDate(dateStr: string): string {
   return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 
+// Spread buckets matching MiniCalendar thresholds (EUR/MWh ÷ 10 = ct/kWh)
+const SPREAD_BUCKETS = [
+  { min: 0, max: 5, color: '#DCFCE7', label: '0–5' },
+  { min: 5, max: 10, color: '#86EFAC', label: '5–10' },
+  { min: 10, max: 15, color: '#FACC15', label: '10–15' },
+  { min: 15, max: 20, color: '#FB923C', label: '15–20' },
+  { min: 20, max: Infinity, color: '#EF4444', label: '20+' },
+] as const
+
 export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost }: Props) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null)
-  const [rangeMin, setRangeMin] = useState(0)
-  const [rangeMax, setRangeMax] = useState(100)
+  // Filter by spread: null = show all, Set = active bucket indices
+  const [activeBuckets, setActiveBuckets] = useState<Set<number> | null>(null)
+  // Preview date: first click selects, second click on same date navigates
+  const [previewDate, setPreviewDate] = useState<string | null>(null)
 
-  const { grid, weeks, maxSavingsCt, monthLabels, allEntries, quarterWeeks } = useMemo(() => {
-    if (dailySavingsMap.size === 0) return { grid: [], weeks: 0, maxSavingsCt: 0, monthLabels: [], allEntries: [], quarterWeeks: new Set<number>() }
+  const { grid, weeks, monthLabels, allEntries, quarterWeeks } = useMemo(() => {
+    if (dailySavingsMap.size === 0) return { grid: [], weeks: 0, monthLabels: [], allEntries: [], quarterWeeks: new Set<number>() }
 
     const dates = [...dailySavingsMap.keys()].sort()
     const firstDate = dates[0]
@@ -58,7 +69,6 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
     const totalWeeks = Math.ceil(totalDays / 7)
 
     const cells: { date: string; entry: DailyEntry | null; weekIdx: number; dayIdx: number }[] = []
-    let maxCt = 0
     const entries: { date: string; entry: DailyEntry; ctSav: number }[] = []
 
     for (let i = 0; i < totalDays; i++) {
@@ -67,7 +77,6 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
       const entry = dailySavingsMap.get(dateStr) ?? null
       if (entry) {
         const ctSav = entry.bAvg - entry.oAvg
-        if (ctSav > maxCt) maxCt = ctSav
         entries.push({ date: dateStr, entry, ctSav })
       }
       cells.push({ date: dateStr, entry, weekIdx: Math.floor(i / 7), dayIdx: i % 7 })
@@ -84,7 +93,6 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
       }
     }
 
-    // Detect quarter boundaries (weeks where month transitions to Jan/Apr/Jul/Oct)
     const quarterWeeks = new Set<number>()
     for (const lbl of labels) {
       const qMonths = ['Jan', 'Apr', 'Jul', 'Oct']
@@ -93,16 +101,30 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
       }
     }
 
-    return { grid: cells, weeks: totalWeeks, maxSavingsCt: maxCt, monthLabels: labels, allEntries: entries, quarterWeeks }
+    return { grid: cells, weeks: totalWeeks, monthLabels: labels, allEntries: entries, quarterWeeks }
   }, [dailySavingsMap])
 
-  const filterMinCt = (rangeMin / 100) * maxSavingsCt
-  const filterMaxCt = (rangeMax / 100) * maxSavingsCt
-  const isFiltering = rangeMin > 0 || rangeMax < 100
+  const isFiltering = activeBuckets !== null
+
+  // Count entries per bucket for badge display
+  const bucketCounts = useMemo(() => {
+    const counts = new Array(SPREAD_BUCKETS.length).fill(0)
+    for (const e of allEntries) {
+      const bi = SPREAD_BUCKETS.findIndex(b => e.entry.spreadCt >= b.min && e.entry.spreadCt < b.max)
+      if (bi >= 0) counts[bi]++
+      else if (e.entry.spreadCt >= 20) counts[4]++ // 20+ bucket
+    }
+    return counts
+  }, [allEntries])
 
   const filtered = useMemo(() => {
-    return allEntries.filter(e => e.ctSav >= filterMinCt && e.ctSav <= filterMaxCt)
-  }, [allEntries, filterMinCt, filterMaxCt])
+    if (!isFiltering) return allEntries
+    return allEntries.filter(e => {
+      const bi = SPREAD_BUCKETS.findIndex(b => e.entry.spreadCt >= b.min && e.entry.spreadCt < b.max)
+      const idx = bi >= 0 ? bi : (e.entry.spreadCt >= 20 ? 4 : -1)
+      return idx >= 0 && activeBuckets!.has(idx)
+    })
+  }, [allEntries, isFiltering, activeBuckets])
 
   const stats = useMemo(() => {
     if (filtered.length === 0) return { count: 0, avgCt: 0, avgEur: 0, totalEur: 0, avgBAvg: 0, avgOAvg: 0, avgSpread: 0 }
@@ -116,12 +138,23 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
     return { count, avgCt, avgEur, totalEur, avgBAvg, avgOAvg, avgSpread }
   }, [filtered])
 
-  const handleMinChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setRangeMin(Math.min(Number(e.target.value), rangeMax - 1))
-  }, [rangeMax])
-  const handleMaxChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    setRangeMax(Math.max(Number(e.target.value), rangeMin + 1))
-  }, [rangeMin])
+  const toggleBucket = useCallback((idx: number) => {
+    setActiveBuckets(prev => {
+      if (prev === null) {
+        // First click: select only this bucket
+        return new Set([idx])
+      }
+      const next = new Set(prev)
+      if (next.has(idx)) {
+        next.delete(idx)
+        // If all removed, reset to show all
+        return next.size === 0 ? null : next
+      }
+      next.add(idx)
+      // If all 5 selected, reset to show all
+      return next.size === SPREAD_BUCKETS.length ? null : next
+    })
+  }, [])
 
   if (grid.length === 0) return null
 
@@ -131,19 +164,23 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
 
   function isInFilter(entry: DailyEntry | null): boolean {
     if (!entry) return false
-    const ct = entry.bAvg - entry.oAvg
-    return ct >= filterMinCt && ct <= filterMaxCt
+    if (!isFiltering) return true
+    const bi = SPREAD_BUCKETS.findIndex(b => entry.spreadCt >= b.min && entry.spreadCt < b.max)
+    const idx = bi >= 0 ? bi : (entry.spreadCt >= 20 ? 4 : -1)
+    return idx >= 0 && activeBuckets!.has(idx)
   }
 
+  // Discrete color buckets matching MiniCalendar spread logic (green→yellow→orange→red)
   function cellColor(entry: DailyEntry | null, inFilter: boolean): string {
     if (!entry) return '#F3F4F6'
-    const ctSav = entry.bAvg - entry.oAvg
-    if (ctSav <= 0) return inFilter ? '#FEE2E2' : '#FAFAFA'
-    const t = Math.min(ctSav / Math.max(maxSavingsCt, 0.01), 1)
-    const r = Math.round(220 - t * (220 - 22))
-    const g = Math.round(252 - t * (252 - 163))
-    const b = Math.round(231 - t * (231 - 74))
-    return `rgb(${r},${g},${b})`
+    const spread = entry.spreadCt // ct/kWh, same metric as calendar (EUR/MWh ÷ 10)
+    if (spread <= 0) return inFilter ? '#FEE2E2' : '#FAFAFA'
+    // Thresholds match MiniCalendar: 50,100,150,200 EUR/MWh = 5,10,15,20 ct/kWh
+    if (spread > 20) return '#EF4444'  // red-500
+    if (spread > 15) return '#FB923C'  // orange-400
+    if (spread > 10) return '#FACC15'  // yellow-400
+    if (spread > 5)  return '#86EFAC'  // green-300
+    return '#DCFCE7'                    // green-100
   }
 
   const cellSize = Math.max(12, Math.min(16, Math.floor(1000 / weeks)))
@@ -155,11 +192,21 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
   const selectedEntry: DailyEntry | null = selectedDayCost && rawSelectedEntry
     ? { ...rawSelectedEntry, bAvg: selectedDayCost.baselineAvgCt, oAvg: selectedDayCost.optimizedAvgCt, savingsEur: selectedDayCost.savingsEur }
     : rawSelectedEntry
-  const displayEntry = hoveredEntry ?? selectedEntry
-  const displayDateStr = hoveredDate ?? selectedDate
+  const previewEntry = previewDate ? dailySavingsMap.get(previewDate) : null
+  const displayEntry = hoveredEntry ?? previewEntry ?? selectedEntry
+  const displayDateStr = hoveredDate ?? previewDate ?? selectedDate
 
-  // Slider thumb styles — pointer-events:none on track, auto on thumb so both inputs are draggable
-  const thumbClass = 'pointer-events-none [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-emerald-600 [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:relative [&::-webkit-slider-thumb]:z-10'
+  // Min/max spread across all entries
+  const { minSpread, maxSpread } = useMemo(() => {
+    if (allEntries.length === 0) return { minSpread: 0, maxSpread: 0 }
+    let mn = Infinity, mx = -Infinity
+    for (const e of allEntries) {
+      if (e.entry.spreadCt < mn) mn = e.entry.spreadCt
+      if (e.entry.spreadCt > mx) mx = e.entry.spreadCt
+    }
+    return { minSpread: mn, maxSpread: mx }
+  }, [allEntries])
+
 
   return (
     <Card className="shadow-sm border-gray-200/80">
@@ -171,17 +218,38 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
               {modeLabel} · {energyPerSession} kWh · {allEntries.length} days
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-gray-400">
-            <span>0</span>
+          <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
+            <span className="text-[9px] font-semibold uppercase tracking-wider mr-0.5">Spread</span>
+            <span className="text-[8px] font-mono tabular-nums text-gray-400">{minSpread.toFixed(0)}</span>
             <div className="flex gap-px">
-              {[0, 0.2, 0.4, 0.6, 0.8, 1].map((t, i) => {
-                const r = Math.round(220 - t * (220 - 22))
-                const g = Math.round(252 - t * (252 - 163))
-                const b = Math.round(231 - t * (231 - 74))
-                return <div key={i} className="rounded-sm" style={{ width: cellSize, height: cellSize, background: `rgb(${r},${g},${b})` }} />
+              {SPREAD_BUCKETS.map((b, i) => {
+                const active = !isFiltering || activeBuckets!.has(i)
+                return (
+                  <button key={i} onClick={() => toggleBucket(i)}
+                    className="rounded-sm transition-all relative group cursor-pointer"
+                    title={`${b.label} ct/kWh · ${bucketCounts[i]} days`}
+                    style={{
+                      width: cellSize + 4, height: cellSize + 4,
+                      background: b.color,
+                      opacity: active ? 1 : 0.2,
+                      outline: isFiltering && active ? '2px solid #313131' : 'none',
+                      outlineOffset: 1,
+                    }}>
+                    <span className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 text-[7px] tabular-nums text-gray-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                      {bucketCounts[i]}
+                    </span>
+                  </button>
+                )
               })}
             </div>
-            <span>{maxSavingsCt.toFixed(1)} ct/kWh</span>
+            <span className="text-[8px] font-mono tabular-nums text-gray-400">{maxSpread.toFixed(0)}</span>
+            <span className="text-[8px] text-gray-300 ml-0.5">ct/kWh</span>
+            {isFiltering && (
+              <button onClick={() => setActiveBuckets(null)}
+                className="text-[9px] text-[#313131] hover:text-gray-600 transition-colors ml-1 underline underline-offset-2">
+                all
+              </button>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -218,13 +286,24 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                           const cell = grid[w * 7 + d]
                           if (!cell) return <div key={d} style={{ width: cellSize, height: cellSize }} />
                           const isSelected = cell.date === selectedDate
+                          const isPreviewed = cell.date === previewDate
                           const entry = cell.entry
                           const inFilter = isInFilter(entry)
                           return (
                             <UITooltip key={d}>
                               <TooltipTrigger asChild>
                                 <button
-                                  onClick={() => { if (entry) onSelect(cell.date) }}
+                                  onClick={() => {
+                                    if (!entry) return
+                                    if (previewDate === cell.date) {
+                                      // Second click on same date → navigate
+                                      onSelect(cell.date)
+                                      setPreviewDate(null)
+                                    } else {
+                                      // First click → preview only
+                                      setPreviewDate(cell.date)
+                                    }
+                                  }}
                                   onMouseEnter={() => setHoveredDate(cell.date)}
                                   onMouseLeave={() => setHoveredDate(null)}
                                   className="rounded-sm transition-all"
@@ -232,7 +311,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                                     width: cellSize,
                                     height: cellSize,
                                     background: cellColor(entry, inFilter),
-                                    outline: isSelected ? '2px solid #313131' : 'none',
+                                    outline: isSelected ? '2px solid #313131' : isPreviewed ? '2px solid #6B7280' : 'none',
                                     outlineOffset: -1,
                                     cursor: entry ? 'pointer' : 'default',
                                     opacity: !entry ? 0.4 : (isFiltering && !inFilter ? 0.15 : 1),
@@ -245,18 +324,18 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                                   <div className="space-y-1 text-[11px]">
                                     <div className="flex justify-between gap-4">
                                       <span className="text-gray-400">Unmanaged</span>
-                                      <span className="font-mono text-red-600 tabular-nums">{entry.bAvg.toFixed(1)} ct/kWh</span>
+                                      <span className="font-mono text-red-600 tabular-nums">{entry.bAvg.toFixed(2)} ct/kWh</span>
                                     </div>
                                     <div className="flex justify-between gap-4">
                                       <span className="text-gray-400">Optimized</span>
-                                      <span className="font-mono text-emerald-600 tabular-nums">{entry.oAvg.toFixed(1)} ct/kWh</span>
+                                      <span className="font-mono text-emerald-600 tabular-nums">{entry.oAvg.toFixed(2)} ct/kWh</span>
                                     </div>
                                     <div className="flex justify-between gap-4 border-t border-gray-100 pt-1">
                                       <span className="text-gray-500 font-medium">Saving</span>
-                                      <span className="font-bold text-emerald-700 tabular-nums">{(entry.bAvg - entry.oAvg).toFixed(1)} ct/kWh</span>
+                                      <span className="font-bold text-emerald-700 tabular-nums">{(entry.bAvg - entry.oAvg).toFixed(2)} ct/kWh</span>
                                     </div>
                                     <p className="text-[9px] text-gray-400 pt-0.5">
-                                      ({entry.bAvg.toFixed(1)} − {entry.oAvg.toFixed(1)}) × {energyPerSession} kWh ÷ 100 = {entry.savingsEur.toFixed(2)} EUR
+                                      ({entry.bAvg.toFixed(2)} − {entry.oAvg.toFixed(2)}) × {energyPerSession} kWh ÷ 100 = {entry.savingsEur.toFixed(2)} EUR
                                     </p>
                                   </div>
                                 ) : (
@@ -272,71 +351,28 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 </TooltipProvider>
               </div>
             </div>
-            {/* ── Slider directly under heatmap grid ── */}
-            {(() => {
-              const tickCount = 5
-              const ticks = Array.from({ length: tickCount + 1 }, (_, i) => {
-                const pct = (i / tickCount) * 100
-                const val = (pct / 100) * maxSavingsCt
-                return { pct, val }
-              })
-              return (
-                <div className="mt-3 pt-2 border-t border-gray-100">
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">Filter</span>
-                    <span className="text-[10px] font-mono tabular-nums text-emerald-700 font-semibold">
-                      {filterMinCt.toFixed(1)} – {filterMaxCt.toFixed(1)}
-                    </span>
-                    <span className="text-[9px] text-gray-400">ct/kWh</span>
-                    {isFiltering && (
-                      <>
-                        <span className="text-[9px] text-gray-300 ml-1">·</span>
-                        <span className="text-[9px] text-gray-400">{filtered.length}/{allEntries.length} days</span>
-                        <button onClick={() => { setRangeMin(0); setRangeMax(100) }}
-                          className="text-[9px] text-emerald-600 hover:text-emerald-700 transition-colors ml-auto underline underline-offset-2">
-                          reset
-                        </button>
-                      </>
-                    )}
-                  </div>
-                  <div className="relative h-6 flex items-center">
-                    {/* Track bg */}
-                    <div className="absolute inset-x-0 h-1.5 rounded-full bg-gray-100 border border-gray-200/60" />
-                    {/* Active range fill */}
-                    <div className="absolute h-1.5 rounded-full bg-emerald-400/50 border-y border-emerald-500/20"
-                      style={{ left: `${rangeMin}%`, right: `${100 - rangeMax}%` }} />
-                    {/* Tick marks */}
-                    {ticks.map((tick, i) => (
-                      <div key={i} className="absolute flex flex-col items-center" style={{ left: `${tick.pct}%`, transform: 'translateX(-50%)' }}>
-                        <div className="w-px h-2 bg-gray-300 mt-3" />
-                      </div>
-                    ))}
-                    {/* Min thumb */}
-                    <input type="range" min={0} max={100} value={rangeMin} onChange={handleMinChange}
-                      className={`absolute inset-x-0 w-full h-1.5 appearance-none bg-transparent ${thumbClass}`} />
-                    {/* Max thumb */}
-                    <input type="range" min={0} max={100} value={rangeMax} onChange={handleMaxChange}
-                      className={`absolute inset-x-0 w-full h-1.5 appearance-none bg-transparent ${thumbClass}`} />
-                  </div>
-                  {/* Tick labels */}
-                  <div className="relative h-3 mt-0.5">
-                    {ticks.map((tick, i) => (
-                      <span key={i} className="absolute text-[8px] text-gray-400 tabular-nums"
-                        style={{ left: `${tick.pct}%`, transform: 'translateX(-50%)' }}>
-                        {tick.val.toFixed(0)}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )
-            })()}
+            {/* ── Spread filter summary under heatmap ── */}
+            {isFiltering && (
+              <div className="mt-2 pt-1.5 border-t border-gray-100 flex items-center gap-2 text-[9px] text-gray-400">
+                <span className="font-semibold uppercase tracking-wider">Filtered</span>
+                <span className="font-mono tabular-nums text-[#313131] font-semibold">{filtered.length}/{allEntries.length}</span>
+                <span>days</span>
+                <span className="text-gray-300">·</span>
+                {[...activeBuckets!].sort().map(i => (
+                  <span key={i} className="inline-flex items-center gap-0.5">
+                    <span className="inline-block w-2 h-2 rounded-sm" style={{ background: SPREAD_BUCKETS[i].color }} />
+                    <span className="font-mono tabular-nums">{SPREAD_BUCKETS[i].label}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* RIGHT: 3 compact stat cards stacked */}
           <div className="w-[280px] flex-shrink-0 border-l border-gray-100 pl-5 flex flex-col gap-2">
             {/* 52-week hero */}
             <div className="rounded-lg bg-emerald-50/70 border border-emerald-100 px-3.5 py-2.5 flex flex-col justify-center">
-              <p className="text-[9px] font-semibold text-emerald-600/60 uppercase tracking-wider">52-Week Savings</p>
+              <p className="text-[9px] font-semibold text-emerald-600/60 uppercase tracking-wider">Projected Savings · Last {allEntries.length} Days</p>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-[28px] font-bold tabular-nums text-emerald-700 leading-none tracking-tight">
                   {annualSavings.toFixed(0)}
@@ -355,29 +391,32 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
             <div className="rounded-lg bg-gray-50/60 border border-gray-100 px-3.5 py-2.5 flex flex-col justify-center">
               <div className="flex items-center justify-between">
                 <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">
-                  {isFiltering ? `${filtered.length}/${allEntries.length} days` : `${allEntries.length} days avg`}
+                  {isFiltering ? `Filtered ${filtered.length}/${allEntries.length} Days` : `Avg Last ${allEntries.length} Days`}
                 </p>
-                <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{stats.avgCt.toFixed(1)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
+                <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{stats.avgCt.toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
               </div>
               <div className="flex items-center gap-4 mt-1.5 text-[10px]">
                 <span className="text-gray-400">
-                  <span className="text-red-500 font-mono tabular-nums">{stats.avgBAvg.toFixed(1)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{stats.avgOAvg.toFixed(1)}</span> ct
+                  <span className="text-red-500 font-mono tabular-nums">{stats.avgBAvg.toFixed(2)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{stats.avgOAvg.toFixed(2)}</span> ct
                 </span>
                 <span className="text-gray-300">·</span>
-                <span className="text-gray-400">{stats.avgSpread.toFixed(1)} ct spread</span>
+                <span className="text-gray-400">{stats.avgSpread.toFixed(2)} ct spread</span>
               </div>
             </div>
 
             {/* Day detail */}
             {displayEntry ? (
-              <div className="rounded-lg bg-gray-50/60 border border-gray-100 px-3.5 py-2.5 flex flex-col justify-center">
+              <div className={`rounded-lg border px-3.5 py-2.5 flex flex-col justify-center ${previewDate && !hoveredDate ? 'bg-blue-50/40 border-blue-200/60' : 'bg-gray-50/60 border-gray-100'}`}>
                 <div className="flex items-center justify-between">
-                  <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">{fmtDate(displayDateStr)}</p>
-                  <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{(displayEntry.bAvg - displayEntry.oAvg).toFixed(1)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
+                  <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">
+                    {fmtDate(displayDateStr)}
+                    {previewDate && !hoveredDate && <span className="text-blue-400 ml-1.5 normal-case font-normal">click again to jump</span>}
+                  </p>
+                  <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{(displayEntry.bAvg - displayEntry.oAvg).toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
                 </div>
                 <div className="flex items-center gap-4 mt-1.5 text-[10px]">
                   <span className="text-gray-400">
-                    <span className="text-red-500 font-mono tabular-nums">{displayEntry.bAvg.toFixed(1)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{displayEntry.oAvg.toFixed(1)}</span> ct
+                    <span className="text-red-500 font-mono tabular-nums">{displayEntry.bAvg.toFixed(2)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{displayEntry.oAvg.toFixed(2)}</span> ct
                   </span>
                   <span className="text-gray-300">·</span>
                   <span className="text-emerald-700 font-semibold tabular-nums">{displayEntry.savingsEur.toFixed(2)} EUR</span>
