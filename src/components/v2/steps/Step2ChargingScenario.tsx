@@ -14,6 +14,7 @@ import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
 import { DailySavingsHeatmap } from '@/components/v2/DailySavingsHeatmap'
 // Disabled for performance: SavingsHeatmap, FleetPortfolioCard, SpreadIndicatorsCard, FlexibilityDemoChart
 import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
+import { generateAndDownloadExcel, type EnrichedWindow } from '@/lib/excel-export'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
@@ -60,10 +61,11 @@ interface Props {
   optimization: OptimizeResult | null
   country?: 'DE' | 'NL'
   setCountry?: (c: 'DE' | 'NL') => void
+  onExportReady?: (fn: (() => void) | null) => void
 }
 
 /* ────── Main Component ────── */
-export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry }: Props) {
+export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, onExportReady }: Props) {
   const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
   const isV2G = scenario.gridMode === 'v2g'
   // V2G: does the battery need net charging? (startSoC < targetSoC)
@@ -901,6 +903,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     })
   }, [prices.hourly, deferredPlugInTime, deferredDepartureTime, scenario.chargingMode, deferredEnergyPerSession, chargePowerKw, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+
+  // ── Expose Excel export handler to parent ──
+  useEffect(() => {
+    if (!onExportReady) return
+    if (overnightWindows.length === 0) { onExportReady(null); return }
+    onExportReady(() => {
+      generateAndDownloadExcel({ scenario, overnightWindows, country })
+    })
+    return () => onExportReady(null)
+  }, [onExportReady, overnightWindows, scenario, country])
 
   // ── Monthly savings breakdown for yearly chart ──
   // Uses pre-computed savings from enriched overnightWindows (no redundant computation)
