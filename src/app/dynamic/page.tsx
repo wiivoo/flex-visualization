@@ -22,13 +22,32 @@ export default function DynamicPage() {
 }
 
 /* ────── Constants ────── */
-const CONSUMPTION_PRESETS = [
-  { label: '1 Person', kwh: 1500 },
-  { label: '2 Persons', kwh: 2500 },
-  { label: 'Family', kwh: 3500 },
-  { label: 'Large Family', kwh: 5000 },
-  { label: 'Heat Pump', kwh: 6000 },
-]
+/** Grid consumption presets per profile.
+ *  H25 = full grid draw. P25 ~ 70% of H25 (PV self-consumption ~30%).
+ *  S25 ~ 40% of H25 (PV + battery self-consumption ~60%). */
+const CONSUMPTION_PRESETS: Record<string, { label: string; kwh: number }[]> = {
+  H25: [
+    { label: '1 Person', kwh: 1500 },
+    { label: '2 Persons', kwh: 2500 },
+    { label: 'Family', kwh: 3500 },
+    { label: 'Large Family', kwh: 5000 },
+    { label: 'Heat Pump', kwh: 6000 },
+  ],
+  P25: [
+    { label: '1 Person', kwh: 1000 },
+    { label: '2 Persons', kwh: 1700 },
+    { label: 'Family', kwh: 2400 },
+    { label: 'Large Family', kwh: 3500 },
+    { label: 'Heat Pump', kwh: 4200 },
+  ],
+  S25: [
+    { label: '1 Person', kwh: 600 },
+    { label: '2 Persons', kwh: 1000 },
+    { label: 'Family', kwh: 1400 },
+    { label: 'Large Family', kwh: 2000 },
+    { label: 'Heat Pump', kwh: 2500 },
+  ],
+}
 
 const SURCHARGE_FIELDS: { key: keyof Surcharges; label: string; fixed?: boolean }[] = [
   { key: 'gridFee', label: 'Netzentgelte' },
@@ -62,7 +81,17 @@ function DynamicInner() {
   const [showSurcharges, setShowSurcharges] = useState(false)
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
   const [showRenewable, setShowRenewable] = useState(false)
-  const [loadProfile, setLoadProfile] = useState<LoadProfile>('H25')
+  const [loadProfile, setLoadProfileRaw] = useState<LoadProfile>('H25')
+  const setLoadProfile = useCallback((p: LoadProfile) => {
+    // Auto-adjust kWh proportionally when switching profiles
+    const ratios: Record<string, number> = { H25: 1, P25: 0.7, S25: 0.4 }
+    const oldRatio = ratios[loadProfile] ?? 1
+    const newRatio = ratios[p] ?? 1
+    if (oldRatio !== newRatio) {
+      setYearlyKwh(prev => Math.round(prev * newRatio / oldRatio / 100) * 100)
+    }
+    setLoadProfileRaw(p)
+  }, [loadProfile])
 
   const prices = usePrices('DE')
   const isQH = resolution === 'quarterhour'
@@ -349,7 +378,9 @@ function DynamicInner() {
               <CardContent className="space-y-4">
                 {/* Consumption */}
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Yearly Consumption</p>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                    {loadProfile === 'H25' ? 'Yearly Consumption' : 'Yearly Grid Consumption'}
+                  </p>
                   <div className="flex items-center gap-2">
                     <input
                       type="number"
@@ -360,7 +391,7 @@ function DynamicInner() {
                     <span className="text-xs text-gray-500 whitespace-nowrap">kWh/yr</span>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    {CONSUMPTION_PRESETS.map(p => (
+                    {(CONSUMPTION_PRESETS[loadProfile] || CONSUMPTION_PRESETS.H25).map(p => (
                       <button
                         key={p.kwh}
                         onClick={() => setYearlyKwh(p.kwh)}
@@ -374,6 +405,11 @@ function DynamicInner() {
                       </button>
                     ))}
                   </div>
+                  {loadProfile !== 'H25' && (
+                    <p className="text-[9px] text-gray-400">
+                      Net grid draw after {loadProfile === 'P25' ? 'PV self-consumption (~30%)' : 'PV + battery self-consumption (~60%)'}
+                    </p>
+                  )}
                 </div>
 
                 {/* Fixed Price */}
