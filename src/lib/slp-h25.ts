@@ -226,7 +226,7 @@ export function getQHSlpWeights(month: number, dayType: DayType): number[] {
 export type LoadProfile = 'H25' | 'P25' | 'S25'
 
 export const LOAD_PROFILES: { id: LoadProfile; label: string; description: string }[] = [
-  { id: 'H25', label: 'H25', description: 'Standard household' },
+  { id: 'H25', label: 'H25', description: 'Household' },
   { id: 'P25', label: 'P25', description: 'Household + PV' },
   { id: 'S25', label: 'S25', description: 'Household + PV + Battery' },
 ]
