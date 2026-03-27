@@ -14,7 +14,7 @@ interface Props {
 }
 
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-const YEAR_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1']
+const YEAR_COLORS = ['#2563EB', '#059669', '#D97706', '#8B5CF6', '#E11D48', '#0891B2']
 
 type TimeFilter = 'all' | 'peak' | 'offpeak'
 
@@ -39,14 +39,14 @@ function priceColor(ct: number, min: number, max: number): string {
   return '#FECACA'               // red-200
 }
 
-/** ISO week number (1-53) */
+/** ISO week number (1-52), clamping week 53 to 52 for display */
 function isoWeek(dateStr: string): number {
   const d = new Date(dateStr + 'T12:00:00Z')
   const dayOfYear = Math.floor((d.getTime() - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86400000)
   const dow = d.getUTCDay() || 7
   const wk = Math.floor((dayOfYear + 10 - dow) / 7)
   if (wk < 1) return 52
-  if (wk > 52) return 1
+  if (wk > 52) return 52 // clamp week 53 to 52 (last week of year)
   return wk
 }
 
@@ -69,7 +69,7 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
   // Aggregate by year-period with peak/off-peak support
   const { periodData, years, heatmapRange } = useMemo(() => {
     const map = new Map<string, {
-      spotSum: number; endSum: number; costEur: number; kwh: number; count: number
+      spotSum: number; costEur: number; kwh: number; count: number; spotHours: number
     }>()
 
     for (const d of dailyBreakdown) {
@@ -100,12 +100,13 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
 
       const existing = map.get(key)
       if (existing) {
-        existing.spotSum += spotAvg
+        existing.spotSum += spotAvg * hours
+        existing.spotHours += hours
         existing.costEur += cost
         existing.kwh += consumption
         existing.count++
       } else {
-        map.set(key, { spotSum: spotAvg, endSum: 0, costEur: cost, kwh: consumption, count: 1 })
+        map.set(key, { spotSum: spotAvg * hours, spotHours: hours, costEur: cost, kwh: consumption, count: 1 })
       }
     }
 
@@ -115,7 +116,7 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
       result.push({
         year: y,
         periodIdx: p,
-        avgSpot: val.spotSum / val.count,
+        avgSpot: val.spotHours > 0 ? val.spotSum / val.spotHours : 0,
         avgEnd: val.kwh > 0 ? (val.costEur / val.kwh) * 100 : 0,
         costEur: val.costEur,
         days: val.count,
@@ -426,7 +427,7 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
                   {MONTHS_SHORT.map(m => (
                     <th key={m} className="text-center text-gray-400 font-medium pb-1 px-0.5">{m}</th>
                   ))}
-                  <th className="text-center text-gray-400 font-semibold pl-2 pb-1">Avg</th>
+                  <th className="text-center text-gray-400 font-semibold pl-2 pb-1">{metric === 'cost' ? 'Total' : 'Avg'}</th>
                 </tr>
               </thead>
               <tbody>

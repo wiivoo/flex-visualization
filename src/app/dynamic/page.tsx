@@ -10,7 +10,7 @@ import {
   ResponsiveContainer, ReferenceLine, ReferenceArea,
 } from 'recharts'
 import {
-  DEFAULT_SURCHARGES, VAT_RATE, endCustomerPrice, totalSurchargesNetto,
+  DEFAULT_SURCHARGES, surchargesForYear, VAT_RATE, endCustomerPrice, totalSurchargesNetto,
   calculateYearlyCost, getDailyEndPrices,
   type Surcharges, type MonthlyResult,
 } from '@/lib/dynamic-tariff'
@@ -51,7 +51,7 @@ function DynamicInner() {
     const v = Number(searchParams.get('year'))
     return v >= 2020 ? v : 2025
   })
-  const [surcharges, setSurcharges] = useState<Surcharges>({ ...DEFAULT_SURCHARGES })
+  const [surcharges, setSurcharges] = useState<Surcharges>(() => surchargesForYear(Number(searchParams.get('year')) >= 2020 ? Number(searchParams.get('year')) : 2025))
   const [showSurcharges, setShowSurcharges] = useState(false)
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
   const [showRenewable, setShowRenewable] = useState(false)
@@ -208,14 +208,18 @@ function DynamicInner() {
     const totalConsumption = dailyChartData.reduce((s, d) => s + d.consumptionKwh, 0)
     const fixedCost = totalConsumption * fixedPrice / 100
     const dayType = getDayType(prices.selectedDate)
+    const expectedSlots = isQH ? 96 : 24
     return {
       dynamicCostEur: dynamicCost,
       fixedCostEur: fixedCost,
       savingsEur: fixedCost - dynamicCost,
       consumptionKwh: totalConsumption,
       dayType,
+      isPartial: dailyChartData.length < expectedSlots,
+      slotsAvailable: dailyChartData.length,
+      slotsExpected: expectedSlots,
     }
-  }, [dailyChartData, fixedPrice, prices.selectedDate])
+  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH])
 
   // Monthly chart data — rolling 12 months ending at selected date
   const monthlyChartData = useMemo(() => {
@@ -235,17 +239,17 @@ function DynamicInner() {
       months.push(`${y}-${String(m).padStart(2, '0')}`)
     }
     // Aggregate daily data by month
-    const monthMap = new Map<string, { dynamic: number; fixed: number; consumption: number; spotSum: number; endPriceSum: number; hours: number; days: number }>()
+    const monthMap = new Map<string, { dynamic: number; fixed: number; consumption: number; spotSum: number; endPriceSum: number; kwhSum: number; days: number }>()
     for (const d of allDailyBreakdown) {
       const m = d.date.slice(0, 7)
       if (!months.includes(m)) continue
-      const entry = monthMap.get(m) || { dynamic: 0, fixed: 0, consumption: 0, spotSum: 0, endPriceSum: 0, hours: 0, days: 0 }
+      const entry = monthMap.get(m) || { dynamic: 0, fixed: 0, consumption: 0, spotSum: 0, endPriceSum: 0, kwhSum: 0, days: 0 }
       entry.dynamic += d.dynamicCostEur
       entry.fixed += d.fixedCostEur
       entry.consumption += d.consumptionKwh
-      entry.spotSum += d.avgSpotCtKwh * d.hoursWithData
-      entry.endPriceSum += d.avgEndPriceCtKwh * d.hoursWithData
-      entry.hours += d.hoursWithData
+      entry.spotSum += d.avgSpotCtKwh * d.consumptionKwh
+      entry.endPriceSum += d.dynamicCostEur
+      entry.kwhSum += d.consumptionKwh
       entry.days++
       monthMap.set(m, entry)
     }
@@ -266,8 +270,8 @@ function DynamicInner() {
         savings,
         cumulative: Math.round(runSum * 10) / 10,
         daysWithData: d.days,
-        avgSpotCtKwh: d.hours > 0 ? d.spotSum / d.hours : 0,
-        avgEndPriceCtKwh: d.hours > 0 ? d.endPriceSum / d.hours : 0,
+        avgSpotCtKwh: d.kwhSum > 0 ? d.spotSum / d.kwhSum : 0,
+        avgEndPriceCtKwh: d.kwhSum > 0 ? (d.endPriceSum / d.kwhSum) * 100 : 0,
         dynamicCostEur: d.dynamic,
         fixedCostEur: d.fixed,
         consumptionKwh: d.consumption,
@@ -526,10 +530,10 @@ function DynamicInner() {
                         </div>
                       ))}
                       <button
-                        onClick={() => setSurcharges({ ...DEFAULT_SURCHARGES })}
+                        onClick={() => setSurcharges(surchargesForYear(selectedYear))}
                         className="w-full text-[10px] text-gray-500 hover:text-[#EA1C0A] py-1 transition-colors"
                       >
-                        Reset to 2025 defaults
+                        Reset to {selectedYear} defaults
                       </button>
                     </div>
                   )}
@@ -543,7 +547,7 @@ function DynamicInner() {
             {/* Date Strip */}
             {prices.daily.length > 0 && (
               <Card className="shadow-sm border-gray-200/80 overflow-hidden">
-                <CardContent className="py-2 px-3">
+                <CardContent className="py-2 px-1">
                   <DateStrip
                     daily={prices.daily}
                     selectedDate={prices.selectedDate}
@@ -572,7 +576,13 @@ function DynamicInner() {
                     <p className="text-[10px] text-gray-400 mt-0.5">
                       {chartMode === 'cost' ? `Profile-weighted cost per hour (cent) · SLP ${loadProfile}` : `Hourly electricity prices (EPEX Spot) with SLP ${loadProfile} consumption profile`}
                       {selectedDayTotals && (
-                        <> · {selectedDayTotals.dayType === 'WT' ? 'Workday' : selectedDayTotals.dayType === 'SA' ? 'Saturday' : 'Sunday/Holiday'} · {selectedDayTotals.consumptionKwh.toFixed(2)} kWh</>
+                        <>
+                          {' · '}{selectedDayTotals.dayType === 'WT' ? 'Workday' : selectedDayTotals.dayType === 'SA' ? 'Saturday' : 'Sunday/Holiday'}
+                          {' · '}{selectedDayTotals.consumptionKwh.toFixed(2)} kWh
+                          {selectedDayTotals.isPartial && (
+                            <span className="text-amber-500 ml-1">· partial ({selectedDayTotals.slotsAvailable}/{selectedDayTotals.slotsExpected} slots)</span>
+                          )}
+                        </>
                       )}
                     </p>
                   </div>
@@ -644,7 +654,7 @@ function DynamicInner() {
                             <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5 ${isCheaper ? 'bg-emerald-50/80 border-emerald-300/50' : 'bg-red-50/80 border-red-300/50'}`}>
                               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isCheaper ? 'bg-emerald-500' : 'bg-red-500'}`} />
                               <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-700' : 'text-red-700'}`}>
-                                {isCheaper ? '+' : ''}{diffEur.toFixed(3)} EUR
+                                {isCheaper ? '+' : ''}{diffEur.toFixed(2)} EUR
                               </span>
                               <span className={`text-[9px] font-semibold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-600' : 'text-red-600'}`}>
                                 {isCheaper ? 'saved today' : 'extra cost today'}
@@ -727,7 +737,7 @@ function DynamicInner() {
                             stroke="#EA1C0A"
                             strokeDasharray="8 4"
                             strokeWidth={2}
-                            label={{ value: `Fixed: ${fixedPrice} ct/kWh`, position: 'right', style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600 } }}
+                            label={{ value: `↕ Fixed: ${fixedPrice} ct/kWh`, position: 'insideLeft', dy: -9, style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600, cursor: 'ns-resize' } }}
                           />
                         )}
                         {showRenewable && (
@@ -749,8 +759,8 @@ function DynamicInner() {
                             yAxisId="price"
                             dataKey="greenBand"
                             type="monotone"
-                            fill="#3B82F6"
-                            fillOpacity={0.15}
+                            fill="#2563EB"
+                            fillOpacity={0.12}
                             stroke="none"
                             isAnimationActive={false}
                           />
@@ -761,7 +771,7 @@ function DynamicInner() {
                             dataKey="redBand"
                             type="monotone"
                             fill="#EA1C0A"
-                            fillOpacity={0.12}
+                            fillOpacity={0.10}
                             stroke="none"
                             isAnimationActive={false}
                           />
@@ -771,10 +781,10 @@ function DynamicInner() {
                             yAxisId="price"
                             dataKey="spotPrice"
                             type="monotone"
-                            stroke="#D1D5DB"
+                            stroke="#94A3B8"
                             strokeWidth={1.5}
                             dot={false}
-                            activeDot={{ r: 3, fill: '#9CA3AF' }}
+                            activeDot={{ r: 3, fill: '#64748B' }}
                             connectNulls={false}
                             name="Spot"
                           />
@@ -784,7 +794,7 @@ function DynamicInner() {
                             yAxisId="price"
                             dataKey="spotForecast"
                             type="monotone"
-                            stroke="#D1D5DB"
+                            stroke="#94A3B8"
                             strokeWidth={1.5}
                             strokeDasharray="6 3"
                             dot={false}
@@ -797,10 +807,10 @@ function DynamicInner() {
                             yAxisId="price"
                             dataKey="endPrice"
                             type="monotone"
-                            stroke="#3B82F6"
+                            stroke="#2563EB"
                             strokeWidth={2.5}
                             dot={false}
-                            activeDot={{ r: 4 }}
+                            activeDot={{ r: 4, fill: '#2563EB', stroke: '#fff', strokeWidth: 1.5 }}
                             connectNulls={false}
                             name="End Customer Price Dynamic"
                           />
@@ -836,8 +846,8 @@ function DynamicInner() {
                             yAxisId="price"
                             dataKey="costGreenBand"
                             type="monotone"
-                            fill="#3B82F6"
-                            fillOpacity={0.15}
+                            fill="#2563EB"
+                            fillOpacity={0.12}
                             stroke="none"
                             isAnimationActive={false}
                           />
@@ -848,7 +858,7 @@ function DynamicInner() {
                             dataKey="costRedBand"
                             type="monotone"
                             fill="#EA1C0A"
-                            fillOpacity={0.12}
+                            fillOpacity={0.10}
                             stroke="none"
                             isAnimationActive={false}
                           />
@@ -858,10 +868,10 @@ function DynamicInner() {
                             yAxisId="price"
                             dataKey="dynamicCost"
                             type="monotone"
-                            stroke="#3B82F6"
+                            stroke="#2563EB"
                             strokeWidth={2.5}
                             dot={false}
-                            activeDot={{ r: 4 }}
+                            activeDot={{ r: 4, fill: '#2563EB', stroke: '#fff', strokeWidth: 1.5 }}
                             connectNulls={false}
                             name="Dynamic cost"
                           />
@@ -894,8 +904,8 @@ function DynamicInner() {
                           <Bar
                             yAxisId="cost"
                             dataKey="consumptionKwh"
-                            fill="#10B981"
-                            fillOpacity={0.3}
+                            fill="#9CA3AF"
+                            fillOpacity={0.20}
                             radius={[2, 2, 0, 0]}
                             maxBarSize={isQH ? 8 : 20}
                             name="Consumption"
@@ -943,10 +953,10 @@ function DynamicInner() {
                   {chartMode === 'price' ? (
                     <>
                       <span className="flex items-center gap-1">
-                        <span className="w-3 h-0.5 bg-gray-300 inline-block" /> Spot price
+                        <span className="w-3 inline-block" style={{ height: 1.5, backgroundColor: '#94A3B8' }} /> Spot price
                       </span>
                       <span className="flex items-center gap-1">
-                        <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#3B82F6' }} /> End customer price (dynamic)
+                        <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#2563EB' }} /> End customer price (dynamic)
                       </span>
                       <span className="flex items-center gap-1">
                         <span className="w-3 border-t-2 border-dashed border-[#EA1C0A] inline-block" /> Fixed price (draggable)
@@ -955,7 +965,7 @@ function DynamicInner() {
                   ) : (
                     <>
                       <span className="flex items-center gap-1">
-                        <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#3B82F6' }} /> Dynamic cost ({loadProfile})
+                        <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#2563EB' }} /> Dynamic cost ({loadProfile})
                       </span>
                       <span className="flex items-center gap-1">
                         <span className="w-3 border-t-2 border-dashed border-[#EA1C0A] inline-block" /> Fixed cost
@@ -963,11 +973,16 @@ function DynamicInner() {
                     </>
                   )}
                   <button onClick={() => setShowCheaperBand(v => !v)} className={`flex items-center gap-1 transition-opacity ${showCheaperBand ? '' : 'opacity-40'}`}>
-                    <span className="w-2.5 h-2.5 bg-blue-500 rounded-sm inline-block" style={{ opacity: 0.15 }} /> Dynamic cheaper
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#2563EB', opacity: 0.12 }} /> Dynamic cheaper
                   </button>
                   <button onClick={() => setShowExpensiveBand(v => !v)} className={`flex items-center gap-1 transition-opacity ${showExpensiveBand ? '' : 'opacity-40'}`}>
-                    <span className="w-2.5 h-2.5 bg-[#EA1C0A] rounded-sm inline-block" style={{ opacity: 0.12 }} /> Dynamic more expensive
+                    <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#EA1C0A', opacity: 0.10 }} /> Dynamic more expensive
                   </button>
+                  {!showRenewable && (
+                    <span className="flex items-center gap-1">
+                      <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#9CA3AF', opacity: 0.20 }} /> Consumption
+                    </span>
+                  )}
                   {showRenewable && (
                     <span className="flex items-center gap-1">
                       <span className="w-2.5 h-2.5 bg-emerald-500 rounded-sm inline-block" style={{ opacity: 0.15 }} /> Renewable %
@@ -1144,27 +1159,27 @@ function DynamicInner() {
                         }}
                       />
                       <Bar yAxisId="cost" dataKey="fixedCostEur" radius={[3, 3, 0, 0]} maxBarSize={14}
-                        fill="#EF4444" fillOpacity={0.35} name="Fixed" />
+                        fill="#EA1C0A" fillOpacity={0.25} name="Fixed" />
                       <Bar yAxisId="cost" dataKey="dynamicCostEur" radius={[3, 3, 0, 0]} maxBarSize={14}
-                        fill="#3B82F6" fillOpacity={0.5} name="Dynamic" />
+                        fill="#2563EB" fillOpacity={0.45} name="Dynamic" />
                       <Line yAxisId="savings" dataKey="cumulative" type="monotone"
-                        stroke="#10B981" strokeWidth={2}
-                        dot={{ r: 2.5, fill: '#10B981' }} activeDot={{ r: 4, fill: '#10B981' }} />
+                        stroke="#059669" strokeWidth={2}
+                        dot={{ r: 2.5, fill: '#059669' }} activeDot={{ r: 4, fill: '#059669' }} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
                 {/* Legend */}
                 <div className="flex items-center gap-4 text-[10px] text-gray-500">
                   <span className="flex items-center gap-1">
-                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" style={{ opacity: 0.35 }} />
+                    <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#EA1C0A', opacity: 0.25 }} />
                     Fixed
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500" style={{ opacity: 0.5 }} />
+                    <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#2563EB', opacity: 0.45 }} />
                     Dynamic
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                    <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: '#059669' }} />
                     Cumul. savings
                   </span>
                   <span className="ml-auto tabular-nums font-semibold text-emerald-600">

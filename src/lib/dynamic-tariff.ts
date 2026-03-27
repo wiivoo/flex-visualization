@@ -20,13 +20,30 @@ export interface Surcharges {
 
 /** 2025 default values (ct/kWh netto) */
 export const DEFAULT_SURCHARGES: Surcharges = {
-  gridFee: 9.30,
+  gridFee: 10.95,
   stromsteuer: 2.05,
   konzessionsabgabe: 1.66,
   kwkg: 0.277,
   offshore: 0.816,
-  par19: 0.643,
+  par19: 1.558,
   margin: 2.00,
+}
+
+/** 2026 values (ct/kWh netto) — grid fee reduced by govt subsidy */
+export const SURCHARGES_2026: Surcharges = {
+  gridFee: 9.26,
+  stromsteuer: 2.05,
+  konzessionsabgabe: 1.66,
+  kwkg: 0.446,
+  offshore: 0.941,
+  par19: 1.559,
+  margin: 2.00,
+}
+
+/** Get surcharges for a given year */
+export function surchargesForYear(year: number): Surcharges {
+  if (year >= 2026) return SURCHARGES_2026
+  return DEFAULT_SURCHARGES
 }
 
 export const VAT_RATE = 19 // percent
@@ -47,9 +64,19 @@ export interface DailyResult {
   dynamicCostEur: number
   fixedCostEur: number
   consumptionKwh: number
-  avgSpotCtKwh: number
-  avgEndPriceCtKwh: number
+  avgSpotCtKwh: number        // simple hourly average (for display only)
+  avgEndPriceCtKwh: number    // consumption-weighted effective price
   hoursWithData: number
+  hoursTotal: number           // expected hours (24), for partial-day detection
+  // Peak (weekday 8-20) / off-peak splits
+  peakDynamicCostEur: number
+  peakConsumptionKwh: number
+  peakSpotSum: number
+  peakHours: number
+  offPeakDynamicCostEur: number
+  offPeakConsumptionKwh: number
+  offPeakSpotSum: number
+  offPeakHours: number
 }
 
 export interface MonthlyResult {
@@ -130,6 +157,10 @@ export function calculateYearlyCost(
     let daySpotSum = 0
     let dayEndPriceSum = 0
     let dayHours = 0
+    // Peak (weekday 8-20) / off-peak
+    const isWeekday = dayType === 'WT'
+    let peakCost = 0, peakKwh = 0, peakSpotSum = 0, peakHrs = 0
+    let offPeakCost = 0, offPeakKwh = 0, offPeakSpotSum = 0, offPeakHrs = 0
 
     for (let h = 0; h < 24; h++) {
       const spotPrice = priceByHour.get(h)
@@ -144,6 +175,19 @@ export function calculateYearlyCost(
       daySpotSum += spotPrice
       dayEndPriceSum += grossPrice
       dayHours++
+
+      const isPeak = isWeekday && h >= 8 && h < 20
+      if (isPeak) {
+        peakCost += consumptionKwh * grossPrice / 100
+        peakKwh += consumptionKwh
+        peakSpotSum += spotPrice
+        peakHrs++
+      } else {
+        offPeakCost += consumptionKwh * grossPrice / 100
+        offPeakKwh += consumptionKwh
+        offPeakSpotSum += spotPrice
+        offPeakHrs++
+      }
     }
 
     const daily: DailyResult = {
@@ -153,8 +197,17 @@ export function calculateYearlyCost(
       fixedCostEur: dayCostFixed,
       consumptionKwh: dayConsumption,
       avgSpotCtKwh: dayHours > 0 ? daySpotSum / dayHours : 0,
-      avgEndPriceCtKwh: dayHours > 0 ? dayEndPriceSum / dayHours : 0,
+      avgEndPriceCtKwh: dayConsumption > 0 ? (dayCostDynamic / dayConsumption) * 100 : 0,
       hoursWithData: dayHours,
+      hoursTotal: 24,
+      peakDynamicCostEur: peakCost,
+      peakConsumptionKwh: peakKwh,
+      peakSpotSum,
+      peakHours: peakHrs,
+      offPeakDynamicCostEur: offPeakCost,
+      offPeakConsumptionKwh: offPeakKwh,
+      offPeakSpotSum,
+      offPeakHours: offPeakHrs,
     }
     dailyResults.push(daily)
 
@@ -184,7 +237,7 @@ export function calculateYearlyCost(
       fixedCostEur: d.fixedCostEur,
       consumptionKwh: d.consumptionKwh,
       avgSpotCtKwh: d.hoursTotal > 0 ? d.spotSum / d.hoursTotal : 0,
-      avgEndPriceCtKwh: d.hoursTotal > 0 ? d.endPriceSum / d.hoursTotal : 0,
+      avgEndPriceCtKwh: d.consumptionKwh > 0 ? (d.dynamicCostEur / d.consumptionKwh) * 100 : 0,
       daysWithData: d.days,
     }))
 

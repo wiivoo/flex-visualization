@@ -29,6 +29,7 @@ function fmtDate(dateStr: string): string {
 export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, yearlyKwh, fixedPrice }: Props) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null)
   const [previewDate, setPreviewDate] = useState<string | null>(null)
+  const [activeBuckets, setActiveBuckets] = useState<Set<number> | null>(null)
 
   // Build map for quick lookup
   const dayMap = useMemo(() => {
@@ -78,15 +79,36 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
     return { grid: cells, weeks: totalWeeks, monthLabels: labels, quarterWeeks: qWeeks }
   }, [dayMap, dailyBreakdown.length])
 
+  const BUCKETS = [
+    { color: '#86EFAC', test: (s: number) => s > 0.03, label: 'much cheaper' },
+    { color: '#DCFCE7', test: (s: number) => s > 0.01 && s <= 0.03, label: 'slightly cheaper' },
+    { color: '#FEF3C7', test: (s: number) => s > -0.01 && s <= 0.01, label: 'roughly equal' },
+    { color: '#FED7AA', test: (s: number) => s > -0.03 && s <= -0.01, label: 'slightly more' },
+    { color: '#FCA5A5', test: (s: number) => s <= -0.03, label: 'much more' },
+  ]
+
+  const isFiltering = activeBuckets !== null
+  const bucketCount = BUCKETS.length
+
+  // Filtered data for stats
+  const filteredBreakdown = useMemo(() => {
+    if (!isFiltering) return dailyBreakdown
+    return dailyBreakdown.filter(d => {
+      const s = d.fixedCostEur - d.dynamicCostEur
+      const idx = BUCKETS.findIndex(b => b.test(s))
+      return idx >= 0 && activeBuckets!.has(idx)
+    })
+  }, [dailyBreakdown, isFiltering, activeBuckets])
+
   // Stats
   const stats = useMemo(() => {
-    if (dailyBreakdown.length === 0) return { count: 0, totalDynamic: 0, totalFixed: 0, totalSavings: 0, avgDynamicCt: 0, daysGreen: 0, daysRed: 0 }
-    const count = dailyBreakdown.length
-    const totalDynamic = dailyBreakdown.reduce((s, d) => s + d.dynamicCostEur, 0)
-    const totalFixed = dailyBreakdown.reduce((s, d) => s + d.fixedCostEur, 0)
-    const totalKwh = dailyBreakdown.reduce((s, d) => s + d.consumptionKwh, 0)
+    if (filteredBreakdown.length === 0) return { count: 0, totalDynamic: 0, totalFixed: 0, totalSavings: 0, avgDynamicCt: 0, daysGreen: 0, daysRed: 0 }
+    const count = filteredBreakdown.length
+    const totalDynamic = filteredBreakdown.reduce((s, d) => s + d.dynamicCostEur, 0)
+    const totalFixed = filteredBreakdown.reduce((s, d) => s + d.fixedCostEur, 0)
+    const totalKwh = filteredBreakdown.reduce((s, d) => s + d.consumptionKwh, 0)
     const avgDynamicCt = totalKwh > 0 ? (totalDynamic / totalKwh) * 100 : 0
-    const daysGreen = dailyBreakdown.filter(d => d.dynamicCostEur <= d.fixedCostEur).length
+    const daysGreen = filteredBreakdown.filter(d => d.dynamicCostEur <= d.fixedCostEur).length
     return {
       count, totalDynamic, totalFixed,
       totalSavings: totalFixed - totalDynamic,
@@ -94,17 +116,53 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
       daysGreen,
       daysRed: count - daysGreen,
     }
+  }, [filteredBreakdown])
+
+  const getBucketIdx = useCallback((date: string): number => {
+    const entry = dayMap.get(date)
+    if (!entry) return -1
+    const s = entry.fixedCostEur - entry.dynamicCostEur
+    return BUCKETS.findIndex(b => b.test(s))
+  }, [dayMap])
+
+  const bucketCounts = useMemo(() => {
+    const counts = new Array(BUCKETS.length).fill(0)
+    for (const d of dailyBreakdown) {
+      const s = d.fixedCostEur - d.dynamicCostEur
+      const idx = BUCKETS.findIndex(b => b.test(s))
+      if (idx >= 0) counts[idx]++
+    }
+    return counts
   }, [dailyBreakdown])
+
+  const toggleBucket = useCallback((idx: number) => {
+    setActiveBuckets(prev => {
+      if (prev === null) return new Set([idx])
+      const next = new Set(prev)
+      if (next.has(idx)) {
+        next.delete(idx)
+        return next.size === 0 ? null : next
+      }
+      next.add(idx)
+      return next.size === bucketCount ? null : next
+    })
+  }, [bucketCount])
+
+  const isInFilter = useCallback((date: string): boolean => {
+    if (!isFiltering) return true
+    const idx = getBucketIdx(date)
+    return idx >= 0 && activeBuckets!.has(idx)
+  }, [isFiltering, activeBuckets, getBucketIdx])
 
   const cellColor = useCallback((date: string): string => {
     const entry = dayMap.get(date)
     if (!entry) return '#F3F4F6'
     const savings = entry.fixedCostEur - entry.dynamicCostEur
-    if (savings > 0.03) return '#86EFAC'  // clearly cheaper — green
-    if (savings > 0.01) return '#DCFCE7'  // slightly cheaper — light green
-    if (savings > -0.01) return '#FEF3C7' // roughly equal — yellow
-    if (savings > -0.03) return '#FED7AA' // slightly more expensive — orange
-    return '#FCA5A5'                       // clearly more expensive — red
+    if (savings > 0.03) return '#86EFAC'
+    if (savings > 0.01) return '#DCFCE7'
+    if (savings > -0.01) return '#FEF3C7'
+    if (savings > -0.03) return '#FED7AA'
+    return '#FCA5A5'
   }, [dayMap])
 
   if (grid.length === 0) return null
@@ -125,16 +183,36 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
               {yearlyKwh.toLocaleString()} kWh/yr · {stats.count} days · Fixed: {fixedPrice} ct/kWh
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[9px] text-gray-400">
-            <span className="font-semibold uppercase tracking-wider">Dynamic vs. Fixed</span>
-            <div className="flex gap-px items-center">
-              <div className="w-3 h-3 rounded-sm" style={{ background: '#86EFAC' }} />
-              <div className="w-3 h-3 rounded-sm" style={{ background: '#DCFCE7' }} />
-              <div className="w-3 h-3 rounded-sm" style={{ background: '#FEF3C7' }} />
-              <div className="w-3 h-3 rounded-sm" style={{ background: '#FED7AA' }} />
-              <div className="w-3 h-3 rounded-sm" style={{ background: '#FCA5A5' }} />
+          <div className="flex items-center gap-1.5 text-[9px] text-gray-400">
+            <span className="font-semibold uppercase tracking-wider mr-0.5">Dynamic vs. Fixed</span>
+            <div className="flex gap-px">
+              {BUCKETS.map((b, i) => {
+                const active = !isFiltering || activeBuckets!.has(i)
+                return (
+                  <button key={i} onClick={() => toggleBucket(i)}
+                    className="rounded-sm transition-all relative group cursor-pointer"
+                    title={`${b.label} · ${bucketCounts[i]} days`}
+                    style={{
+                      width: cellSize + 4, height: cellSize + 4,
+                      background: b.color,
+                      opacity: active ? 1 : 0.2,
+                      outline: isFiltering && active ? '2px solid #313131' : 'none',
+                      outlineOffset: 1,
+                    }}>
+                    <span className="absolute -bottom-3.5 left-1/2 -translate-x-1/2 text-[7px] tabular-nums text-gray-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                      {bucketCounts[i]}
+                    </span>
+                  </button>
+                )
+              })}
             </div>
-            <span className="text-[8px] text-gray-300">cheaper → more expensive</span>
+            <span className="text-[8px] text-gray-300 ml-0.5">cheaper → expensive</span>
+            {isFiltering && (
+              <button onClick={() => setActiveBuckets(null)}
+                className="text-[9px] text-[#313131] hover:text-gray-600 transition-colors ml-1 underline underline-offset-2">
+                all
+              </button>
+            )}
           </div>
         </div>
       </CardHeader>
@@ -150,7 +228,7 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
                   </div>
                 ))}
               </div>
-              <div className="flex-1 overflow-x-auto">
+              <div className="flex-1 overflow-x-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#D1D5DB transparent' }}>
                 <div className="relative" style={{ height: 14, width: weeks * (cellSize + gap) }}>
                   {monthLabels.map((m, i) => (
                     <span key={i} className={`text-[9px] absolute ${['Jan', 'Apr', 'Jul', 'Oct'].includes(m.label) ? 'text-gray-500 font-semibold' : 'text-gray-400'}`}
@@ -191,11 +269,11 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
                                   style={{
                                     width: cellSize,
                                     height: cellSize,
-                                    background: cellColor(cell.date),
+                                    background: isFiltering && !isInFilter(cell.date) ? '#FAFAFA' : cellColor(cell.date),
                                     outline: isSelected ? '2px solid #313131' : isPreviewed ? '2px solid #6B7280' : 'none',
                                     outlineOffset: -1,
                                     cursor: entry ? 'pointer' : 'default',
-                                    opacity: entry ? 1 : 0.4,
+                                    opacity: entry ? (isFiltering && !isInFilter(cell.date) ? 0.3 : 1) : 0.4,
                                   }}
                                 />
                               </TooltipTrigger>
@@ -219,6 +297,9 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
                                     </div>
                                     <p className="text-[9px] text-gray-400 pt-0.5">
                                       {entry.consumptionKwh.toFixed(2)} kWh · Spot avg: {entry.avgSpotCtKwh.toFixed(2)} ct
+                                      {entry.hoursWithData < entry.hoursTotal && (
+                                        <span className="text-amber-500 ml-1">· {entry.hoursWithData}/{entry.hoursTotal}h</span>
+                                      )}
                                     </p>
                                   </div>
                                 ) : (
