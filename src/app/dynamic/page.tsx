@@ -378,30 +378,32 @@ function DynamicInner() {
               <CardContent className="space-y-4">
                 {/* Consumption */}
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                    {loadProfile === 'H25' ? 'Yearly Consumption' : 'Yearly Grid Consumption'}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      value={yearlyKwh}
-                      onChange={e => setYearlyKwh(Math.max(100, Number(e.target.value) || 0))}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm tabular-nums font-medium text-[#313131] focus:outline-none focus:ring-2 focus:ring-[#EA1C0A]/30"
-                    />
-                    <span className="text-xs text-gray-500 whitespace-nowrap">kWh/yr</span>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      {loadProfile === 'H25' ? 'Yearly Consumption' : 'Yearly Grid Consumption'}
+                    </p>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{yearlyKwh.toLocaleString()} kWh</span>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
+                  <input
+                    type="range"
+                    min={0}
+                    max={10000}
+                    step={100}
+                    value={yearlyKwh}
+                    onChange={e => setYearlyKwh(Number(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md"
+                  />
+                  <div className="relative h-4">
                     {(CONSUMPTION_PRESETS[loadProfile] || CONSUMPTION_PRESETS.H25).map(p => (
                       <button
                         key={p.kwh}
                         onClick={() => setYearlyKwh(p.kwh)}
-                        className={`text-[10px] font-semibold px-2 py-1 rounded-md border transition-colors ${
-                          yearlyKwh === p.kwh
-                            ? 'bg-[#EA1C0A] text-white border-[#EA1C0A]'
-                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                        className={`absolute -translate-x-1/2 text-[9px] transition-colors ${
+                          yearlyKwh === p.kwh ? 'text-[#EA1C0A] font-bold' : 'text-gray-400 hover:text-gray-600'
                         }`}
+                        style={{ left: `${(p.kwh / 10000) * 100}%` }}
                       >
-                        {p.label} ({p.kwh.toLocaleString()})
+                        {p.label}
                       </button>
                     ))}
                   </div>
@@ -414,18 +416,25 @@ function DynamicInner() {
 
                 {/* Fixed Price */}
                 <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fixed Price Comparison</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="number"
-                      step="0.5"
-                      value={fixedPrice}
-                      onChange={e => setFixedPrice(Math.max(0, Number(e.target.value) || 0))}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm tabular-nums font-medium text-[#313131] focus:outline-none focus:ring-2 focus:ring-[#EA1C0A]/30"
-                    />
-                    <span className="text-xs text-gray-500 whitespace-nowrap">ct/kWh</span>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fixed Price Comparison</p>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
                   </div>
-                  <p className="text-[10px] text-gray-400">Gross price incl. all taxes & VAT</p>
+                  <input
+                    type="range"
+                    min={20}
+                    max={45}
+                    step={0.5}
+                    value={fixedPrice}
+                    onChange={e => setFixedPrice(Number(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md"
+                  />
+                  <div className="flex justify-between text-[9px] text-gray-400 tabular-nums">
+                    <span>20 ct</span>
+                    <span>30 ct</span>
+                    <span>45 ct</span>
+                  </div>
+                  <p className="text-[9px] text-gray-400">Gross price incl. all taxes & VAT · drag chart line to adjust</p>
                 </div>
 
                 {/* Load Profile */}
@@ -442,8 +451,8 @@ function DynamicInner() {
                             : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                         }`}
                       >
-                        <span className="font-semibold">{p.label}</span>
-                        <span className={`ml-1.5 ${loadProfile === p.id ? 'text-white/80' : 'text-gray-400'}`}>{p.description}</span>
+                        <span className="font-semibold">{p.description}</span>
+                        <span className={`ml-1.5 ${loadProfile === p.id ? 'text-white/80' : 'text-gray-400'}`}>{p.label}</span>
                       </button>
                     ))}
                   </div>
