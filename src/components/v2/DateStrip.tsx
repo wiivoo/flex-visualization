@@ -9,6 +9,12 @@ interface DateStripProps {
   onSelect: (date: string) => void
   requireNextDay?: boolean
   latestDate?: string | undefined
+  /** Optional custom color function per date, overrides spread-based coloring */
+  colorFn?: (date: string) => string
+  /** Dates after this are considered forecasted (shown with dashed outline) */
+  forecastAfter?: string
+  /** Custom label + colors for the legend bar indicator */
+  colorLegend?: { label: string; colors: string[] }
 }
 
 function makeSpreadColor(daily: DailySummary[]): (spread: number) => string {
@@ -28,7 +34,7 @@ function makeSpreadColor(daily: DailySummary[]): (spread: number) => string {
 const DAY_NAMES = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate }: DateStripProps) {
+export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate, colorFn, forecastAfter, colorLegend }: DateStripProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const spreadColor = useMemo(() => makeSpreadColor(daily), [daily])
@@ -206,10 +212,21 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
             </button>
           )}
           <div className="flex items-center gap-1">
-            <span className="w-2.5 h-1 bg-green-100 rounded-full" />
-            <span className="w-2.5 h-1 bg-yellow-400 rounded-full" />
-            <span className="w-2.5 h-1 bg-red-500 rounded-full" />
-            <span className="text-[9px] text-gray-400">Spread</span>
+            {colorLegend ? (
+              <>
+                {colorLegend.colors.map((c, i) => (
+                  <span key={i} className={`w-2.5 h-1 ${c} rounded-full`} />
+                ))}
+                <span className="text-[9px] text-gray-400">{colorLegend.label}</span>
+              </>
+            ) : (
+              <>
+                <span className="w-2.5 h-1 bg-green-100 rounded-full" />
+                <span className="w-2.5 h-1 bg-yellow-400 rounded-full" />
+                <span className="w-2.5 h-1 bg-red-500 rounded-full" />
+                <span className="text-[9px] text-gray-400">Spread</span>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -240,6 +257,7 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
             const showMonth = monthBreaks.has(day.date)
             const monthIdx = dt.getUTCMonth()
             const wkLabel = weekLabels.get(day.date)
+            const isForecast = forecastAfter ? day.date > forecastAfter : false
 
             return (
               <div key={day.date} className="shrink-0 flex flex-col items-center" style={{ minWidth: 28 }}>
@@ -249,14 +267,14 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
               <button
                 data-date={day.date}
                 onClick={() => onSelect(day.date)}
-                title={`${day.date} (${DAY_NAMES[dow]}): Spread ${day.spread.toFixed(0)} EUR/MWh`}
+                title={`${day.date} (${DAY_NAMES[dow]})${isForecast ? ' (forecast)' : ''}: Spread ${day.spread.toFixed(0)} EUR/MWh`}
                 className={`w-full flex flex-col items-center px-1 py-0.5 rounded-md transition-colors ${
                   isSelected
                     ? 'bg-[#EA1C0A]/10 ring-1 ring-[#EA1C0A]'
                     : isWeekend
                       ? 'hover:bg-gray-200/60 bg-gray-100/80'
                       : 'hover:bg-gray-100'
-                }`}
+                } ${isForecast ? 'opacity-60 border border-dashed border-gray-300' : ''}`}
               >
                 {showMonth ? (
                   <span className="text-[7px] font-bold text-[#EA1C0A] tracking-wide uppercase leading-none mb-px">
@@ -272,7 +290,7 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
                 }`}>
                   {dayNum}
                 </span>
-                <div className={`w-3.5 h-[3px] rounded-full mt-0.5 ${spreadColor(day.spread)}`} />
+                <div className={`w-3.5 h-[3px] rounded-full mt-0.5 ${colorFn ? colorFn(day.date) : spreadColor(day.spread)}`} />
               </button>
               </div>
             )
