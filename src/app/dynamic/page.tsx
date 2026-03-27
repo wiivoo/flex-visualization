@@ -393,17 +393,17 @@ function DynamicInner() {
                     onChange={e => setYearlyKwh(Number(e.target.value))}
                     className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md"
                   />
-                  <div className="relative h-4">
+                  <div className="flex justify-between">
                     {(CONSUMPTION_PRESETS[loadProfile] || CONSUMPTION_PRESETS.H25).map(p => (
                       <button
                         key={p.kwh}
                         onClick={() => setYearlyKwh(p.kwh)}
-                        className={`absolute -translate-x-1/2 text-[9px] transition-colors ${
+                        className={`text-[8px] leading-tight text-center transition-colors ${
                           yearlyKwh === p.kwh ? 'text-[#EA1C0A] font-bold' : 'text-gray-400 hover:text-gray-600'
                         }`}
-                        style={{ left: `${(p.kwh / 10000) * 100}%` }}
                       >
-                        {p.label}
+                        <span className="block">{p.label}</span>
+                        <span className="tabular-nums">{p.kwh >= 1000 ? `${(p.kwh/1000).toFixed(p.kwh % 1000 ? 1 : 0)}k` : p.kwh}</span>
                       </button>
                     ))}
                   </div>
@@ -896,56 +896,112 @@ function DynamicInner() {
         {/* Monthly Savings + Yearly Savings — v2-style cards side by side */}
         {(monthlyChartData.length > 0 || yearlySavingsData.length > 0) && (
           <div className="mt-4 grid grid-cols-2 gap-4">
-            {/* Monthly Savings — bars + cumulative line (v2 style) */}
+            {/* Monthly Cost Comparison — grouped bars + savings line */}
             <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
               <CardHeader className="pb-3 border-b border-gray-100">
-                <CardTitle className="text-base font-bold text-[#313131]">Monthly Savings — Last 12 Months</CardTitle>
+                <CardTitle className="text-base font-bold text-[#313131]">Monthly Costs — Last 12 Months</CardTitle>
                 <p className="text-[11px] text-gray-500 mt-1">
-                  dynamic vs. fixed · {yearlyKwh.toLocaleString()} kWh/yr
+                  {yearlyKwh.toLocaleString()} kWh/yr · {loadProfile}
                   {monthlyChartData.length > 0 && <> · {monthlyChartData[0]?.month} – {monthlyChartData[monthlyChartData.length - 1]?.month}</>}
                 </p>
               </CardHeader>
-              <CardContent className="pt-5 space-y-4 flex-1 flex flex-col">
+              <CardContent className="pt-4 space-y-3 flex-1 flex flex-col">
                 <div className="flex-1 min-h-[180px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={monthlyChartData} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
                       <XAxis dataKey="displayLabel" tick={{ fontSize: 10, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} interval={0} />
-                      <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                        label={{ value: 'EUR/mo', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
-                      <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                        label={{ value: 'EUR cumul.', angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                      <YAxis yAxisId="cost" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                        label={{ value: 'EUR', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                      <YAxis yAxisId="savings" orientation="right" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                        label={{ value: 'Savings EUR', angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#9CA3AF' } }} />
                       <Tooltip
                         content={({ active, payload }) => {
                           if (!active || !payload?.length) return null
                           const d = payload[0].payload as (typeof monthlyChartData)[number]
                           return (
-                            <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
-                              <p className="text-gray-500 text-[10px]">{d.month} ({d.daysWithData} days)</p>
-                              <p className={`font-semibold tabular-nums ${d.savings >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{d.savings >= 0 ? '+' : ''}{d.savings.toFixed(2)} EUR/mo</p>
-                              <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} EUR so far</p>
-                              <p className="tabular-nums text-[10px]"><span className="text-gray-400">Avg spot: {d.avgSpotCtKwh.toFixed(2)} ct · End: {d.avgEndPriceCtKwh.toFixed(2)} ct</span></p>
+                            <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[11px] space-y-1">
+                              <p className="text-gray-500 text-[10px] font-medium">{d.month} · {d.daysWithData} days</p>
+                              <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                                <span className="text-gray-400">Fixed cost</span>
+                                <span className="tabular-nums font-semibold text-red-600 text-right">{d.fixedCostEur.toFixed(2)} EUR</span>
+                                <span className="text-gray-400">Dynamic cost</span>
+                                <span className="tabular-nums font-semibold text-blue-600 text-right">{d.dynamicCostEur.toFixed(2)} EUR</span>
+                                <span className="text-gray-400">Savings</span>
+                                <span className={`tabular-nums font-bold text-right ${d.savings >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{d.savings >= 0 ? '+' : ''}{d.savings.toFixed(2)} EUR</span>
+                              </div>
+                              <div className="border-t border-gray-100 pt-1 mt-1">
+                                <p className="text-[10px] text-gray-400 tabular-nums">Consumption: {d.consumptionKwh.toFixed(1)} kWh · Avg end: {d.avgEndPriceCtKwh.toFixed(2)} ct/kWh</p>
+                              </div>
                             </div>
                           )
                         }}
                       />
-                      <Bar yAxisId="left" dataKey="savings" radius={[3, 3, 0, 0]} maxBarSize={28}
-                        fill="#10B981" fillOpacity={0.7} />
-                      <Line yAxisId="right" dataKey="cumulative" type="monotone"
-                        stroke="#374151" strokeWidth={1.5} strokeDasharray="4 3"
-                        dot={false} activeDot={{ r: 3, fill: '#374151' }} />
+                      <Bar yAxisId="cost" dataKey="fixedCostEur" radius={[3, 3, 0, 0]} maxBarSize={14}
+                        fill="#EF4444" fillOpacity={0.35} name="Fixed" />
+                      <Bar yAxisId="cost" dataKey="dynamicCostEur" radius={[3, 3, 0, 0]} maxBarSize={14}
+                        fill="#3B82F6" fillOpacity={0.5} name="Dynamic" />
+                      <Line yAxisId="savings" dataKey="cumulative" type="monotone"
+                        stroke="#10B981" strokeWidth={2}
+                        dot={{ r: 2.5, fill: '#10B981' }} activeDot={{ r: 4, fill: '#10B981' }} />
                     </ComposedChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="flex items-center justify-between text-[10px] text-gray-500 flex-wrap gap-2">
+                {/* Legend */}
+                <div className="flex items-center gap-4 text-[10px] text-gray-500">
                   <span className="flex items-center gap-1">
-                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-emerald-500" style={{ opacity: 0.7 }} />
-                    Monthly savings
+                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-red-400" style={{ opacity: 0.35 }} />
+                    Fixed
                   </span>
-                  <span className="flex items-center gap-1.5 text-gray-400">
-                    <span className="inline-block w-6 border-t border-dashed border-gray-400" />
-                    ∑ {monthlyChartData[monthlyChartData.length - 1]?.cumulative.toFixed(0) ?? 0} EUR (12 mo)
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-2.5 h-2.5 rounded-sm bg-blue-500" style={{ opacity: 0.5 }} />
+                    Dynamic
                   </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                    Cumul. savings
+                  </span>
+                  <span className="ml-auto tabular-nums font-semibold text-emerald-600">
+                    ∑ {monthlyChartData[monthlyChartData.length - 1]?.cumulative.toFixed(0) ?? 0} EUR
+                  </span>
+                </div>
+                {/* Monthly cost table */}
+                <div className="border-t border-gray-100 pt-2">
+                  <table className="w-full text-[10px] tabular-nums">
+                    <thead>
+                      <tr className="text-gray-400 text-left">
+                        <th className="font-medium py-0.5">Month</th>
+                        <th className="font-medium py-0.5 text-right">Fixed</th>
+                        <th className="font-medium py-0.5 text-right">Dynamic</th>
+                        <th className="font-medium py-0.5 text-right">Saved</th>
+                        <th className="font-medium py-0.5 text-right">kWh</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthlyChartData.map(d => (
+                        <tr key={d.month} className="border-t border-gray-50 text-gray-600">
+                          <td className="py-0.5 font-medium">{d.displayLabel}</td>
+                          <td className="py-0.5 text-right text-red-600">{d.fixedCostEur.toFixed(2)}</td>
+                          <td className="py-0.5 text-right text-blue-600">{d.dynamicCostEur.toFixed(2)}</td>
+                          <td className={`py-0.5 text-right font-semibold ${d.savings >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {d.savings >= 0 ? '+' : ''}{d.savings.toFixed(2)}
+                          </td>
+                          <td className="py-0.5 text-right text-gray-400">{d.consumptionKwh.toFixed(0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-gray-200 font-bold text-[#313131]">
+                        <td className="py-1">Total</td>
+                        <td className="py-1 text-right text-red-700">{monthlyChartData.reduce((s, d) => s + d.fixedCostEur, 0).toFixed(2)}</td>
+                        <td className="py-1 text-right text-blue-700">{monthlyChartData.reduce((s, d) => s + d.dynamicCostEur, 0).toFixed(2)}</td>
+                        <td className={`py-1 text-right ${monthlyChartData[monthlyChartData.length - 1]?.cumulative >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {monthlyChartData[monthlyChartData.length - 1]?.cumulative >= 0 ? '+' : ''}{monthlyChartData[monthlyChartData.length - 1]?.cumulative.toFixed(2) ?? '0.00'}
+                        </td>
+                        <td className="py-1 text-right text-gray-500">{monthlyChartData.reduce((s, d) => s + d.consumptionKwh, 0).toFixed(0)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
                 </div>
               </CardContent>
             </Card>
