@@ -197,63 +197,14 @@ export function usePrices(country: string = 'DE'): PriceData {
       allGeneration.current = []
 
       try {
-        if (country !== 'DE') {
-          // Non-DE countries: fetch everything from batch API (ENTSO-E)
-          // Load last 365 days of data
-          const today = todayStr()
-          const startDate = (() => {
-            const d = new Date()
-            d.setFullYear(d.getFullYear() - 1)
-            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-          })()
-          const dayAfterTomorrow = nextDay(nextDay(today))
+        // Load static files — country-aware paths
+        const priceFile = country === 'DE' ? '/data/smard-prices.json' : `/data/${country.toLowerCase()}-prices.json`
+        const priceQHFile = country === 'DE' ? '/data/smard-prices-qh.json' : `/data/${country.toLowerCase()}-prices-qh.json`
 
-          const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${dayAfterTomorrow}&country=${country}`)
-          if (!res.ok) throw new Error(`Failed to fetch ${country} prices: ${res.status}`)
-
-          const data = await res.json()
-          const points: { timestamp: string; price_ct_kwh: number }[] = data.prices || []
-          if (points.length === 0) throw new Error(`No ${country} price data available from ENTSO-E`)
-
-          const prices: HourlyPrice[] = points.map(p => {
-            const d = new Date(p.timestamp)
-            const eurMwh = p.price_ct_kwh * 10
-            return {
-              timestamp: d.getTime(),
-              priceEurMwh: eurMwh,
-              priceCtKwh: p.price_ct_kwh,
-              hour: d.getHours(),
-              minute: d.getMinutes(),
-              date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-            }
-          })
-
-          setHourly(prices)
-          setHourlyQH(prices) // ENTSO-E returns hourly; QH same as hourly
-          const lastDate = prices[prices.length - 1].date
-          setLastRealDate(lastDate)
-          const dailySummaries = deriveDailySummaries(prices)
-          setDaily(dailySummaries)
-          setMonthly(deriveMonthlyStats(dailySummaries, prices))
-
-          // Select yesterday
-          const yd = new Date()
-          yd.setDate(yd.getDate() - 1)
-          const yesterday = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, '0')}-${String(yd.getDate()).padStart(2, '0')}`
-          const entry = dailySummaries.find(d => d.date === yesterday)
-            ?? dailySummaries.filter(d => d.date <= yesterday).pop()
-          if (entry) setSelectedDate(entry.date)
-          else if (dailySummaries.length > 0) setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
-
-          console.log(`[usePrices] Loaded ${points.length} ${country} prices via ENTSO-E (${startDate} → ${dayAfterTomorrow})`)
-          return
-        }
-
-        // DE: Load static files + incremental updates
         const [priceRes, priceQHRes, genRes] = await Promise.allSettled([
-          fetch('/data/smard-prices.json'),
-          fetch('/data/smard-prices-qh.json'),
-          fetch('/data/smard-generation.json'),
+          fetch(priceFile),
+          fetch(priceQHFile),
+          country === 'DE' ? fetch('/data/smard-generation.json') : Promise.reject('no generation for non-DE'),
         ])
 
         // Parse hourly prices
@@ -310,10 +261,12 @@ export function usePrices(country: string = 'DE'): PriceData {
 
         // Background: fetch incremental data up to dayAfterTomorrow
         const dayAfterTomorrow = nextDay(nextDay(today))
-        fetchIncremental(lastStaticDate, dayAfterTomorrow, prices)
-        fetchIncrementalQH(lastStaticQHDate, dayAfterTomorrow, qhPrices)
+        fetchIncremental(lastStaticDate, dayAfterTomorrow, prices, country)
+        fetchIncrementalQH(lastStaticQHDate, dayAfterTomorrow, qhPrices, country)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load prices')
+        // Reset fetchedCountry so user can retry the same country
+        fetchedCountry.current = null
       } finally {
         setLoading(false)
       }
@@ -323,13 +276,14 @@ export function usePrices(country: string = 'DE'): PriceData {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [country])
 
-  /** Fetch new prices from SMARD via batch API and merge into state */
-  const fetchIncremental = useCallback(async (lastStaticDate: string, today: string, existingPrices: HourlyPrice[]) => {
+  /** Fetch new prices from batch API and merge into state */
+  const fetchIncremental = useCallback(async (lastStaticDate: string, today: string, existingPrices: HourlyPrice[], ctry: string) => {
     try {
       const startDate = nextDay(lastStaticDate)
       if (startDate > today) return
 
-      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}`)
+      const countryParam = ctry !== 'DE' ? `&country=${ctry}` : ''
+      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}${countryParam}`)
       if (!res.ok) return
 
       const data = await res.json()
@@ -390,13 +344,14 @@ export function usePrices(country: string = 'DE'): PriceData {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  /** Fetch new QH prices from SMARD via batch API and merge into state */
-  const fetchIncrementalQH = useCallback(async (lastStaticDate: string, today: string, existingQH: HourlyPrice[]) => {
+  /** Fetch new QH prices from batch API and merge into state */
+  const fetchIncrementalQH = useCallback(async (lastStaticDate: string, today: string, existingQH: HourlyPrice[], ctry: string) => {
     try {
       const startDate = nextDay(lastStaticDate)
       if (startDate > today) return
 
-      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}&resolution=quarterhour`)
+      const countryParam = ctry !== 'DE' ? `&country=${ctry}` : ''
+      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}&resolution=quarterhour${countryParam}`)
       if (!res.ok) return
 
       const data = await res.json()
@@ -516,13 +471,17 @@ export function usePrices(country: string = 'DE'): PriceData {
     else { setGeneration([]); setGenerationLoading(false) }
   }, [selectedDate, loadGenerationForDate, country])
 
-  // Fetch intraday ID3 prices for selected date (DE only for now)
+  // Fetch intraday ID3 prices for selected date (+ 3 extra days for 72h view)
   useEffect(() => {
     if (!selectedDate) return
-    if (country !== 'DE') { setIntradayId3([]); return }
     const controller = new AbortController()
-    const nd = nextDay(selectedDate)
-    fetch(`/api/prices/batch?startDate=${selectedDate}&endDate=${nd}&type=intraday&index=id3`,
+    // Fetch 4 days of intraday data to cover 72h (3-day) view
+    const d2 = nextDay(selectedDate)
+    const d3 = nextDay(d2)
+    const d4 = nextDay(d3)
+    const nd = nextDay(d4)
+    const countryParam = country !== 'DE' ? `&country=${country}` : ''
+    fetch(`/api/prices/batch?startDate=${selectedDate}&endDate=${nd}&type=intraday&index=id3${countryParam}`,
       { signal: controller.signal })
       .then(res => res.ok ? res.json() : null)
       .then(data => {

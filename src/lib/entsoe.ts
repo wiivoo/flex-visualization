@@ -91,6 +91,42 @@ export async function fetchEntsoeDayAhead(date: Date, domain?: string): Promise<
  *
  * @param domain - EIC bidding zone code (default: DE-LU)
  */
+/**
+ * Fetch a single chunk from ENTSO-E with retry on 503.
+ * Max ~60 days per chunk to stay well under the 100 TimeSeries limit.
+ */
+async function fetchEntsoeChunk(
+  startDate: Date,
+  endDate: Date,
+  domain: string,
+  token: string,
+  retries = 2
+): Promise<PricePoint[]> {
+  const periodStart = formatEntsoeDate(startDate)
+  const periodEnd = formatEntsoeDate(addDays(endDate, 1))
+  const url = `${ENTSOE_BASE_URL}?securityToken=${token}&documentType=A44&in_Domain=${domain}&out_Domain=${domain}&periodStart=${periodStart}&periodEnd=${periodEnd}`
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const response = await fetch(url, { next: { revalidate: 3600 } })
+    if (response.status === 503 && attempt < retries) {
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)))
+      continue
+    }
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`ENTSO-E API request failed: ${response.status} ${text.slice(0, 200)}`)
+    }
+    const xml = await response.text()
+    return parseEntsoeXml(xml)
+  }
+  return []
+}
+
+/**
+ * Fetch day-ahead prices from ENTSO-E for a date range.
+ * Automatically chunks large ranges into ≤60-day pieces
+ * to stay under the 100 TimeSeries per-response limit.
+ */
 export async function fetchEntsoeRange(
   startDate: Date,
   endDate: Date,
@@ -101,20 +137,19 @@ export async function fetchEntsoeRange(
     throw new Error('ENTSOE_API_TOKEN environment variable not set')
   }
 
-  const periodStart = formatEntsoeDate(startDate)
-  const periodEnd = formatEntsoeDate(addDays(endDate, 1))
-
-  const url = `${ENTSOE_BASE_URL}?securityToken=${token}&documentType=A44&in_Domain=${domain}&out_Domain=${domain}&periodStart=${periodStart}&periodEnd=${periodEnd}`
-
-  const response = await fetch(url, {
-    next: { revalidate: 3600 }, // 1 hour cache
-  })
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`ENTSO-E API request failed: ${response.status} ${text.slice(0, 200)}`)
+  const diffDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (86400000))
+  if (diffDays <= 60) {
+    return fetchEntsoeChunk(startDate, endDate, domain, token)
   }
 
-  const xml = await response.text()
-  return parseEntsoeXml(xml)
+  // Chunk into 60-day pieces
+  const allPrices: PricePoint[] = []
+  let cursor = new Date(startDate)
+  while (cursor <= endDate) {
+    const chunkEnd = new Date(Math.min(cursor.getTime() + 59 * 86400000, endDate.getTime()))
+    const prices = await fetchEntsoeChunk(cursor, chunkEnd, domain, token)
+    allPrices.push(...prices)
+    cursor = addDays(chunkEnd, 1)
+  }
+  return allPrices
 }

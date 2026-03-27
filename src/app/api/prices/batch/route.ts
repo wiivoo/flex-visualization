@@ -71,6 +71,7 @@ import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { fetchCsvPrices } from '@/lib/csv-prices'
 import { getCachedPrices, setCachedPrices, cacheTypeKey } from '@/lib/price-cache'
+import { supabase } from '@/lib/supabase'
 
 const SMARD_BASE_URL = 'https://www.smard.de/app/chart_data'
 
@@ -248,28 +249,42 @@ async function getCachedDays(
   indexField?: string
 ): Promise<Map<string, PricePoint[]>> {
   const cachedDays = new Map<string, PricePoint[]>()
-  const days = eachDayOfInterval({ start: startDate, end: endDate })
   const typeKey = cacheTypeKey(type, resolution)
+  const startStr = format(startDate, 'yyyy-MM-dd')
+  const endStr = format(endDate, 'yyyy-MM-dd')
+  const today = format(new Date(), 'yyyy-MM-dd')
 
-  const results = await Promise.allSettled(
-    days.map(async day => {
-      const dateStr = format(day, 'yyyy-MM-dd')
-      const cached = await getCachedPrices(dateStr, typeKey)
-      return { dateStr, cached }
-    })
-  )
+  try {
+    // Single bulk query instead of per-day queries
+    const { data, error } = await supabase
+      .from('price_cache')
+      .select('date, prices_json, cached_at')
+      .eq('type', typeKey)
+      .gte('date', startStr)
+      .lte('date', endStr)
+      .order('date')
 
-  for (const result of results) {
-    if (result.status === 'fulfilled' && result.value.cached) {
-      const { dateStr, cached } = result.value
-      cachedDays.set(dateStr, cached.prices_json.map(p => ({
-        timestamp: p.timestamp,
+    if (error || !data) return cachedDays
+
+    for (const row of data) {
+      // Smart TTL: past=never expires, today=2h, future=1h
+      const ttlH = row.date < today ? Infinity : row.date === today ? 2 : 1
+      if (ttlH !== Infinity) {
+        const cachedAt = new Date(row.cached_at).getTime()
+        if (Date.now() - cachedAt > ttlH * 3600000) continue // expired
+      }
+
+      cachedDays.set(row.date, row.prices_json.map((p: Record<string, unknown>) => ({
+        timestamp: p.timestamp as string,
         price_ct_kwh: indexField
-          ? ((p as Record<string, unknown>)[indexField] as number ?? p.price_ct_kwh ?? 0)
-          : (p.price_ct_kwh ?? 0),
+          ? ((p[indexField] as number) ?? (p.price_ct_kwh as number) ?? 0)
+          : ((p.price_ct_kwh as number) ?? 0),
       })))
     }
+  } catch (error) {
+    console.error('Bulk cache read error:', error)
   }
+
   return cachedDays
 }
 
@@ -370,8 +385,8 @@ export async function GET(request: NextRequest) {
   if (isAfter(startDate, endDate)) {
     return NextResponse.json({ error: 'startDate must be before endDate' }, { status: 400 })
   }
-  if (differenceInDays(endDate, startDate) + 1 > 400) {
-    return NextResponse.json({ error: 'Maximum date range: 400 days' }, { status: 400 })
+  if (differenceInDays(endDate, startDate) + 1 > 1600) {
+    return NextResponse.json({ error: 'Maximum date range: 1600 days' }, { status: 400 })
   }
 
   // ── Step 1: Check Supabase cache (resolution-aware, country-aware) ──
@@ -473,19 +488,19 @@ export async function GET(request: NextRequest) {
   // Always uses HOURLY API to get a consistent boundary for both resolutions.
   // Also appends forecast prices for any gaps at the end of the range.
   let forecastStart: string | null = null
-  if (type === 'day-ahead' && allPrices.length > 0) {
+  if (type === 'day-ahead') {
     try {
       const endRangeTs = startOfDay(endDate).getTime() + 86400000
       if (endRangeTs > Date.now()) {
         // Get forecast boundary from HOURLY API (consistent for both resolutions)
-        const { prices: forecastHourly, forecastStart: apiForecastStart } = await fetchEnergyForecast('HOURLY')
+        const { prices: forecastHourly, forecastStart: apiForecastStart } = await fetchEnergyForecast('HOURLY', country)
         forecastStart = apiForecastStart
 
         // Determine which prices to append (match requested resolution)
         let pricesToAppend = forecastHourly
         if (resolution === 'quarterhour') {
           try {
-            const qhResult = await fetchEnergyForecast('QUARTER_HOURLY')
+            const qhResult = await fetchEnergyForecast('QUARTER_HOURLY', country)
             pricesToAppend = qhResult.prices
           } catch { /* fall back to hourly */ }
         }

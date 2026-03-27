@@ -25,15 +25,22 @@ interface ForecastEntry {
  * Returns both actual (published) and forecast (predicted) prices.
  * Forecast entries have isProjected=true.
  */
+const MARKET_ZONES: Record<string, string> = {
+  'DE': 'DE-LU',
+  'NL': 'NL',
+}
+
 export async function fetchEnergyForecast(
-  resolution: 'HOURLY' | 'QUARTER_HOURLY' = 'HOURLY'
+  resolution: 'HOURLY' | 'QUARTER_HOURLY' = 'HOURLY',
+  country: string = 'DE'
 ): Promise<{ prices: PricePoint[]; forecastStart: string | null }> {
   const token = process.env.ENERGY_FORECAST_TOKEN
   if (!token) {
     throw new Error('ENERGY_FORECAST_TOKEN environment variable not set')
   }
 
-  const url = `${FORECAST_BASE_URL}/next_48_hours?token=${token}&market_zone=DE-LU&resolution=${resolution}&fixed_cost_cent=0&vat=0`
+  const marketZone = MARKET_ZONES[country] ?? 'DE-LU'
+  const url = `${FORECAST_BASE_URL}/next_48_hours?token=${token}&market_zone=${marketZone}&resolution=${resolution}&fixed_cost_cent=0&vat=0`
 
   const response = await fetch(url, {
     next: { revalidate: 3600 }, // 1 hour cache (50 req/day limit)

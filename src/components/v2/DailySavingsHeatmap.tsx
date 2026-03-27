@@ -328,7 +328,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                                   }}
                                 />
                               </TooltipTrigger>
-                              <TooltipContent side="top" className="max-w-[240px] text-left p-3">
+                              <TooltipContent side="top" className="max-w-[240px] text-left p-3 pointer-events-none">
                                 <p className="text-[11px] font-semibold text-gray-700 mb-1.5">{fmtDate(cell.date)}</p>
                                 {entry ? (
                                   <div className="space-y-1 text-[11px]">

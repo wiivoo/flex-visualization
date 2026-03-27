@@ -1558,7 +1558,28 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       </TooltipProvider>
                     </>
                   )}
-                  {hasForecastData && <span className="text-amber-400 ml-1">+ forecast</span>}
+                  {hasForecastData && (
+                    <>
+                      <span className="text-gray-300 ml-1">·</span>
+                      <TooltipProvider delayDuration={100}>
+                        <UITooltip>
+                          <TooltipTrigger asChild>
+                            <span className="text-gray-400 ml-1 cursor-help">
+                              <svg className="inline -mt-px mr-0.5" width="16" height="2" viewBox="0 0 16 2"><line x1="0" y1="1" x2="16" y2="1" stroke="#D97706" strokeWidth="1.5" strokeDasharray="3 2"/></svg>
+                              <span className="text-[10px] text-amber-600">Forecast</span>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-[260px] text-left space-y-1.5 p-3">
+                            <p className="font-semibold text-[12px]">Forecast prices</p>
+                            <p className="text-[11px] text-gray-500 leading-relaxed">
+                              The dashed amber portion uses predicted prices from EnergyForecast.de,
+                              not yet published EPEX Spot auction results. Actual prices may differ.
+                            </p>
+                          </TooltipContent>
+                        </UITooltip>
+                      </TooltipProvider>
+                    </>
+                  )}
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -1577,7 +1598,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </button>
                   </div>
                 )}
-                {/* Country toggle — disabled until ENTSO-E is reliably available
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                   <button
                     onClick={() => setCountry?.('DE')}
@@ -1595,7 +1615,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     NL
                   </button>
                 </div>
-                */}
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                   <button onClick={() => {
@@ -1642,24 +1661,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </UITooltip>
                   </TooltipProvider>
                 )}
-                {hasForecastData && (
-                  <TooltipProvider delayDuration={100}>
-                    <UITooltip>
-                      <TooltipTrigger asChild>
-                        <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 cursor-help select-none">
-                          Forecast
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-[260px] text-left space-y-1.5 p-3">
-                        <p className="font-semibold text-[12px]">Contains forecast prices</p>
-                        <p className="text-[11px] text-gray-500 leading-relaxed">
-                          The dashed portion of the chart uses predicted prices from EnergyForecast.de,
-                          not yet published EPEX Spot auction results. Actual prices may differ.
-                        </p>
-                      </TooltipContent>
-                    </UITooltip>
-                  </TooltipProvider>
-                )}
+                {/* Forecast pill removed — forecast is auto-shown and labeled in the legend below */}
                 <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
                   <button onClick={() => setResolution('hour')}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
