@@ -1,9 +1,10 @@
 # Feature Index
 
-> Central tracking for all features in FlexMon Dashboard.
+> Central tracking for all features in Flex Visualization Dashboard.
 
 ## Status Legend
 - **Deployed** - Live in production
+- **In Progress** - Under active development
 - **Archived** - Old v1 code, moved to `src/_archive/`
 
 ## Active Features (Deployed)
@@ -25,6 +26,12 @@
 | PROJ-25 | Fleet Portfolio View | Deployed | [spec](PROJ-25-fleet-portfolio.md) | `components/v2/FleetPortfolioCard.tsx` |
 | PROJ-27 | Spread Indicators & Scenario Cards | Deployed | [spec](PROJ-27-spread-indicators.md) | `components/v2/steps/Step2ChargingScenario.tsx`, `lib/charging-helpers.ts` |
 | PROJ-28 | Two-Column Layout & UX Refresh | Deployed | — | `components/v2/steps/Step2ChargingScenario.tsx`, `components/v2/DateStrip.tsx` |
+| PROJ-29 | V2G Dual Value Streams | In Progress | [spec](PROJ-29-v2g-dual-value-streams.md) | `lib/charging-helpers.ts`, `components/v2/SessionCostCard.tsx`, `components/v2/MonthlySavingsCard.tsx` |
+| PROJ-30 | NL Country Support | Deployed | [spec](PROJ-30-nl-country-support.md) | `lib/use-prices.ts`, `api/prices/batch/`, `scripts/download-nl.mjs`, `scripts/update-nl.mjs` |
+| PROJ-31 | EnergyForecast.de Integration | Deployed | [spec](PROJ-31-energy-forecast.md) | `lib/energy-forecast.ts`, `api/prices/batch/`, `lib/use-prices.ts` |
+| PROJ-32 | Daily Savings Heatmap | Deployed | [spec](PROJ-32-daily-savings-heatmap.md) | `components/v2/DailySavingsHeatmap.tsx` |
+| PROJ-33 | Intraday ID3 Price Overlay | Deployed | [spec](PROJ-33-intraday-id3.md) | `lib/use-prices.ts`, `api/prices/batch/` |
+| PROJ-34 | Excel Session Export | Deployed | [spec](PROJ-34-excel-export.md) | `lib/excel-export.ts`, `app/v2/page.tsx` |
 
 ## Archived Features (v1 — code in `src/_archive/`)
 
@@ -42,9 +49,7 @@
 | PROJ-14 | Portfolio Scale (unbuilt) | [archived](_archive/PROJ-14-v2-portfolio-scale.md) |
 | PROJ-15 | Market Context (unbuilt) | [archived](_archive/PROJ-15-v2-market-context.md) |
 
-| PROJ-29 | V2G Dual Value Streams | In Progress | [spec](PROJ-29-v2g-dual-value-streams.md) | `lib/charging-helpers.ts`, `components/v2/SessionCostCard.tsx`, `components/v2/MonthlySavingsCard.tsx` |
-
-## Next Available ID: PROJ-30
+## Next Available ID: PROJ-35
 
 ## Architecture
 
@@ -52,22 +57,23 @@
 src/
   app/
     page.tsx              → redirect to /v2
-    v2/page.tsx           → main dashboard (state, optimization, layout, URL sharing)
+    v2/page.tsx           → main dashboard (state, optimization, layout, URL sharing, export)
     login/page.tsx        → password entry
     api/
       auth/               → JWT login
-      prices/batch/       → SMARD incremental fetch (hourly + quarter-hourly)
-      generation/         → renewable generation data
+      prices/batch/       → multi-source price fetch (SMARD, aWATTar, ENTSO-E, EnergyForecast)
+      generation/         → renewable generation data (SMARD)
   components/
     v2/
-      steps/Step2ChargingScenario.tsx  → core visualization (~1760 lines)
+      steps/Step2ChargingScenario.tsx  → core visualization (~1800 lines)
                                          chart, sidebar, scenario cards, detail panel
       AnimatedNumber.tsx               → animated number transitions
+      DailySavingsHeatmap.tsx          → calendar-style daily savings heatmap
       DateStrip.tsx                    → horizontal date strip with week labels
       FleetPortfolioCard.tsx           → fleet portfolio analysis card
       FlexibilityDemoChart.tsx         → flexibility demonstration chart
       MiniCalendar.tsx                 → date picker with spread colors & weekend styling
-      MonthlySavingsCard.tsx           → monthly savings bar chart (mode-aware)
+      MonthlySavingsCard.tsx           → monthly savings bar chart (mode-aware, V2G-aware)
       SavingsHeatmap.tsx               → mileage x frequency sensitivity matrix
       SessionCostCard.tsx              → baseline vs. optimized cost card
       SpreadIndicatorsCard.tsx         → standalone spread indicators card
@@ -75,11 +81,13 @@ src/
       YearlySavingsCard.tsx            → yearly savings with YoY comparison (mode-aware)
     ui/                   → shadcn/ui primitives (alert, button, card, input, label, tooltip)
   lib/
-    use-prices.ts         → price data hook (static JSON + incremental API, hourly + QH)
+    use-prices.ts         → price data hook (static JSON + incremental API, hourly + QH, DE + NL)
     v2-config.ts          → types, constants, defaults (ChargingScenario, weekday/weekend split)
-    charging-helpers.ts   → window builders, savings computation, spread calculation
+    charging-helpers.ts   → window builders, savings computation, spread, V2G optimizer
     optimizer.ts          → baseline vs optimized charging algorithm
     grid-fees.ts          → §14a Module 3 grid fee schedule (10 DSOs)
+    excel-export.ts       → multi-sheet Excel export (SheetJS)
+    energy-forecast.ts    → EnergyForecast.de API client (DE + NL)
     config.ts             → shared types (PricePoint, ChargingBlock)
     auth.ts               → JWT session management
     smard.ts              → SMARD API client
@@ -89,4 +97,35 @@ src/
     price-cache.ts        → Supabase price cache
     supabase.ts           → Supabase client
     utils.ts              → clsx utility
+scripts/
+    download-smard.mjs    → full DE price download (SMARD)
+    update-smard.mjs      → incremental DE price update
+    download-nl.mjs       → full NL price download (ENTSO-E)
+    update-nl.mjs         → incremental NL price update
+public/data/
+    smard-prices.json     → DE hourly prices (static)
+    smard-prices-qh.json  → DE quarter-hourly prices (static)
+    smard-generation.json → DE renewable generation (static)
+    nl-prices.json        → NL hourly prices (static)
+    nl-prices-qh.json     → NL quarter-hourly prices (static)
 ```
+
+## Environment Variables
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DASHBOARD_PASSWORD` | Yes | Login password |
+| `AUTH_SECRET` / `DASHBOARD_SESSION_SECRET` | Yes | JWT signing key |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `ENTSOE_API_TOKEN` | For NL | ENTSO-E Transparency Platform token |
+| `ENERGY_FORECAST_TOKEN` | For forecast | EnergyForecast.de API token |
+
+## Data Update Schedule
+
+| Source | Schedule | Trigger |
+|--------|----------|---------|
+| DE prices (SMARD) | Daily 13:30 UTC | GitHub Actions + manual |
+| NL prices (ENTSO-E) | Daily 13:30 UTC | GitHub Actions + manual |
+| DE generation (SMARD) | Daily 13:30 UTC | GitHub Actions + manual |
+| Forecast (EnergyForecast.de) | On request | Batch API route (not cached) |
