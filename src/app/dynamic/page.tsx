@@ -16,39 +16,13 @@ import {
 } from '@/lib/dynamic-tariff'
 import { getDayType, LOAD_PROFILES, type LoadProfile } from '@/lib/slp-h25'
 import { DynamicDailySavings } from '@/components/dynamic/DynamicDailySavings'
+import { MonthlyPriceTrend } from '@/components/dynamic/MonthlyPriceTrend'
 
 export default function DynamicPage() {
   return <Suspense><DynamicInner /></Suspense>
 }
 
 /* ────── Constants ────── */
-/** Grid consumption presets per profile.
- *  H25 = full grid draw. P25 ~ 70% of H25 (PV self-consumption ~30%).
- *  S25 ~ 40% of H25 (PV + battery self-consumption ~60%). */
-const CONSUMPTION_PRESETS: Record<string, { label: string; kwh: number }[]> = {
-  H25: [
-    { label: '1 Person', kwh: 1500 },
-    { label: '2 Persons', kwh: 2500 },
-    { label: 'Family', kwh: 3500 },
-    { label: 'Large Family', kwh: 5000 },
-    { label: 'Heat Pump', kwh: 6000 },
-  ],
-  P25: [
-    { label: '1 Person', kwh: 1000 },
-    { label: '2 Persons', kwh: 1700 },
-    { label: 'Family', kwh: 2400 },
-    { label: 'Large Family', kwh: 3500 },
-    { label: 'Heat Pump', kwh: 4200 },
-  ],
-  S25: [
-    { label: '1 Person', kwh: 600 },
-    { label: '2 Persons', kwh: 1000 },
-    { label: 'Family', kwh: 1400 },
-    { label: 'Large Family', kwh: 2000 },
-    { label: 'Heat Pump', kwh: 2500 },
-  ],
-}
-
 const SURCHARGE_FIELDS: { key: keyof Surcharges; label: string; fixed?: boolean }[] = [
   { key: 'gridFee', label: 'Netzentgelte' },
   { key: 'stromsteuer', label: 'Stromsteuer', fixed: true },
@@ -81,6 +55,10 @@ function DynamicInner() {
   const [showSurcharges, setShowSurcharges] = useState(false)
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
   const [showRenewable, setShowRenewable] = useState(false)
+  const [showCheaperBand, setShowCheaperBand] = useState(true)
+  const [showExpensiveBand, setShowExpensiveBand] = useState(true)
+  const [showMonthlyTable, setShowMonthlyTable] = useState(false)
+  const [chartMode, setChartMode] = useState<'price' | 'cost'>('price')
   const [loadProfile, setLoadProfileRaw] = useState<LoadProfile>('H25')
   const setLoadProfile = useCallback((p: LoadProfile) => {
     // Auto-adjust kWh proportionally when switching profiles
@@ -113,33 +91,53 @@ function DynamicInner() {
     }
   }, [availableYears, selectedYear])
 
+  // Auto-select today on initial load (dynamic page shows current date)
+  const initialDateSet = useRef(false)
+  useEffect(() => {
+    if (initialDateSet.current || prices.daily.length === 0) return
+    const now = new Date()
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    const todayEntry = prices.daily.find(d => d.date === today)
+      ?? prices.daily.filter(d => d.date <= today).pop()
+    if (todayEntry) {
+      prices.setSelectedDate(todayEntry.date)
+      initialDateSet.current = true
+    }
+  }, [prices.daily]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Yearly cost calculation
   const yearlyResult = useMemo(() => {
     if (prices.hourly.length === 0) return null
     return calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, selectedYear, loadProfile)
   }, [yearlyKwh, prices.hourly, surcharges, fixedPrice, selectedYear, loadProfile])
 
-  // All daily breakdowns across all years — reactive to fixed price
-  const allDailyBreakdown = useMemo(() => {
+  // All daily breakdowns across all years
+  const allDailyBreakdownFull = useMemo(() => {
     if (prices.hourly.length === 0) return []
     const all: import('@/lib/dynamic-tariff').DailyResult[] = []
     for (const y of availableYears) {
       const result = calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, y, loadProfile)
       all.push(...result.dailyBreakdown)
     }
-    // Sort by date ascending, take last 365
     all.sort((a, b) => a.date.localeCompare(b.date))
-    return all.slice(-365)
+    return all
   }, [prices.hourly, availableYears, yearlyKwh, surcharges, fixedPrice, loadProfile])
 
-  // Per-date savings map for DateStrip coloring
+  // 365 days ending at selected date — for heatmap
+  const allDailyBreakdown = useMemo(() => {
+    const endDate = prices.selectedDate
+    const filtered = allDailyBreakdownFull.filter(d => d.date <= endDate)
+    return filtered.slice(-365)
+  }, [allDailyBreakdownFull, prices.selectedDate])
+
+  // Per-date savings map for DateStrip coloring — uses ALL dates
   const dateSavingsMap = useMemo(() => {
     const m = new Map<string, number>()
-    for (const d of allDailyBreakdown) {
+    for (const d of allDailyBreakdownFull) {
       m.set(d.date, d.fixedCostEur - d.dynamicCostEur)
     }
     return m
-  }, [allDailyBreakdown])
+  }, [allDailyBreakdownFull])
 
   const dateStripColorFn = useCallback((date: string): string => {
     const savings = dateSavingsMap.get(date)
@@ -170,21 +168,31 @@ function DynamicInner() {
     if (chartPrices.length === 0 || !prices.selectedDate) return []
     const raw = getDailyEndPrices(chartPrices, prices.selectedDate, surcharges, yearlyKwh, isQH && prices.hourlyQH.length > 0, generationForDate, loadProfile)
     // Split into solid + forecast lines, add shading fields
-    const mapped = raw.map((d, _i) => ({
-      ...d,
-      fixedPriceLine: fixedPrice,
-      endPrice: d.isProjected ? null : d.endPriceCtKwh,
-      endPriceForecast: d.isProjected ? d.endPriceCtKwh : null,
-      spotPrice: d.isProjected ? null : d.spotCtKwh,
-      spotForecast: d.isProjected ? d.spotCtKwh : null,
-      greenBand: d.endPriceCtKwh < fixedPrice ? [d.endPriceCtKwh, fixedPrice] : [fixedPrice, fixedPrice],
-      redBand: d.endPriceCtKwh > fixedPrice ? [fixedPrice, d.endPriceCtKwh] : [fixedPrice, fixedPrice],
-    }))
+    const mapped = raw.map((d, _i) => {
+      const fixedCostCent = d.consumptionKwh * fixedPrice
+      return {
+        ...d,
+        fixedPriceLine: fixedPrice,
+        endPrice: d.isProjected ? null : d.endPriceCtKwh,
+        endPriceForecast: d.isProjected ? d.endPriceCtKwh : null,
+        spotPrice: d.isProjected ? null : d.spotCtKwh,
+        spotForecast: d.isProjected ? d.spotCtKwh : null,
+        greenBand: d.endPriceCtKwh < fixedPrice ? [d.endPriceCtKwh, fixedPrice] : [fixedPrice, fixedPrice],
+        redBand: d.endPriceCtKwh > fixedPrice ? [fixedPrice, d.endPriceCtKwh] : [fixedPrice, fixedPrice],
+        // Cost mode fields (cent)
+        dynamicCost: d.isProjected ? null : d.costCent,
+        dynamicCostForecast: d.isProjected ? d.costCent : null,
+        fixedCostCent,
+        costGreenBand: d.costCent < fixedCostCent ? [d.costCent, fixedCostCent] : [fixedCostCent, fixedCostCent],
+        costRedBand: d.costCent > fixedCostCent ? [fixedCostCent, d.costCent] : [fixedCostCent, fixedCostCent],
+      }
+    })
     // Bridge: connect last real point to first forecast point
     const firstFcIdx = mapped.findIndex(d => d.isProjected)
     if (firstFcIdx > 0 && mapped[firstFcIdx - 1].endPrice !== null) {
       mapped[firstFcIdx - 1].endPriceForecast = mapped[firstFcIdx - 1].endPrice
       mapped[firstFcIdx - 1].spotForecast = mapped[firstFcIdx - 1].spotPrice
+      mapped[firstFcIdx - 1].dynamicCostForecast = mapped[firstFcIdx - 1].dynamicCost
     }
     return mapped
   }, [chartPrices, prices.selectedDate, surcharges, yearlyKwh, isQH, prices.hourlyQH.length, generationForDate, fixedPrice, loadProfile])
@@ -310,16 +318,53 @@ function DynamicInner() {
   const fmtCt = (n: number) => n.toFixed(2)
   const fmtPct = (n: number) => n.toFixed(1)
 
+  // Edge-scroll: press & hold left/right to scrub through days (v2-style)
+  const sortedDates = useMemo(() => prices.daily.map(d => d.date), [prices.daily])
+  const sortedDatesRef = useRef(sortedDates)
+  sortedDatesRef.current = sortedDates
+  const selectedDateRef = useRef(prices.selectedDate)
+  selectedDateRef.current = prices.selectedDate
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const startEdgeScroll = useCallback((dir: -1 | 1) => {
+    const step = () => {
+      const idx = sortedDatesRef.current.indexOf(selectedDateRef.current)
+      if (idx < 0) return
+      const next = sortedDatesRef.current[idx + dir]
+      if (next) prices.setSelectedDate(next)
+    }
+    step()
+    let speed = 400
+    const tick = () => {
+      step()
+      speed = Math.max(120, speed * 0.85)
+      scrollTimerRef.current = setTimeout(tick, speed)
+    }
+    scrollTimerRef.current = setTimeout(tick, speed)
+  }, [prices.setSelectedDate])
+
+  const stopEdgeScroll = useCallback(() => {
+    if (scrollTimerRef.current) { clearTimeout(scrollTimerRef.current); scrollTimerRef.current = null }
+  }, [])
+
+  useEffect(() => () => stopEdgeScroll(), [stopEdgeScroll])
+
   // Draggable fixed price on chart
   const chartRef = useRef<HTMLDivElement>(null)
   const dragging = useRef(false)
   const yDomain = useMemo(() => {
     if (dailyChartData.length === 0) return [0, 60]
+    if (chartMode === 'cost') {
+      const allCosts = dailyChartData.map(d => Math.max(d.costCent, d.fixedCostCent))
+      const max = Math.max(...allCosts)
+      const step = max > 5 ? 2 : 0.5
+      return [0, Math.ceil(max / step) * step + step]
+    }
     const allPrices = dailyChartData.map(d => d.endPriceCtKwh)
     allPrices.push(fixedPrice)
     const max = Math.max(...allPrices)
     return [0, Math.ceil(max / 5) * 5 + 5]
-  }, [dailyChartData, fixedPrice])
+  }, [dailyChartData, fixedPrice, chartMode])
 
   const handleChartMouseDown = useCallback((e: React.MouseEvent) => {
     if (!chartRef.current) return
@@ -391,22 +436,8 @@ function DynamicInner() {
                     step={100}
                     value={yearlyKwh}
                     onChange={e => setYearlyKwh(Number(e.target.value))}
-                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md"
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
-                  <div className="flex justify-between">
-                    {(CONSUMPTION_PRESETS[loadProfile] || CONSUMPTION_PRESETS.H25).map(p => (
-                      <button
-                        key={p.kwh}
-                        onClick={() => setYearlyKwh(p.kwh)}
-                        className={`text-[8px] leading-tight text-center transition-colors ${
-                          yearlyKwh === p.kwh ? 'text-[#EA1C0A] font-bold' : 'text-gray-400 hover:text-gray-600'
-                        }`}
-                      >
-                        <span className="block">{p.label}</span>
-                        <span className="tabular-nums">{p.kwh >= 1000 ? `${(p.kwh/1000).toFixed(p.kwh % 1000 ? 1 : 0)}k` : p.kwh}</span>
-                      </button>
-                    ))}
-                  </div>
                   {loadProfile !== 'H25' && (
                     <p className="text-[9px] text-gray-400">
                       Net grid draw after {loadProfile === 'P25' ? 'PV self-consumption (~30%)' : 'PV + battery self-consumption (~60%)'}
@@ -427,13 +458,8 @@ function DynamicInner() {
                     step={0.5}
                     value={fixedPrice}
                     onChange={e => setFixedPrice(Number(e.target.value))}
-                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#EA1C0A] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md"
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
-                  <div className="flex justify-between text-[9px] text-gray-400 tabular-nums">
-                    <span>20 ct</span>
-                    <span>30 ct</span>
-                    <span>45 ct</span>
-                  </div>
                   <p className="text-[9px] text-gray-400">Gross price incl. all taxes & VAT · drag chart line to adjust</p>
                 </div>
 
@@ -447,12 +473,12 @@ function DynamicInner() {
                         onClick={() => setLoadProfile(p.id)}
                         className={`text-left text-[11px] px-2.5 py-1.5 rounded-md border transition-colors ${
                           loadProfile === p.id
-                            ? 'bg-[#EA1C0A] text-white border-[#EA1C0A]'
+                            ? 'bg-gray-500 text-white border-gray-500'
                             : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                         }`}
                       >
                         <span className="font-semibold">{p.description}</span>
-                        <span className={`ml-1.5 ${loadProfile === p.id ? 'text-white/80' : 'text-gray-400'}`}>{p.label}</span>
+                        <span className={`ml-1.5 ${loadProfile === p.id ? 'text-white/70' : 'text-gray-400'}`}>{p.label}</span>
                       </button>
                     ))}
                   </div>
@@ -524,9 +550,12 @@ function DynamicInner() {
                     onSelect={prices.setSelectedDate}
                     requireNextDay={false}
                     colorFn={dateStripColorFn}
-                    latestDate={prices.daily.length > 0 ? prices.daily[prices.daily.length - 1]?.date : undefined}
+                    latestDate={(() => {
+                      const now = new Date()
+                      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+                    })()}
                     forecastAfter={prices.lastRealDate || undefined}
-                    colorLegend={{ label: 'Dynamic saves', colors: ['bg-emerald-400', 'bg-red-400'] }}
+                    colorLegend={{ label: 'Savings', colors: ['bg-emerald-400', 'bg-red-400'] }}
                   />
                 </CardContent>
               </Card>
@@ -538,16 +567,27 @@ function DynamicInner() {
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle className="text-sm font-bold text-[#313131]">
-                      Day-Ahead Spot Price & Household Consumption — {prices.selectedDate || '...'}
+                      {chartMode === 'cost' ? `Hourly Cost (${loadProfile})` : 'Day-Ahead Spot Price & Household Consumption'} — {prices.selectedDate || '...'}
                     </CardTitle>
                     <p className="text-[10px] text-gray-400 mt-0.5">
-                      Hourly electricity prices (EPEX Spot) with SLP {loadProfile} consumption profile
+                      {chartMode === 'cost' ? `Profile-weighted cost per hour (cent) · SLP ${loadProfile}` : `Hourly electricity prices (EPEX Spot) with SLP ${loadProfile} consumption profile`}
                       {selectedDayTotals && (
                         <> · {selectedDayTotals.dayType === 'WT' ? 'Workday' : selectedDayTotals.dayType === 'SA' ? 'Saturday' : 'Sunday/Holiday'} · {selectedDayTotals.consumptionKwh.toFixed(2)} kWh</>
                       )}
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5">
+                    {/* Price / Cost toggle */}
+                    <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                      <button onClick={() => setChartMode('price')}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chartMode === 'price' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                        Price
+                      </button>
+                      <button onClick={() => setChartMode('cost')}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chartMode === 'cost' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                        Cost
+                      </button>
+                    </div>
                     <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
                       <button onClick={() => setResolution('hour')}
                         className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
@@ -576,19 +616,55 @@ function DynamicInner() {
                 {dailyChartData.length > 0 ? (
                   <div
                     ref={chartRef}
-                    className="h-[320px] cursor-ns-resize select-none"
-                    onMouseDown={handleChartMouseDown}
-                    onMouseMove={handleChartMouseMove}
-                    onMouseUp={handleChartMouseUp}
-                    onMouseLeave={handleChartMouseUp}
+                    className={`relative h-[320px] select-none ${chartMode === 'price' ? 'cursor-ns-resize' : ''}`}
+                    onMouseDown={chartMode === 'price' ? handleChartMouseDown : undefined}
+                    onMouseMove={chartMode === 'price' ? handleChartMouseMove : undefined}
+                    onMouseUp={chartMode === 'price' ? handleChartMouseUp : undefined}
+                    onMouseLeave={chartMode === 'price' ? handleChartMouseUp : undefined}
                   >
+                    {/* Summary pill overlay — top-left inside chart */}
+                    {selectedDayTotals && selectedDayTotals.consumptionKwh > 0 && (() => {
+                      const dynamicAvg = selectedDayTotals.dynamicCostEur / selectedDayTotals.consumptionKwh * 100
+                      const diffCt = fixedPrice - dynamicAvg
+                      const diffEur = selectedDayTotals.savingsEur
+                      const isCheaper = diffCt > 0
+                      return (
+                        <div className="absolute left-14 top-1 z-20 pointer-events-none flex items-center gap-1.5">
+                          {chartMode === 'price' ? (
+                            <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5 ${isCheaper ? 'bg-emerald-50/80 border-emerald-300/50' : 'bg-red-50/80 border-red-300/50'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isCheaper ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                              <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-700' : 'text-red-700'}`}>
+                                {isCheaper ? '▼' : '▲'} {Math.abs(diffCt).toFixed(1)} ct/kWh
+                              </span>
+                              <span className={`text-[9px] font-semibold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-600' : 'text-red-600'}`}>
+                                dynamic {isCheaper ? 'cheaper' : 'more expensive'}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5 ${isCheaper ? 'bg-emerald-50/80 border-emerald-300/50' : 'bg-red-50/80 border-red-300/50'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isCheaper ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                              <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-700' : 'text-red-700'}`}>
+                                {isCheaper ? '+' : ''}{diffEur.toFixed(3)} EUR
+                              </span>
+                              <span className={`text-[9px] font-semibold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {isCheaper ? 'saved today' : 'extra cost today'}
+                              </span>
+                            </div>
+                          )}
+                          <span className="text-[9px] text-gray-400 tabular-nums">
+                            {dynamicAvg.toFixed(1)} vs {fixedPrice.toFixed(1)} ct/kWh
+                          </span>
+                        </div>
+                      )
+                    })()}
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={dailyChartData} margin={{ top: 10, right: 40, bottom: 20, left: 10 }}>
+                      <ComposedChart data={dailyChartData} margin={{ top: 36, right: 40, bottom: 20, left: 10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
                         <XAxis
                           dataKey="label"
                           tick={{ fontSize: 11, fontWeight: 500 }}
-                          tickLine={false}
+                          tickLine={{ stroke: '#D1D5DB', strokeWidth: 1 }}
+                          tickSize={6}
                           stroke="#9CA3AF"
                           interval={isQH ? 7 : 1}
                         />
@@ -598,7 +674,8 @@ function DynamicInner() {
                           stroke="#9CA3AF"
                           width={40}
                           domain={yDomain}
-                          allowDecimals={false}
+                          allowDecimals={chartMode === 'cost'}
+                          label={chartMode === 'cost' ? { value: 'cent', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } } : undefined}
                         />
                         {showRenewable && (
                           <YAxis yAxisId="renew" orientation="right" domain={[0, 100]} hide />
@@ -618,12 +695,23 @@ function DynamicInner() {
                             if (!active || !payload?.length) return null
                             const d = payload[0].payload as (typeof dailyChartData)[number]
                             return (
-                              <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[11px] space-y-0.5">
+                              <div className="bg-white/95 backdrop-blur-sm rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[11px] space-y-0.5">
                                 <p className="text-gray-500 text-[10px]">{d.label}{isQH ? '' : ` – ${String(d.hour + 1).padStart(2, '0')}:00`}{d.isProjected && <span className="text-amber-600 ml-1">forecast</span>}</p>
-                                <p className="tabular-nums"><span className="text-gray-500">Spot:</span> <span className="font-semibold text-blue-600">{d.spotCtKwh.toFixed(2)} ct/kWh</span></p>
-                                <p className="tabular-nums"><span className="text-gray-500">End price:</span> <span className="font-semibold text-blue-600">{d.endPriceCtKwh.toFixed(2)} ct/kWh</span></p>
-                                <p className="tabular-nums"><span className="text-gray-500">Consumption:</span> <span className="font-medium">{d.consumptionKwh.toFixed(4)} kWh</span></p>
-                                <p className="tabular-nums"><span className="text-gray-500">Cost:</span> <span className="font-semibold text-emerald-600">{(d.costCent / 100).toFixed(4)} EUR</span></p>
+                                {chartMode === 'price' ? (
+                                  <>
+                                    <p className="tabular-nums"><span className="text-gray-500">Spot:</span> <span className="font-semibold text-blue-600">{d.spotCtKwh.toFixed(2)} ct/kWh</span></p>
+                                    <p className="tabular-nums"><span className="text-gray-500">End price:</span> <span className="font-semibold text-blue-600">{d.endPriceCtKwh.toFixed(2)} ct/kWh</span></p>
+                                    <p className="tabular-nums"><span className="text-gray-500">Consumption:</span> <span className="font-medium">{d.consumptionKwh.toFixed(4)} kWh</span></p>
+                                    <p className="tabular-nums"><span className="text-gray-500">Cost:</span> <span className="font-semibold text-emerald-600">{(d.costCent / 100).toFixed(4)} EUR</span></p>
+                                  </>
+                                ) : (
+                                  <>
+                                    <p className="tabular-nums"><span className="text-gray-500">Dynamic:</span> <span className="font-semibold text-blue-600">{d.costCent.toFixed(3)} ct</span></p>
+                                    <p className="tabular-nums"><span className="text-gray-500">Fixed:</span> <span className="font-semibold text-red-600">{d.fixedCostCent.toFixed(3)} ct</span></p>
+                                    <p className="tabular-nums"><span className="text-gray-500">Diff:</span> <span className={`font-semibold ${d.fixedCostCent - d.costCent >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{(d.fixedCostCent - d.costCent) >= 0 ? '+' : ''}{(d.fixedCostCent - d.costCent).toFixed(3)} ct</span></p>
+                                    <p className="tabular-nums"><span className="text-gray-500">Consumption:</span> <span className="font-medium">{d.consumptionKwh.toFixed(4)} kWh</span></p>
+                                  </>
+                                )}
                                 {d.renewableShare != null && (
                                   <p className="tabular-nums"><span className="text-gray-500">Renewable:</span> <span className="font-medium text-emerald-600">{d.renewableShare.toFixed(0)}%</span></p>
                                 )}
@@ -631,14 +719,17 @@ function DynamicInner() {
                             )
                           }}
                         />
-                        <ReferenceLine
-                          yAxisId="price"
-                          y={fixedPrice}
-                          stroke="#EA1C0A"
-                          strokeDasharray="8 4"
-                          strokeWidth={2}
-                          label={{ value: `Fixed: ${fixedPrice} ct/kWh`, position: 'right', style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600 } }}
-                        />
+                        {/* === Price mode === */}
+                        {chartMode === 'price' && (
+                          <ReferenceLine
+                            yAxisId="price"
+                            y={fixedPrice}
+                            stroke="#EA1C0A"
+                            strokeDasharray="8 4"
+                            strokeWidth={2}
+                            label={{ value: `Fixed: ${fixedPrice} ct/kWh`, position: 'right', style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600 } }}
+                          />
+                        )}
                         {showRenewable && (
                           <Area
                             yAxisId="renew"
@@ -653,40 +744,42 @@ function DynamicInner() {
                             name="Renewable %"
                           />
                         )}
-                        {/* Blue tint: dynamic below fixed (cheaper = good) */}
-                        <Area
-                          yAxisId="price"
-                          dataKey="greenBand"
-                          type="monotone"
-                          fill="#3B82F6"
-                          fillOpacity={0.15}
-                          stroke="none"
-                          isAnimationActive={false}
-                        />
-                        {/* Red tint: dynamic above fixed (more expensive) */}
-                        <Area
-                          yAxisId="price"
-                          dataKey="redBand"
-                          type="monotone"
-                          fill="#EA1C0A"
-                          fillOpacity={0.12}
-                          stroke="none"
-                          isAnimationActive={false}
-                        />
-                        {/* Solid spot line (real data only) */}
-                        <Line
-                          yAxisId="price"
-                          dataKey="spotPrice"
-                          type="monotone"
-                          stroke="#D1D5DB"
-                          strokeWidth={1.5}
-                          dot={false}
-                          activeDot={{ r: 3, fill: '#9CA3AF' }}
-                          connectNulls={false}
-                          name="Spot"
-                        />
-                        {/* Forecast spot — dashed grey */}
-                        {hasForecastData && (
+                        {chartMode === 'price' && showCheaperBand && (
+                          <Area
+                            yAxisId="price"
+                            dataKey="greenBand"
+                            type="monotone"
+                            fill="#3B82F6"
+                            fillOpacity={0.15}
+                            stroke="none"
+                            isAnimationActive={false}
+                          />
+                        )}
+                        {chartMode === 'price' && showExpensiveBand && (
+                          <Area
+                            yAxisId="price"
+                            dataKey="redBand"
+                            type="monotone"
+                            fill="#EA1C0A"
+                            fillOpacity={0.12}
+                            stroke="none"
+                            isAnimationActive={false}
+                          />
+                        )}
+                        {chartMode === 'price' && (
+                          <Line
+                            yAxisId="price"
+                            dataKey="spotPrice"
+                            type="monotone"
+                            stroke="#D1D5DB"
+                            strokeWidth={1.5}
+                            dot={false}
+                            activeDot={{ r: 3, fill: '#9CA3AF' }}
+                            connectNulls={false}
+                            name="Spot"
+                          />
+                        )}
+                        {chartMode === 'price' && hasForecastData && (
                           <Line
                             yAxisId="price"
                             dataKey="spotForecast"
@@ -699,20 +792,20 @@ function DynamicInner() {
                             name="Spot (forecast)"
                           />
                         )}
-                        {/* Solid end-customer price (real data only) */}
-                        <Line
-                          yAxisId="price"
-                          dataKey="endPrice"
-                          type="monotone"
-                          stroke="#3B82F6"
-                          strokeWidth={2.5}
-                          dot={isQH ? false : { r: 2, fill: '#3B82F6' }}
-                          activeDot={{ r: 4 }}
-                          connectNulls={false}
-                          name="End Customer Price Dynamic"
-                        />
-                        {/* Forecast end-customer price — dashed amber */}
-                        {hasForecastData && (
+                        {chartMode === 'price' && (
+                          <Line
+                            yAxisId="price"
+                            dataKey="endPrice"
+                            type="monotone"
+                            stroke="#3B82F6"
+                            strokeWidth={2.5}
+                            dot={false}
+                            activeDot={{ r: 4 }}
+                            connectNulls={false}
+                            name="End Customer Price Dynamic"
+                          />
+                        )}
+                        {chartMode === 'price' && hasForecastData && (
                           <Line
                             yAxisId="price"
                             dataKey="endPriceForecast"
@@ -723,6 +816,67 @@ function DynamicInner() {
                             dot={false}
                             connectNulls={false}
                             name="End Price (forecast)"
+                          />
+                        )}
+                        {/* === Cost mode === */}
+                        {chartMode === 'cost' && (
+                          <Line
+                            yAxisId="price"
+                            dataKey="fixedCostCent"
+                            type="monotone"
+                            stroke="#EA1C0A"
+                            strokeDasharray="8 4"
+                            strokeWidth={2}
+                            dot={false}
+                            name="Fixed cost"
+                          />
+                        )}
+                        {chartMode === 'cost' && showCheaperBand && (
+                          <Area
+                            yAxisId="price"
+                            dataKey="costGreenBand"
+                            type="monotone"
+                            fill="#3B82F6"
+                            fillOpacity={0.15}
+                            stroke="none"
+                            isAnimationActive={false}
+                          />
+                        )}
+                        {chartMode === 'cost' && showExpensiveBand && (
+                          <Area
+                            yAxisId="price"
+                            dataKey="costRedBand"
+                            type="monotone"
+                            fill="#EA1C0A"
+                            fillOpacity={0.12}
+                            stroke="none"
+                            isAnimationActive={false}
+                          />
+                        )}
+                        {chartMode === 'cost' && (
+                          <Line
+                            yAxisId="price"
+                            dataKey="dynamicCost"
+                            type="monotone"
+                            stroke="#3B82F6"
+                            strokeWidth={2.5}
+                            dot={false}
+                            activeDot={{ r: 4 }}
+                            connectNulls={false}
+                            name="Dynamic cost"
+                          />
+                        )}
+                        {chartMode === 'cost' && hasForecastData && (
+                          <Line
+                            yAxisId="price"
+                            dataKey="dynamicCostForecast"
+                            type="monotone"
+                            stroke="#D97706"
+                            strokeWidth={2}
+                            strokeDasharray="6 3"
+                            dot={false}
+                            connectNulls={false}
+                            name="Dynamic cost (forecast)"
                           />
                         )}
                         {/* Forecast tint background */}
@@ -749,6 +903,35 @@ function DynamicInner() {
                         )}
                       </ComposedChart>
                     </ResponsiveContainer>
+                    {/* Edge-scroll zones — press & hold to scrub through days */}
+                    <div
+                      className="absolute left-0 top-0 w-12 h-full z-30 flex items-center justify-start pl-1 cursor-w-resize group"
+                      onMouseDown={(e) => { e.preventDefault(); startEdgeScroll(-1) }}
+                      onMouseUp={stopEdgeScroll}
+                      onMouseLeave={stopEdgeScroll}
+                      onTouchStart={(e) => { e.preventDefault(); startEdgeScroll(-1) }}
+                      onTouchEnd={stopEdgeScroll}
+                    >
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white/80 backdrop-blur-sm rounded-full p-1.5 shadow-sm border border-gray-200/60">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 group-active:text-[#EA1C0A] transition-colors">
+                          <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                      </div>
+                    </div>
+                    <div
+                      className="absolute right-0 top-0 w-12 h-full z-30 flex items-center justify-end pr-1 cursor-e-resize group"
+                      onMouseDown={(e) => { e.preventDefault(); startEdgeScroll(1) }}
+                      onMouseUp={stopEdgeScroll}
+                      onMouseLeave={stopEdgeScroll}
+                      onTouchStart={(e) => { e.preventDefault(); startEdgeScroll(1) }}
+                      onTouchEnd={stopEdgeScroll}
+                    >
+                      <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-white/80 backdrop-blur-sm rounded-full p-1.5 shadow-sm border border-gray-200/60">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-gray-400 group-active:text-[#EA1C0A] transition-colors">
+                          <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="h-[320px] flex items-center justify-center text-gray-400 text-sm">
@@ -757,21 +940,34 @@ function DynamicInner() {
                 )}
                 {/* Legend */}
                 <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <span className="w-3 h-0.5 bg-gray-300 inline-block" /> Spot price
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#3B82F6' }} /> End customer price (dynamic)
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <span className="w-3 border-t-2 border-dashed border-[#EA1C0A] inline-block" /> Fixed price (draggable)
-                  </span>
-                  <span className="flex items-center gap-1">
+                  {chartMode === 'price' ? (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 h-0.5 bg-gray-300 inline-block" /> Spot price
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#3B82F6' }} /> End customer price (dynamic)
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 border-t-2 border-dashed border-[#EA1C0A] inline-block" /> Fixed price (draggable)
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#3B82F6' }} /> Dynamic cost ({loadProfile})
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="w-3 border-t-2 border-dashed border-[#EA1C0A] inline-block" /> Fixed cost
+                      </span>
+                    </>
+                  )}
+                  <button onClick={() => setShowCheaperBand(v => !v)} className={`flex items-center gap-1 transition-opacity ${showCheaperBand ? '' : 'opacity-40'}`}>
                     <span className="w-2.5 h-2.5 bg-blue-500 rounded-sm inline-block" style={{ opacity: 0.15 }} /> Dynamic cheaper
-                  </span>
-                  <span className="flex items-center gap-1">
+                  </button>
+                  <button onClick={() => setShowExpensiveBand(v => !v)} className={`flex items-center gap-1 transition-opacity ${showExpensiveBand ? '' : 'opacity-40'}`}>
                     <span className="w-2.5 h-2.5 bg-[#EA1C0A] rounded-sm inline-block" style={{ opacity: 0.12 }} /> Dynamic more expensive
-                  </span>
+                  </button>
                   {showRenewable && (
                     <span className="flex items-center gap-1">
                       <span className="w-2.5 h-2.5 bg-emerald-500 rounded-sm inline-block" style={{ opacity: 0.15 }} /> Renewable %
@@ -893,6 +1089,16 @@ function DynamicInner() {
           </div>
         )}
 
+        {/* Monthly Price Trend — line chart + heatmap table */}
+        {allDailyBreakdownFull.length > 0 && (
+          <div className="mt-4">
+            <MonthlyPriceTrend
+              dailyBreakdown={allDailyBreakdownFull}
+              loadProfile={loadProfile}
+            />
+          </div>
+        )}
+
         {/* Monthly Savings + Yearly Savings — v2-style cards side by side */}
         {(monthlyChartData.length > 0 || yearlySavingsData.length > 0) && (
           <div className="mt-4 grid grid-cols-2 gap-4">
@@ -965,9 +1171,16 @@ function DynamicInner() {
                     ∑ {monthlyChartData[monthlyChartData.length - 1]?.cumulative.toFixed(0) ?? 0} EUR
                   </span>
                 </div>
-                {/* Monthly cost table */}
+                {/* Monthly cost table — collapsible */}
                 <div className="border-t border-gray-100 pt-2">
-                  <table className="w-full text-[10px] tabular-nums">
+                  <button
+                    onClick={() => setShowMonthlyTable(p => !p)}
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-gray-600 font-semibold transition-colors mb-2"
+                  >
+                    <span className="transition-transform inline-block" style={{ transform: showMonthlyTable ? 'rotate(90deg)' : 'rotate(0deg)' }}>▸</span>
+                    Monthly breakdown
+                  </button>
+                  {showMonthlyTable && <table className="w-full text-[10px] tabular-nums">
                     <thead>
                       <tr className="text-gray-400 text-left">
                         <th className="font-medium py-0.5">Month</th>
@@ -1001,7 +1214,7 @@ function DynamicInner() {
                         <td className="py-1 text-right text-gray-500">{monthlyChartData.reduce((s, d) => s + d.consumptionKwh, 0).toFixed(0)}</td>
                       </tr>
                     </tfoot>
-                  </table>
+                  </table>}
                 </div>
               </CardContent>
             </Card>
