@@ -5,7 +5,7 @@ import { usePrices } from '@/lib/use-prices'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ComposedChart, Line, Bar, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, ScatterChart, Scatter, Cell,
+  ResponsiveContainer, ReferenceLine, ReferenceArea, ScatterChart, Scatter, Cell,
 } from 'recharts'
 import {
   calculateYearlyCost, surchargesForYear, totalSurchargesNetto,
@@ -365,17 +365,184 @@ function AnalysisInner() {
     }
   }, [genMix, prices.hourly])
 
-  // Hours where gas likely sets price (heuristic: gas share > 8% and residual load > 20GW)
+  // Hours where gas sets the price: gasMw > 2000 MW (filters out must-run CHP)
+  const GAS_MARGINAL_MW = 2000
   const gasSettingHours = useMemo(() => {
     if (genMix.length === 0) return { febCount: 0, febTotal: 0, marCount: 0, marTotal: 0, febPct: 0, marPct: 0 }
     let febCount = 0, febTotal = 0, marCount = 0, marTotal = 0
     for (const g of genMix) {
-      const isMarginal = g.gasSharePct > 8 && g.residualMw > 20000
+      const isMarginal = g.gasMw > GAS_MARGINAL_MW
       if (g.date >= febStart && g.date < febEnd) { febTotal++; if (isMarginal) febCount++ }
       if (g.date >= marStart && g.date < marEnd) { marTotal++; if (isMarginal) marCount++ }
     }
     return { febCount, febTotal, marCount, marTotal, febPct: febTotal > 0 ? (febCount / febTotal) * 100 : 0, marPct: marTotal > 0 ? (marCount / marTotal) * 100 : 0 }
   }, [genMix])
+
+  // ── Chart 4a: Weekly price curves with gas-marginal shading ──
+  // Build hourly data for Feb and March, grouped into Mon-Sun weeks
+  const weeklyPriceData = useMemo(() => {
+    if (prices.hourly.length === 0 || genMix.length === 0) return { feb: [] as { idx: number; hour: number; day: number; label: string; price: number; gasMarginal: boolean; gasMw: number; date: string; weekLabel: string }[], mar: [] as { idx: number; hour: number; day: number; label: string; price: number; gasMarginal: boolean; gasMw: number; date: string; weekLabel: string }[] }
+
+    // Build gas lookup: date-hour → gasMw
+    const gasMap = new Map<string, number>()
+    for (const g of genMix) gasMap.set(`${g.date}-${g.hour}`, g.gasMw)
+
+    function buildWeekData(startDate: string, endDate: string) {
+      // Get all hourly prices in range
+      const hrs = prices.hourly.filter(p => p.date >= startDate && p.date < endDate && p.minute === 0)
+        .sort((a, b) => a.timestamp - b.timestamp)
+
+      // Group by ISO week (Mon=0 start)
+      const weeks = new Map<string, typeof hrs>()
+      for (const p of hrs) {
+        const d = new Date(p.date + 'T12:00:00Z')
+        const dayOfWeek = (d.getUTCDay() + 6) % 7 // Mon=0, Sun=6
+        // Week key: find the Monday of this week
+        const mon = new Date(d)
+        mon.setUTCDate(mon.getUTCDate() - dayOfWeek)
+        const weekKey = mon.toISOString().slice(0, 10)
+        if (!weeks.has(weekKey)) weeks.set(weekKey, [])
+        weeks.get(weekKey)!.push(p)
+      }
+
+      // Build flat indexed array: each week = 168 slots (7 days × 24 hours)
+      const result: { idx: number; hour: number; day: number; label: string; price: number; gasMarginal: boolean; gasMw: number; date: string; weekLabel: string }[] = []
+      const sortedWeeks = Array.from(weeks.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+
+      for (const [weekStart, weekHrs] of sortedWeeks) {
+        const weekEnd = new Date(weekStart + 'T12:00:00Z')
+        weekEnd.setUTCDate(weekEnd.getUTCDate() + 6)
+        const weekLabel = `${weekStart.slice(5)} – ${weekEnd.toISOString().slice(5, 10)}`
+
+        for (const p of weekHrs) {
+          const d = new Date(p.date + 'T12:00:00Z')
+          const dayOfWeek = (d.getUTCDay() + 6) % 7
+          const idx = dayOfWeek * 24 + p.hour
+          const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+          const gasMw = gasMap.get(`${p.date}-${p.hour}`) ?? 0
+          result.push({
+            idx,
+            hour: p.hour,
+            day: dayOfWeek,
+            label: p.hour === 0 ? dayNames[dayOfWeek] : p.hour === 12 ? '12h' : '',
+            price: p.priceCtKwh,
+            gasMarginal: gasMw > GAS_MARGINAL_MW,
+            gasMw,
+            date: p.date,
+            weekLabel,
+          })
+        }
+      }
+      return result
+    }
+
+    return { feb: buildWeekData(febStart, febEnd), mar: buildWeekData(marStart, marEnd) }
+  }, [prices.hourly, genMix])
+
+  // Aggregate weekly data: average price per slot + gas-marginal frequency
+  const weeklyAvgData = useMemo(() => {
+    function aggregate(data: typeof weeklyPriceData.feb) {
+      const slots = new Map<number, { prices: number[]; gasCount: number; totalGasMw: number }>()
+      for (const d of data) {
+        if (!slots.has(d.idx)) slots.set(d.idx, { prices: [], gasCount: 0, totalGasMw: 0 })
+        const s = slots.get(d.idx)!
+        s.prices.push(d.price)
+        if (d.gasMarginal) s.gasCount++
+        s.totalGasMw += d.gasMw
+      }
+      const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+      return Array.from({ length: 168 }, (_, idx) => {
+        const s = slots.get(idx)
+        const day = Math.floor(idx / 24)
+        const hour = idx % 24
+        const avgPrice = s && s.prices.length > 0 ? s.prices.reduce((a, b) => a + b, 0) / s.prices.length : 0
+        const gasPct = s && s.prices.length > 0 ? (s.gasCount / s.prices.length) * 100 : 0
+        return {
+          idx, day, hour,
+          label: hour === 0 ? dayNames[day] : hour === 12 ? '12h' : '',
+          avgPrice,
+          gasPct,
+          gasFreq: gasPct > 50, // gas was marginal in >50% of weeks
+          avgGasMw: s && s.prices.length > 0 ? s.totalGasMw / s.prices.length : 0,
+          count: s?.prices.length ?? 0,
+        }
+      })
+    }
+    return { feb: aggregate(weeklyPriceData.feb), mar: aggregate(weeklyPriceData.mar) }
+  }, [weeklyPriceData])
+
+  // Combined for overlay chart
+  const weeklyOverlayData = useMemo(() => {
+    return Array.from({ length: 168 }, (_, idx) => {
+      const f = weeklyAvgData.feb[idx]
+      const m = weeklyAvgData.mar[idx]
+      return {
+        idx, label: f.label, day: f.day, hour: f.hour,
+        febPrice: f.avgPrice, marPrice: m.avgPrice,
+        febGasPct: f.gasPct, marGasPct: m.gasPct,
+        febGasMarginal: f.gasFreq, marGasMarginal: m.gasFreq,
+        delta: m.avgPrice - f.avgPrice,
+      }
+    })
+  }, [weeklyAvgData])
+
+  // Build ReferenceArea ranges for gas-marginal hours
+  const gasRanges = useMemo(() => {
+    function findGasRanges(data: typeof weeklyAvgData.feb) {
+      const ranges: { x1: number; x2: number }[] = []
+      let start: number | null = null
+      for (const d of data) {
+        if (d.gasFreq) {
+          if (start === null) start = d.idx
+        } else if (start !== null) {
+          ranges.push({ x1: start, x2: d.idx - 1 })
+          start = null
+        }
+      }
+      if (start !== null) ranges.push({ x1: start, x2: 167 })
+      return ranges
+    }
+    return { feb: findGasRanges(weeklyAvgData.feb), mar: findGasRanges(weeklyAvgData.mar) }
+  }, [weeklyAvgData])
+
+  // ── Chart 4b: 15-min boxplot data ──
+  const qhBoxplotData = useMemo(() => {
+    if (prices.hourlyQH.length === 0) return { feb: [] as { idx: number; label: string; min: number; q25: number; median: number; q75: number; max: number; avg: number }[], mar: [] as { idx: number; label: string; min: number; q25: number; median: number; q75: number; max: number; avg: number }[] }
+
+    function percentile(sorted: number[], p: number): number {
+      if (sorted.length === 0) return 0
+      const i = (sorted.length - 1) * p
+      const lo = Math.floor(i), hi = Math.ceil(i)
+      return lo === hi ? sorted[lo] : sorted[lo] * (hi - i) + sorted[hi] * (i - lo)
+    }
+
+    function buildBoxplot(startDate: string, endDate: string) {
+      // 96 slots per day (4 per hour)
+      const slots: number[][] = Array.from({ length: 96 }, () => [])
+      for (const p of prices.hourlyQH) {
+        if (p.date >= startDate && p.date < endDate) {
+          const slotIdx = p.hour * 4 + Math.floor(p.minute / 15)
+          if (slotIdx >= 0 && slotIdx < 96) slots[slotIdx].push(p.priceCtKwh)
+        }
+      }
+      return slots.map((vals, idx) => {
+        const sorted = vals.slice().sort((a, b) => a - b)
+        const h = Math.floor(idx / 4)
+        const m = (idx % 4) * 15
+        return {
+          idx,
+          label: m === 0 ? `${String(h).padStart(2, '0')}:00` : '',
+          min: sorted.length > 0 ? sorted[0] : 0,
+          q25: percentile(sorted, 0.25),
+          median: percentile(sorted, 0.5),
+          q75: percentile(sorted, 0.75),
+          max: sorted.length > 0 ? sorted[sorted.length - 1] : 0,
+          avg: sorted.length > 0 ? sorted.reduce((a, b) => a + b, 0) / sorted.length : 0,
+        }
+      })
+    }
+    return { feb: buildBoxplot(febStart, febEnd), mar: buildBoxplot(marStart, marEnd) }
+  }, [prices.hourlyQH])
 
   // Full timeline chart data
   const chartData = useMemo(() => {
@@ -819,6 +986,168 @@ function AnalysisInner() {
                 <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2, backgroundColor: '#059669' }} /> RES % Mar</span>
               </>}
               <span className="text-[9px] text-gray-300 ml-auto">Caveat: seasonal/weather effects not isolated</span>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ─── 4a: Weekly Price Curve with Gas-Marginal Shading ─── */}
+        <Card className="shadow-sm border-gray-200/80">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">4a</span>
+              <CardTitle className="text-base font-bold text-[#313131]">Weekly Price Curve — Gas as Price-Setting Fuel</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              Average hourly EPEX Spot DA price across a Mon–Sun week. <span className="font-semibold" style={{ color: '#7C3AED' }}>Purple shading</span> = hours where gas plants were dispatched above {(GAS_MARGINAL_MW / 1000).toFixed(0)} GW (price-setting, beyond must-run CHP).
+              {gasSettingHours.febTotal > 0 && (
+                <span className="ml-1">
+                  Gas on margin: <span className="text-blue-600 font-semibold">{gasSettingHours.febPct.toFixed(0)}% of Feb hours</span> vs. <span className="text-red-600 font-semibold">{gasSettingHours.marPct.toFixed(0)}% of Mar hours</span>.
+                </span>
+              )}
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            {genLoading ? (
+              <p className="text-gray-400 text-[11px] py-8 text-center">Loading generation data...</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-6">
+                {/* Overlay: Feb + Mar on same chart */}
+                <div>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={weeklyOverlayData} margin={{ top: 8, right: 12, bottom: 2, left: 5 }}>
+                        <defs>
+                          <linearGradient id="gasShadeGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#7C3AED" stopOpacity={0.18} />
+                            <stop offset="100%" stopColor="#7C3AED" stopOpacity={0.04} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                        <XAxis dataKey="idx" tick={(props: Record<string, unknown>) => {
+                          const x = Number(props.x ?? 0), y = Number(props.y ?? 0)
+                          const val = (props.payload as { value?: number })?.value ?? 0
+                          const d = weeklyOverlayData[val]
+                          if (!d) return <text />
+                          const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                          if (d.hour === 0) return <text x={x} y={y + 12} textAnchor="middle" fontSize={9} fontWeight={600} fill="#6B7280">{dayNames[d.day]}</text>
+                          if (d.hour === 12) return <text x={x} y={y + 12} textAnchor="middle" fontSize={8} fill="#D1D5DB">12h</text>
+                          return <text />
+                        }} tickLine={false} axisLine={false} interval={0} />
+                        <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                          label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                        <Tooltip content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null
+                          const d = payload[0].payload
+                          const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+                          return (
+                            <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                              <p className="font-semibold text-gray-700 mb-1">{dayNames[d.day]} {String(d.hour).padStart(2, '0')}:00</p>
+                              <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febPrice)} ct</b></p>
+                              <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marPrice)} ct</b></p>
+                              <p className="tabular-nums">Delta: <b className={d.delta > 0 ? 'text-red-600' : 'text-emerald-600'}>{d.delta >= 0 ? '+' : ''}{fmtNum(d.delta)} ct</b></p>
+                              <hr className="my-1 border-gray-100" />
+                              <p className="tabular-nums">Gas on margin: <b className="text-purple-600">{fmtNum(d.febGasPct, 0)}%</b> Feb, <b className="text-purple-600">{fmtNum(d.marGasPct, 0)}%</b> Mar</p>
+                            </div>
+                          )
+                        }} />
+                        {/* Day separator lines */}
+                        {[24, 48, 72, 96, 120, 144].map(idx => (
+                          <ReferenceLine key={`day-${idx}`} x={idx} stroke="#E5E7EB" strokeWidth={1} />
+                        ))}
+                        {/* Gas-marginal shading — March (main story) */}
+                        {gasRanges.mar.map((r, i) => (
+                          <ReferenceArea key={`gm-${i}`} x1={r.x1} x2={r.x2} fill="#7C3AED" fillOpacity={0.12} ifOverflow="hidden" />
+                        ))}
+                        {/* Feb price curve */}
+                        <Area dataKey="febPrice" type="monotone" fill={COLORS.before} fillOpacity={0.06} stroke={COLORS.before} strokeWidth={1.5} dot={false} />
+                        {/* Mar price curve */}
+                        <Line dataKey="marPrice" type="monotone" stroke={COLORS.after} strokeWidth={2.5} dot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex items-center flex-wrap gap-x-4 gap-y-1 mt-2 text-[10px] text-gray-500">
+                    <span className="flex items-center gap-1"><span className="w-3" style={{ height: 1.5, backgroundColor: COLORS.before }} /> Feb avg price</span>
+                    <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.after }} /> Mar avg price</span>
+                    <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: '#7C3AED', opacity: 0.25 }} /> Gas on margin (&gt;{(GAS_MARGINAL_MW / 1000).toFixed(0)} GW dispatch, Mar)</span>
+                    <span className="text-[9px] text-gray-300 ml-auto">SMARD generation + EPEX Spot</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ─── 4b: 15-min Price Distribution Boxplot ─── */}
+        <Card className="shadow-sm border-gray-200/80">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">4b</span>
+              <CardTitle className="text-base font-bold text-[#313131]">Price Distribution by Time of Day — 15-min Resolution</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              Interquartile range (Q25–Q75 band), median line, and min/max whiskers for each 15-min slot. Shows how price volatility shifted from February to March.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="grid grid-cols-2 gap-4">
+              {/* Feb boxplot */}
+              {[
+                { data: qhBoxplotData.feb, label: 'February 2026', color: COLORS.before, fillColor: '#2563EB' },
+                { data: qhBoxplotData.mar, label: 'March 2026', color: COLORS.after, fillColor: '#EA1C0A' },
+              ].map(({ data, label, color, fillColor }) => (
+                <div key={label}>
+                  <p className="text-[10px] font-bold mb-2" style={{ color }}>{label}</p>
+                  <div className="h-[240px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={data} margin={{ top: 8, right: 12, bottom: 2, left: 5 }}>
+                        <defs>
+                          <linearGradient id={`iqr-${fillColor.slice(1)}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={fillColor} stopOpacity={0.15} />
+                            <stop offset="100%" stopColor={fillColor} stopOpacity={0.05} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 8, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                          interval={7} />
+                        <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                          label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                        <Tooltip content={({ active, payload }) => {
+                          if (!active || !payload?.length) return null
+                          const d = payload[0].payload
+                          const h = Math.floor(d.idx / 4)
+                          const m = (d.idx % 4) * 15
+                          return (
+                            <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                              <p className="font-semibold text-gray-700 mb-1">{String(h).padStart(2, '0')}:{String(m).padStart(2, '0')}</p>
+                              <p className="tabular-nums">Max: <b className="text-red-500">{fmtNum(d.max)} ct</b></p>
+                              <p className="tabular-nums">Q75: <b>{fmtNum(d.q75)} ct</b></p>
+                              <p className="tabular-nums">Median: <b style={{ color }}>{fmtNum(d.median)} ct</b></p>
+                              <p className="tabular-nums">Q25: <b>{fmtNum(d.q25)} ct</b></p>
+                              <p className="tabular-nums">Min: <b className="text-blue-500">{fmtNum(d.min)} ct</b></p>
+                              <p className="tabular-nums text-gray-400 mt-0.5">Avg: {fmtNum(d.avg)} ct | Range: {fmtNum(d.max - d.min)} ct</p>
+                            </div>
+                          )
+                        }} />
+                        {/* Min-max whisker band */}
+                        <Area dataKey="max" type="monotone" fill="none" stroke="none" />
+                        <Area dataKey="min" type="monotone" fill="none" stroke={color} strokeWidth={0.5} strokeOpacity={0.3} strokeDasharray="2 2" dot={false} />
+                        <Line dataKey="max" type="monotone" stroke={color} strokeWidth={0.5} strokeOpacity={0.3} strokeDasharray="2 2" dot={false} />
+                        {/* IQR band: Q25 to Q75 */}
+                        <Area dataKey="q75" type="monotone" fill={`url(#iqr-${fillColor.slice(1)})`} stroke={color} strokeWidth={0.5} strokeOpacity={0.4} dot={false} />
+                        <Area dataKey="q25" type="monotone" fill="#FFFFFF" stroke={color} strokeWidth={0.5} strokeOpacity={0.4} dot={false} />
+                        {/* Median line */}
+                        <Line dataKey="median" type="monotone" stroke={color} strokeWidth={2} dot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2, backgroundColor: '#6B7280' }} /> Median</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-200" /> Q25–Q75 (IQR)</span>
+              <span className="flex items-center gap-1"><span className="w-3 border-t border-dashed border-gray-300" /> Min / Max</span>
+              <span className="text-[9px] text-gray-300 ml-auto">SMARD quarter-hourly prices</span>
             </div>
           </CardContent>
         </Card>
