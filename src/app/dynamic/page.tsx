@@ -134,19 +134,23 @@ function DynamicInner() {
       .finally(() => setPlzLoading(false))
   }, [plz]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-select today on initial load (dynamic page shows current date)
+  // Auto-select today on initial load — fall back to lastRealDate if today has no hourly data
   const initialDateSet = useRef(false)
   useEffect(() => {
     if (initialDateSet.current || prices.daily.length === 0) return
     const now = new Date()
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-    const todayEntry = prices.daily.find(d => d.date === today)
-      ?? prices.daily.filter(d => d.date <= today).pop()
-    if (todayEntry) {
-      prices.setSelectedDate(todayEntry.date)
-      initialDateSet.current = true
+    // Check if today actually has hourly price data
+    const todayHasData = prices.hourly.some(p => p.date === today)
+    if (todayHasData) {
+      prices.setSelectedDate(today)
+    } else {
+      // Fall back to the last date with real data
+      const fallback = prices.lastRealDate || prices.daily.filter(d => d.date <= today).pop()?.date
+      if (fallback) prices.setSelectedDate(fallback)
     }
-  }, [prices.daily]) // eslint-disable-line react-hooks/exhaustive-deps
+    initialDateSet.current = true
+  }, [prices.daily, prices.hourly, prices.lastRealDate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Yearly cost calculation
   const yearlyResult = useMemo(() => {
@@ -483,38 +487,66 @@ function DynamicInner() {
                 <CardTitle className="text-sm font-bold text-[#313131]">Settings</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Consumption */}
+                {/* PLZ — regional tariff lookup (first field) */}
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      {loadProfile === 'H25' ? 'Yearly Consumption' : 'Yearly Grid Consumption'}
-                    </p>
-                    <span className="text-sm font-bold tabular-nums text-[#313131]">{yearlyKwh.toLocaleString()} kWh</span>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Postal Code (PLZ)</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={5}
+                      placeholder="e.g. 10115"
+                      value={plz}
+                      onChange={e => setPlz(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                      className="w-20 rounded border border-gray-200 px-2 py-1 text-[12px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
+                    />
+                    {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
+                    {plzLocation && !plzLoading && (
+                      <span className="text-[11px] text-gray-600 font-medium truncate">{plzLocation}</span>
+                    )}
+                    {!plz && (
+                      <button
+                        onClick={() => {
+                          if (!navigator.geolocation) return
+                          navigator.geolocation.getCurrentPosition(
+                            async (pos) => {
+                              try {
+                                const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${pos.coords.latitude}&lon=${pos.coords.longitude}&format=json&zoom=18&addressdetails=1`, {
+                                  headers: { 'Accept-Language': 'de' },
+                                })
+                                if (!res.ok) return
+                                const data = await res.json()
+                                const postcode = data?.address?.postcode
+                                if (postcode && /^\d{5}$/.test(postcode)) setPlz(postcode)
+                              } catch {}
+                            },
+                            () => {},
+                            { enableHighAccuracy: false, timeout: 5000 }
+                          )
+                        }}
+                        className="text-[10px] text-gray-400 hover:text-[#EA1C0A] transition-colors whitespace-nowrap"
+                        title="Detect location"
+                      >
+                        Auto-detect
+                      </button>
+                    )}
                   </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={10000}
-                    step={100}
-                    value={yearlyKwh}
-                    onChange={e => setYearlyKwh(Number(e.target.value))}
-                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
-                  />
-                  {loadProfile !== 'H25' && (
+                  {plzLocation && plzSupplier && (
                     <p className="text-[9px] text-gray-400">
-                      Net grid draw after {loadProfile === 'P25' ? 'PV self-consumption (~30%)' : 'PV + battery self-consumption (~60%)'}
+                      Regional grid fee applied ({plzSupplier} area)
+                    </p>
+                  )}
+                  {!plz && (
+                    <p className="text-[9px] text-gray-400">
+                      Enter PLZ for regional grid fees & local tariff offers.
                     </p>
                   )}
                 </div>
 
-                {/* Fixed Price */}
-                <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fixed Price Comparison</p>
-                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
-                  </div>
-                  {/* Tariff presets from PLZ lookup */}
-                  {competitors.length > 0 && (
+                {/* Tariff presets from PLZ lookup — shown right after PLZ */}
+                {competitors.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-gray-100">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Local Tariff Offers</p>
                     <div className="flex flex-col gap-1">
                       {competitors.map(c => {
                         const isActive = Math.abs(fixedPrice - c.ctKwh) < 0.5 && Math.abs(standingCharge - c.standingChargeEur) < 5
@@ -547,7 +579,39 @@ function DynamicInner() {
                         <span className="text-gray-400 ml-1">(manual)</span>
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {/* Consumption */}
+                <div className="space-y-2 pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                      {loadProfile === 'H25' ? 'Yearly Consumption' : 'Yearly Grid Consumption'}
+                    </p>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{yearlyKwh.toLocaleString()} kWh</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={10000}
+                    step={100}
+                    value={yearlyKwh}
+                    onChange={e => setYearlyKwh(Number(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                  />
+                  {loadProfile !== 'H25' && (
+                    <p className="text-[9px] text-gray-400">
+                      Net grid draw after {loadProfile === 'P25' ? 'PV self-consumption (~30%)' : 'PV + battery self-consumption (~60%)'}
+                    </p>
                   )}
+                </div>
+
+                {/* Fixed Price */}
+                <div className="space-y-2 pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fixed Price Comparison</p>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
+                  </div>
                   <input
                     type="range"
                     min={20}
@@ -602,40 +666,10 @@ function DynamicInner() {
                   </div>
                 </div>
 
-                {/* PLZ — regional tariff lookup */}
-                <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Postal Code (PLZ)</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="tel"
-                      inputMode="numeric"
-                      maxLength={5}
-                      placeholder="e.g. 10115"
-                      value={plz}
-                      onChange={e => setPlz(e.target.value.replace(/\D/g, '').slice(0, 5))}
-                      className="w-20 rounded border border-gray-200 px-2 py-1 text-[12px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
-                    />
-                    {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
-                    {plzLocation && !plzLoading && (
-                      <span className="text-[11px] text-gray-600 font-medium truncate">{plzLocation}</span>
-                    )}
-                  </div>
-                  {plzLocation && plzSupplier && (
-                    <p className="text-[9px] text-gray-400">
-                      Regional grid fee applied ({plzSupplier} area)
-                    </p>
-                  )}
-                  {!plz && (
-                    <p className="text-[9px] text-gray-400">
-                      Enter PLZ for regional grid fees. Default: national avg.
-                    </p>
-                  )}
-                </div>
-
                 {/* Surcharges */}
                 <div className="space-y-2 pt-2 border-t border-gray-100">
                   <button onClick={() => setShowSurcharges(!showSurcharges)} className="w-full flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Price Components</p>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Price Components (Dynamic)</p>
                     <svg className={`w-4 h-4 text-gray-400 transition-transform ${showSurcharges ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
@@ -651,7 +685,7 @@ function DynamicInner() {
 
                   {showSurcharges && (
                     <div className="pt-2 border-t border-gray-100 space-y-2">
-                      <p className="text-[10px] text-gray-400">endPrice = (spot + surcharges) x 1.19</p>
+                      <p className="text-[10px] text-gray-400">Dynamic end price = (EPEX Spot + surcharges below) x 1.19 VAT</p>
                       {SURCHARGE_FIELDS.map(f => (
                         <div key={f.key} className="flex items-center justify-between gap-2">
                           <span className="text-[10px] text-gray-600 flex-1">{f.label}</span>
