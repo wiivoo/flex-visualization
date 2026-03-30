@@ -481,15 +481,14 @@ function DynamicInner() {
         {/* Two-column layout */}
         <div className="flex gap-6">
           {/* ── Left Sidebar: Settings (single card, sticky) ── */}
-          <div className="w-[300px] flex-shrink-0 sticky top-6 self-start">
+          <div className="w-[300px] flex-shrink-0 sticky top-6 self-start space-y-3">
+            {/* ━━━ Section 1: Location ━━━ */}
             <Card className="shadow-sm border-gray-200/80">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-bold text-[#313131]">Settings</CardTitle>
+              <CardHeader className="pb-1.5">
+                <CardTitle className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Location</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {/* PLZ — regional tariff lookup (first field) */}
+              <CardContent className="space-y-3 pt-0">
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Postal Code (PLZ)</p>
                   <div className="flex items-center gap-2">
                     <input
                       type="tel"
@@ -498,11 +497,11 @@ function DynamicInner() {
                       placeholder="e.g. 10115"
                       value={plz}
                       onChange={e => setPlz(e.target.value.replace(/\D/g, '').slice(0, 5))}
-                      className="w-20 rounded border border-gray-200 px-2 py-1 text-[12px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
+                      className="w-20 rounded border border-gray-200 px-2 py-1.5 text-[13px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
                     />
                     {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
                     {plzLocation && !plzLoading && (
-                      <span className="text-[11px] text-gray-600 font-medium truncate">{plzLocation}</span>
+                      <span className="text-[12px] text-gray-700 font-medium truncate">{plzLocation}</span>
                     )}
                     {!plz && (
                       <button
@@ -533,7 +532,7 @@ function DynamicInner() {
                   </div>
                   {plzLocation && plzSupplier && (
                     <p className="text-[9px] text-gray-400">
-                      Regional grid fee applied ({plzSupplier} area)
+                      Grid: {plzSupplier}
                     </p>
                   )}
                   {!plz && (
@@ -542,11 +541,19 @@ function DynamicInner() {
                     </p>
                   )}
                 </div>
+              </CardContent>
+            </Card>
 
-                {/* Tariff presets from PLZ lookup — shown right after PLZ */}
+            {/* ━━━ Section 2: Tariff ━━━ */}
+            <Card className="shadow-sm border-gray-200/80">
+              <CardHeader className="pb-1.5">
+                <CardTitle className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Fixed Tariff Comparison</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {/* Local tariff presets from PLZ lookup */}
                 {competitors.length > 0 && (
-                  <div className="space-y-2 pt-2 border-t border-gray-100">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Local Tariff Offers</p>
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-semibold text-gray-500">Local offers</p>
                     <div className="flex flex-col gap-1">
                       {competitors.map(c => {
                         const isActive = Math.abs(fixedPrice - c.ctKwh) < 0.5 && Math.abs(standingCharge - c.standingChargeEur) < 5
@@ -582,12 +589,60 @@ function DynamicInner() {
                   </div>
                 )}
 
-                {/* Consumption */}
-                <div className="space-y-2 pt-2 border-t border-gray-100">
+                {/* Fixed Price slider */}
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                      {loadProfile === 'H25' ? 'Yearly Consumption' : 'Yearly Grid Consumption'}
+                    <span className="text-[10px] font-semibold text-gray-500">Energy price</span>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={20}
+                    max={45}
+                    step={0.5}
+                    value={fixedPrice}
+                    onChange={e => setFixedPrice(Number(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                  />
+                  <p className="text-[9px] text-gray-400">Gross incl. all taxes & VAT · drag chart line to adjust</p>
+                </div>
+
+                {/* Standing charge */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-gray-500">Standing charge</span>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{standingCharge} EUR/yr</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={240}
+                    step={6}
+                    value={standingCharge}
+                    onChange={e => setStandingCharge(Number(e.target.value))}
+                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                  />
+                  {standingCharge > 0 && (
+                    <p className="text-[9px] text-gray-400">
+                      = {(standingCharge / 12).toFixed(2)} EUR/mo · added to fixed tariff only
                     </p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ━━━ Section 3: Consumption ━━━ */}
+            <Card className="shadow-sm border-gray-200/80">
+              <CardHeader className="pb-1.5">
+                <CardTitle className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Consumption</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {/* Yearly kWh */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-semibold text-gray-500">
+                      {loadProfile === 'H25' ? 'Yearly consumption' : 'Yearly grid consumption'}
+                    </span>
                     <span className="text-sm font-bold tabular-nums text-[#313131]">{yearlyKwh.toLocaleString()} kWh</span>
                   </div>
                   <input
@@ -606,48 +661,9 @@ function DynamicInner() {
                   )}
                 </div>
 
-                {/* Fixed Price */}
-                <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fixed Price Comparison</p>
-                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={20}
-                    max={45}
-                    step={0.5}
-                    value={fixedPrice}
-                    onChange={e => setFixedPrice(Number(e.target.value))}
-                    className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
-                  />
-                  <p className="text-[9px] text-gray-400">Gross price incl. all taxes & VAT · drag chart line to adjust</p>
-                  {/* Standing charge (Grundpreis) — EUR/year */}
-                  <div className="space-y-1.5 pt-2 border-t border-gray-50">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] text-gray-500">Standing charge</span>
-                      <span className="text-sm font-bold tabular-nums text-[#313131]">{standingCharge} EUR/yr</span>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={240}
-                      step={6}
-                      value={standingCharge}
-                      onChange={e => setStandingCharge(Number(e.target.value))}
-                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
-                    />
-                    {standingCharge > 0 && (
-                      <p className="text-[9px] text-gray-400">
-                        = {(standingCharge / 12).toFixed(2)} EUR/mo · added to fixed tariff only
-                      </p>
-                    )}
-                  </div>
-                </div>
-
                 {/* Load Profile */}
                 <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Load Profile (BDEW)</p>
+                  <p className="text-[10px] font-semibold text-gray-500">Load profile (BDEW)</p>
                   <div className="flex flex-col gap-1.5">
                     {LOAD_PROFILES.map(p => (
                       <button
@@ -666,10 +682,10 @@ function DynamicInner() {
                   </div>
                 </div>
 
-                {/* Surcharges */}
+                {/* Price Components (Dynamic) — collapsible */}
                 <div className="space-y-2 pt-2 border-t border-gray-100">
                   <button onClick={() => setShowSurcharges(!showSurcharges)} className="w-full flex items-center justify-between">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Price Components (Dynamic)</p>
+                    <p className="text-[10px] font-semibold text-gray-500">Price components (dynamic tariff)</p>
                     <svg className={`w-4 h-4 text-gray-400 transition-transform ${showSurcharges ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
