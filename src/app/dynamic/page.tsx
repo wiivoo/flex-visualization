@@ -471,7 +471,7 @@ function DynamicInner() {
     const mouseY = e.clientY - rect.top
     const priceFraction = 1 - (mouseY - plotTop) / plotHeight
     const newPrice = yDomain[0] + priceFraction * (yDomain[1] - yDomain[0])
-    setFixedPrice(Math.max(1, Math.min(80, Math.round(newPrice * 2) / 2)))
+    setFixedPrice(Math.max(1, Math.min(80, Math.round(newPrice * 10) / 10)))
   }, [yDomain])
 
   const handleChartMouseUp = useCallback(() => {
@@ -483,10 +483,7 @@ function DynamicInner() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-[1440px] mx-auto px-8 py-2 flex items-center justify-between">
-          <h1 className="text-sm font-semibold text-gray-400">Flex Visualization — Dynamic Tariff Calculator</h1>
-          <a href="/v2" className="text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
-            ← Charging View
-          </a>
+          <h1 className="text-sm font-semibold text-gray-400">Dynamic Tariff Calculator</h1>
         </div>
       </header>
 
@@ -637,13 +634,13 @@ function DynamicInner() {
                   {/* Supplier fee type toggle */}
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                     <button
-                      onClick={() => { setDynamicFeeType('monthly'); setSurcharges(s => ({ ...s, margin: 0 })) }}
+                      onClick={() => setDynamicFeeType('monthly')}
                       className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'monthly' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                     >
                       Monthly fee
                     </button>
                     <button
-                      onClick={() => { setDynamicFeeType('margin'); setSurcharges(s => ({ ...s, margin: 2.00 })) }}
+                      onClick={() => setDynamicFeeType('margin')}
                       className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'margin' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                     >
                       Margin ct/kWh

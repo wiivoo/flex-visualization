@@ -136,20 +136,72 @@ export async function GET(req: NextRequest) {
     }
 
     // Grid fee and taxes are constant across all hours (verified)
-    // Build competitor tariff list
+    // Build competitor tariff list from Tibber data
     const competitors = (priceData.annualCompetitorCost ?? []).map(c => {
       const consumption = c.assumedConsumption || 2500
-      // Derive ct/kWh brutto from energy total: energyTotal / consumption * 100
       const ctKwh = consumption > 0 ? Math.round((c.energyTotal / consumption) * 10000) / 100 : 0
       return {
         name: c.competitorName,
         type: c.competitorType,
-        ctKwh,                                          // brutto ct/kWh
-        standingChargeEur: Math.round(c.fixedFees * 100) / 100, // brutto EUR/yr
+        ctKwh,
+        standingChargeEur: Math.round(c.fixedFees * 100) / 100,
         yearlyTotalEur: Math.round(c.yearlyTotal * 100) / 100,
         consumption,
+        source: 'tibber' as string,
       }
     })
+
+    // Enrich with Octopus Energy Kraken API (Grundversorger tariff details)
+    try {
+      const krakenRes = await fetch('https://api.oeg-kraken.energy/v1/graphql/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `{
+            defaultElectricitySuppliers(postcode: "${plz}", annualConsumption: 2500) {
+              supplierName
+              tariffs {
+                tariffName
+                unitRatePerKwh
+                annualStandingCharge
+                totalEstimatedAnnualBill
+              }
+            }
+          }`,
+        }),
+      })
+      if (krakenRes.ok) {
+        const krakenData = await krakenRes.json()
+        const suppliers = krakenData?.data?.defaultElectricitySuppliers
+        if (Array.isArray(suppliers)) {
+          for (const s of suppliers) {
+            const tariff = s.tariffs?.[0] // Take first (standard) tariff
+            if (!tariff) continue
+            // unitRatePerKwh is EUR/kWh gross (e.g. 0.3465)
+            const ctKwh = tariff.unitRatePerKwh ? Math.round(parseFloat(tariff.unitRatePerKwh) * 10000) / 100 : 0
+            // annualStandingCharge is EUR/yr gross
+            const standingChargeEur = tariff.annualStandingCharge ? Math.round(parseFloat(tariff.annualStandingCharge) * 100) / 100 : 0
+            const yearlyTotal = tariff.totalEstimatedAnnualBill ? Math.round(parseFloat(tariff.totalEstimatedAnnualBill) * 100) / 100 : 0
+            // Only add if we don't already have this supplier from Tibber
+            const firstWord = s.supplierName?.split(' ')[0]?.toLowerCase() || '___'
+            const alreadyHas = competitors.some(c => c.name.toLowerCase().includes(firstWord))
+            if (!alreadyHas && ctKwh > 0) {
+              competitors.push({
+                name: `${s.supplierName} — ${tariff.tariffName}`,
+                type: 'grundversorgung',
+                ctKwh,
+                standingChargeEur,
+                yearlyTotalEur: yearlyTotal,
+                consumption: 2500,
+                source: 'octopus' as string,
+              })
+            }
+          }
+        }
+      }
+    } catch {
+      // Octopus enrichment is best-effort
+    }
 
     const result = {
       plz,
