@@ -521,7 +521,7 @@ function DynamicInner() {
                       placeholder="e.g. 10115"
                       value={plz}
                       onChange={e => setPlz(e.target.value.replace(/\D/g, '').slice(0, 5))}
-                      className="w-20 rounded border border-gray-200 px-2 py-1.5 text-[13px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
+                      className="w-24 rounded border border-gray-200 px-2 py-1.5 text-[13px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
                     />
                     {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
                     {plzLocation && !plzLoading && (
@@ -995,7 +995,7 @@ function DynamicInner() {
                             stroke="#EA1C0A"
                             strokeDasharray="8 4"
                             strokeWidth={2}
-                            label={{ value: `↕ Fixed: ${fixedPrice} ct/kWh`, position: 'insideLeft', dy: -9, style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600, cursor: 'ns-resize' } }}
+                            label={{ value: `Fixed: ${fixedPrice} ct/kWh`, position: 'insideLeft', dy: -9, style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600, cursor: 'ns-resize' } }}
                           />
                         )}
                         {showRenewable && (

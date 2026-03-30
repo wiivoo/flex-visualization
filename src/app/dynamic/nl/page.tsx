@@ -79,8 +79,10 @@ function NlDynamicInner() {
 
   // NL grid fee is monthly capacity-based (not per-kWh)
   const [monthlyGridFee, setMonthlyGridFee] = useState(27) // EUR/mo typical 3x25A
+  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
 
   const prices = usePrices('NL')
+  const isQH = resolution === 'quarterhour'
 
   // Effective surcharges
   const effectiveSurcharges = useMemo(() => {
@@ -199,9 +201,12 @@ function NlDynamicInner() {
   }, [dateSavingsMap])
 
   // Daily chart data
+  const chartPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+
   const dailyChartData = useMemo(() => {
-    if (prices.hourly.length === 0 || !prices.selectedDate) return []
-    const raw = nlGetDailyEndPrices(prices.hourly, prices.selectedDate, effectiveSurcharges, yearlyKwh, false)
+    if (chartPrices.length === 0 || !prices.selectedDate) return []
+    const useQH = isQH && prices.hourlyQH.length > 0
+    const raw = nlGetDailyEndPrices(chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, useQH)
     return raw.map(d => {
       const fixedCostCent = d.consumptionKwh * fixedPrice
       return {
@@ -220,7 +225,7 @@ function NlDynamicInner() {
         costRedBand: d.costCent > fixedCostCent ? [fixedCostCent, d.costCent] : [fixedCostCent, fixedCostCent],
       }
     })
-  }, [prices.hourly, prices.selectedDate, effectiveSurcharges, yearlyKwh, fixedPrice])
+  }, [chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, fixedPrice, isQH, prices.hourlyQH.length])
 
   const hasForecastData = dailyChartData.some(d => d.isProjected)
   const forecastStartIdx = hasForecastData ? dailyChartData.findIndex(d => d.isProjected) : -1
@@ -471,7 +476,7 @@ function NlDynamicInner() {
                       placeholder="e.g. 1012AB"
                       value={postcode}
                       onChange={e => setPostcode(e.target.value.replace(/[^0-9A-Za-z]/g, '').slice(0, 6))}
-                      className="w-20 rounded border border-gray-200 px-2 py-1.5 text-[13px] tabular-nums text-[#313131] uppercase focus:outline-none focus:ring-1 focus:ring-orange-400/30"
+                      className="w-24 rounded border border-gray-200 px-2 py-1.5 text-[13px] tabular-nums text-[#313131] uppercase focus:outline-none focus:ring-1 focus:ring-orange-400/30"
                     />
                     {postcodeLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
                     {postcodeCity && !postcodeLoading && (
@@ -735,7 +740,7 @@ function NlDynamicInner() {
                       {chartMode === 'cost' ? 'Hourly Cost' : 'Day-Ahead Spot Price (NL)'} — {prices.selectedDate || '...'}
                     </CardTitle>
                     <p className="text-[10px] text-gray-400 mt-0.5">
-                      {chartMode === 'cost' ? 'Flat-profile cost per hour (cent)' : 'EPEX Spot NL hourly prices + energiebelasting + BTW'}
+                      {chartMode === 'cost' ? 'E1A-weighted cost per hour (cent)' : 'EPEX Spot NL prices + energiebelasting + BTW'}
                       {selectedDayTotals && (
                         <>
                           {' · '}{selectedDayTotals.consumptionKwh.toFixed(2)} kWh
@@ -747,6 +752,18 @@ function NlDynamicInner() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                      <button onClick={() => setResolution('hour')}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                        Hour
+                      </button>
+                      <button onClick={() => setResolution('quarterhour')}
+                        disabled={prices.hourlyQH.length === 0}
+                        title={prices.hourlyQH.length === 0 ? 'No 15-min data available' : '15-minute resolution'}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+                        15min
+                      </button>
+                    </div>
                     <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                       <button onClick={() => setChartMode('price')}
                         className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${chartMode === 'price' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
@@ -808,7 +825,7 @@ function NlDynamicInner() {
                     <ResponsiveContainer width="100%" height="100%">
                       <ComposedChart data={dailyChartData} margin={{ top: 36, right: 40, bottom: 20, left: 10 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                        <XAxis dataKey="label" tick={{ fontSize: 11, fontWeight: 500 }} tickLine={{ stroke: '#D1D5DB', strokeWidth: 1 }} tickSize={6} stroke="#9CA3AF" interval={1} />
+                        <XAxis dataKey="label" tick={{ fontSize: 11, fontWeight: 500 }} tickLine={{ stroke: '#D1D5DB', strokeWidth: 1 }} tickSize={6} stroke="#9CA3AF" interval={isQH ? 7 : 1} />
                         <YAxis yAxisId="price" tick={{ fontSize: 11, fontWeight: 500 }} stroke="#9CA3AF" width={40} domain={yDomain}
                           allowDecimals={chartMode === 'cost'}
                           label={chartMode === 'cost' ? { value: 'cent', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } } : undefined} />
@@ -842,7 +859,7 @@ function NlDynamicInner() {
                         {/* Price mode */}
                         {chartMode === 'price' && (
                           <ReferenceLine yAxisId="price" y={fixedPrice} stroke="#EA1C0A" strokeDasharray="8 4" strokeWidth={2}
-                            label={{ value: `\u2195 Fixed: ${fixedPrice} ct/kWh`, position: 'insideLeft', dy: -9, style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600, cursor: 'ns-resize' } }} />
+                            label={{ value: `Fixed: ${fixedPrice} ct/kWh`, position: 'insideLeft', dy: -9, style: { fontSize: 11, fill: '#EA1C0A', fontWeight: 600, cursor: 'ns-resize' } }} />
                         )}
                         {chartMode === 'price' && showCheaperBand && (
                           <Area yAxisId="price" dataKey="greenBand" type="monotone" fill="#2563EB" fillOpacity={0.12} stroke="none" isAnimationActive={false} />
@@ -881,7 +898,7 @@ function NlDynamicInner() {
                         {forecastStartIdx >= 0 && (
                           <ReferenceArea x1={forecastStartIdx} x2={dailyChartData.length - 1} yAxisId="price" fill="#F59E0B" fillOpacity={0.04} stroke="none" />
                         )}
-                        <Bar yAxisId="cost" dataKey="consumptionKwh" fill="#9CA3AF" fillOpacity={0.20} radius={[2, 2, 0, 0]} maxBarSize={20} name="Consumption" />
+                        <Bar yAxisId="cost" dataKey="consumptionKwh" fill="#9CA3AF" fillOpacity={0.20} radius={[2, 2, 0, 0]} maxBarSize={isQH ? 8 : 20} name="Consumption" />
                       </ComposedChart>
                     </ResponsiveContainer>
                     {/* Edge-scroll zones */}

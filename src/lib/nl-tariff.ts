@@ -8,13 +8,14 @@
  *   - Only 1 surcharge (energiebelasting) vs. 6+ in DE
  *   - BTW is 21% (vs. 19% MwSt in DE)
  *   - Grid fees are capacity-based (monthly fixed), NOT per-kWh
- *   - No BDEW SLP profiles — flat consumption assumed
+ *   - Uses NEDU E1A load profile (verbruiksprofiel) for shaped consumption
  *
  * Verified against Frank Energie API data:
  *   allInPrice ≈ EPEX_spot × 1.21 + 13.41 ct/kWh (constant portion)
  *   where constant = energiebelasting × 1.21
  */
 import type { HourlyPrice } from '@/lib/v2-config'
+import { getNlDayType, getNlHourlyWeights } from '@/lib/nl-slp'
 
 /** NL surcharge components in ct/kWh (before BTW) */
 export interface NlSurcharges {
@@ -164,8 +165,8 @@ const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'S
 /**
  * Calculate yearly cost using NL dynamic tariff vs. fixed tariff.
  *
- * NL uses flat consumption profile (equal across all hours).
- * Daily consumption = yearlyKwh / 365 / 24 per hour.
+ * When useProfile is true, uses NEDU E1A load profile weights.
+ * Otherwise uses flat consumption (equal across all hours).
  */
 export function nlCalculateYearlyCost(
   yearlyKwh: number,
@@ -173,8 +174,9 @@ export function nlCalculateYearlyCost(
   surcharges: NlSurcharges,
   fixedPriceCtKwh: number,
   year: number,
+  useProfile: boolean = true,
 ): NlYearlyCostResult {
-  const hourlyKwh = yearlyKwh / 8760 // flat profile
+  const flatHourlyKwh = yearlyKwh / 8760 // flat profile fallback
 
   // Group prices by date
   const byDate = new Map<string, HourlyPrice[]>()
@@ -193,6 +195,9 @@ export function nlCalculateYearlyCost(
 
   for (const [dateStr, prices] of byDate) {
     const month = dateStr.slice(0, 7)
+    const monthNum = parseInt(dateStr.slice(5, 7))
+    const dayType = getNlDayType(dateStr)
+    const profileWeights = useProfile ? getNlHourlyWeights(monthNum, dayType) : null
 
     const priceByHour = new Map<number, number>()
     for (const p of prices) {
@@ -210,6 +215,9 @@ export function nlCalculateYearlyCost(
       const spotPrice = priceByHour.get(h)
       if (spotPrice === undefined) continue
 
+      const hourlyKwh = profileWeights
+        ? flatHourlyKwh * profileWeights[h]
+        : flatHourlyKwh
       const grossPrice = nlEndCustomerPrice(spotPrice, surcharges)
       dayCostDynamic += hourlyKwh * grossPrice / 100
       dayCostFixed += hourlyKwh * fixedPriceCtKwh / 100
@@ -294,9 +302,12 @@ export function nlGetDailyEndPrices(
   surcharges: NlSurcharges,
   yearlyKwh: number,
   isQH: boolean = false,
+  useProfile: boolean = true,
 ): NlChartDataPoint[] {
-  const hourlyKwh = yearlyKwh / 8760
-  const qhKwh = hourlyKwh / 4
+  const flatHourlyKwh = yearlyKwh / 8760
+  const monthNum = parseInt(dateStr.slice(5, 7))
+  const dayType = getNlDayType(dateStr)
+  const profileWeights = useProfile ? getNlHourlyWeights(monthNum, dayType) : null
 
   const dayPrices = prices.filter(p => p.date === dateStr)
 
@@ -320,6 +331,9 @@ export function nlGetDailyEndPrices(
       const spotPrice = priceBySlot.get(key) ?? priceBySlot.get(`${h}:0`)
       if (spotPrice === undefined) continue
       const endPrice = nlEndCustomerPrice(spotPrice, surcharges)
+      const qhKwh = profileWeights
+        ? flatHourlyKwh * profileWeights[h] / 4
+        : flatHourlyKwh / 4
       result.push({
         hour: h, minute: m,
         label: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`,
@@ -344,6 +358,9 @@ export function nlGetDailyEndPrices(
     const spotPrice = priceByHour.get(h)
     if (spotPrice === undefined) continue
     const endPrice = nlEndCustomerPrice(spotPrice, surcharges)
+    const hourlyKwh = profileWeights
+      ? flatHourlyKwh * profileWeights[h]
+      : flatHourlyKwh
     result.push({
       hour: h, minute: 0,
       label: `${String(h).padStart(2, '0')}:00`,
