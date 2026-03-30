@@ -151,12 +151,6 @@ function NlDynamicInner() {
     initialDateSet.current = true
   }, [prices.daily, prices.hourly, prices.lastRealDate]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Yearly cost
-  const yearlyResult = useMemo(() => {
-    if (prices.hourly.length === 0) return null
-    return nlCalculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, selectedYear)
-  }, [yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, selectedYear])
-
   // All daily breakdowns across all years
   const allDailyBreakdownFull = useMemo(() => {
     if (prices.hourly.length === 0) return []
@@ -707,38 +701,6 @@ function NlDynamicInner() {
               </CardContent>
             </Card>
 
-            {/* Year selector + summary */}
-            {yearlySavingsData.length > 0 && (
-              <Card className="shadow-sm border-gray-200/80">
-                <CardHeader className="pb-1.5">
-                  <CardTitle className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Year Overview</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-2 pt-0">
-                  <div className="flex gap-1">
-                    {yearlySavingsData.map(yd => (
-                      <button key={yd.year} onClick={() => setSelectedYear(yd.year)}
-                        className={`flex-1 text-[11px] font-semibold py-1.5 rounded transition-colors ${selectedYear === yd.year ? 'bg-[#313131] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
-                        {yd.year}
-                      </button>
-                    ))}
-                  </div>
-                  {yearlyResult && (
-                    <div className="text-[11px] space-y-1">
-                      <div className="flex justify-between"><span className="text-gray-500">Days with data</span><span className="tabular-nums font-medium">{yearlyResult.daysWithData}</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Avg dynamic</span><span className="tabular-nums font-semibold text-blue-600">{fmtCt(yearlyResult.avgEffectivePriceCtKwh)} ct/kWh</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Fixed cost</span><span className="tabular-nums font-medium">{fmtEur(yearlyResult.totalFixedCostEur + standingCharge)} EUR</span></div>
-                      <div className="flex justify-between"><span className="text-gray-500">Dynamic cost</span><span className="tabular-nums font-medium">{fmtEur(yearlyResult.totalDynamicCostEur + dynamicMonthlyFeeActive * 12)} EUR</span></div>
-                      <div className="flex justify-between border-t border-gray-100 pt-1">
-                        <span className="text-gray-500 font-semibold">Savings</span>
-                        <span className={`tabular-nums font-bold ${yearlyResult.savingsEur + standingCharge - dynamicMonthlyFeeActive * 12 >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                          {fmtEur(yearlyResult.savingsEur + standingCharge - dynamicMonthlyFeeActive * 12)} EUR/yr
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           {/* ── Right Panel ── */}
@@ -1062,10 +1024,11 @@ function NlDynamicInner() {
           </div>
         )}
 
-        {/* Monthly chart */}
-        {monthlyChartData.length > 0 && (
-          <div className="mt-4">
-            <Card className="overflow-hidden shadow-sm border-gray-200/80">
+        {/* Monthly Savings + Yearly Savings — v2-style cards side by side */}
+        {(monthlyChartData.length > 0 || yearlySavingsData.length > 0) && (
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            {/* Monthly Cost Comparison — grouped bars + savings line */}
+            <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base font-bold text-[#313131]">Monthly Costs — Last 12 Months</CardTitle>
                 <p className="text-[11px] text-gray-500 mt-1">
@@ -1073,8 +1036,8 @@ function NlDynamicInner() {
                   {monthlyChartData.length > 0 && <> · {monthlyChartData[0]?.month} – {monthlyChartData[monthlyChartData.length - 1]?.month}</>}
                 </p>
               </CardHeader>
-              <CardContent className="pt-4 space-y-3">
-                <div className="h-[220px]">
+              <CardContent className="pt-4 space-y-3 flex-1 flex flex-col">
+                <div className="flex-1 min-h-[180px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={monthlyChartData} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
@@ -1136,6 +1099,50 @@ function NlDynamicInner() {
                     ))}</tbody>
                   </table>}
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Yearly Savings — horizontal bar chart per year */}
+            <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
+              <CardHeader className="pb-3 border-b border-gray-100">
+                <CardTitle className="text-base font-bold text-[#313131]">Yearly Savings</CardTitle>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed{standingCharge > 0 ? ` + ${standingCharge} EUR/yr` : ''}
+                </p>
+              </CardHeader>
+              <CardContent className="pt-4 flex-1 flex flex-col justify-center space-y-3">
+                {yearlySavingsData.map(d => {
+                  const maxSavings = Math.max(...yearlySavingsData.map(y => Math.abs(y.savings)), 1)
+                  const barPct = Math.max((Math.abs(d.savings) / maxSavings) * 100, 4)
+                  const isCurrent = d.year === new Date().getFullYear()
+                  const isPartial = d.daysWithData < 360
+                  return (
+                    <div key={d.year}>
+                      <div className="flex items-baseline justify-between mb-1">
+                        <span className={`text-[11px] font-semibold ${isCurrent ? 'text-[#313131]' : 'text-gray-400'}`}>
+                          {d.year}{isPartial ? ' YTD' : ''}
+                        </span>
+                        <span className={`text-[12px] tabular-nums font-bold ${d.savings >= 0 ? (isCurrent ? 'text-emerald-700' : 'text-gray-500') : 'text-red-600'}`}>
+                          {d.savings >= 0 ? '+' : ''}{'\u20AC'}{Math.round(d.savings)}
+                        </span>
+                      </div>
+                      <div className="relative w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className={`relative h-full rounded-full transition-all ${d.savings >= 0 ? (isCurrent ? 'bg-emerald-500' : 'bg-emerald-300') : 'bg-red-400'}`}
+                          style={{ width: `${barPct}%`, opacity: isCurrent ? 0.85 : 0.45 }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[9px] text-gray-400 mt-0.5 tabular-nums">
+                        <span>{d.daysWithData} days · {d.kwhConsumed.toFixed(0)} kWh</span>
+                        <span>
+                          <span className="text-emerald-500">{d.cheaperDays}d cheaper</span>
+                          {' · '}
+                          <span className="text-red-400">{d.expensiveDays}d more expensive</span>
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
               </CardContent>
             </Card>
           </div>
