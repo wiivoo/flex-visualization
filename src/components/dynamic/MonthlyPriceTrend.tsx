@@ -74,6 +74,7 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
 
     for (const d of dailyBreakdown) {
       const yr = parseInt(d.date.slice(0, 4))
+      if (yr < 2025) continue
       const periodIdx = isWeekly ? isoWeek(d.date) - 1 : parseInt(d.month.slice(5, 7)) - 1
       const key = `${yr}-${periodIdx}`
 
@@ -130,13 +131,13 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
     let min = 0, max = 1
     if (metric === 'cost') {
       // For cost (EUR), use aggregated period data (excluding 2022)
-      const costVals = result.filter(r => r.year !== 2022).map(r => r.costEur)
+      const costVals = result.map(r => r.costEur)
       min = costVals.length > 0 ? Math.min(...costVals) : 0
       max = costVals.length > 0 ? Math.max(...costVals) : 1
     } else {
       const rangeVals: number[] = []
       for (const d of dailyBreakdown) {
-        if (parseInt(d.date.slice(0, 4)) === 2022) continue
+        if (parseInt(d.date.slice(0, 4)) < 2025) continue
         if (metric === 'spot') {
           rangeVals.push(d.avgSpotCtKwh)
           if (d.peakHours > 0) rangeVals.push(d.peakSpotSum / d.peakHours)
