@@ -632,20 +632,23 @@ function AnalysisInner() {
       h25Weight: number  // percentage for display
       febResShare: number; marResShare: number
       febGasShare: number; marGasShare: number
+      febCssPositivePct: number  // % of Feb days where CSS ≥ 0 at this hour
       marCssPositivePct: number  // % of March days where CSS ≥ 0 at this hour
       febCssAvg: number; marCssAvg: number
     }[] = []
 
     for (let h = 0; h < 24; h++) {
       const gp = gasHourlyProfile[h]
-      // CSS positive fraction for March
-      let marCssPos = 0, marCssTotal = 0
+      // CSS positive fraction for Feb + March
+      let febCssPos = 0, febCssTotal = 0, marCssPos = 0, marCssTotal = 0
       const febCssVals: number[] = [], marCssVals: number[] = []
       for (const p of prices.hourly) {
         if (p.hour !== h || p.minute !== 0) continue
         const css = cssMap.get(p.timestamp)
         if (p.date >= febStart && p.date < febEnd && css !== undefined) {
           febCssVals.push(css)
+          febCssTotal++
+          if (css >= 0) febCssPos++
         }
         if (p.date >= marStart && p.date < marEnd && css !== undefined) {
           marCssVals.push(css)
@@ -665,6 +668,7 @@ function AnalysisInner() {
         marResShare: gp?.marResShare ?? 0,
         febGasShare: gp?.febGasShare ?? 0,
         marGasShare: gp?.marGasShare ?? 0,
+        febCssPositivePct: febCssTotal > 0 ? (febCssPos / febCssTotal) * 100 : 0,
         marCssPositivePct: marCssTotal > 0 ? (marCssPos / marCssTotal) * 100 : 0,
         febCssAvg: avg(febCssVals) / 10,  // EUR/MWh → ct/kWh
         marCssAvg: avg(marCssVals) / 10,
@@ -1670,14 +1674,19 @@ function AnalysisInner() {
                         <p className="font-semibold text-gray-700 mb-1">{String(d.hour).padStart(2, '0')}:00</p>
                         <div className="space-y-0.5">
                           <p className="tabular-nums"><span className="text-emerald-600">RES share:</span> Feb {fmtNum(d.febResShare, 1)}% → Mar <b>{fmtNum(d.marResShare, 1)}%</b></p>
-                          <p className="tabular-nums"><span className="text-purple-600">CSS ≥ 0:</span> <b>{fmtNum(d.marCssPositivePct, 0)}%</b> of March days (gas profitable)</p>
+                          <p className="tabular-nums"><span className="text-purple-600">CSS ≥ 0:</span> Feb <b>{fmtNum(d.febCssPositivePct, 0)}%</b> → Mar <b>{fmtNum(d.marCssPositivePct, 0)}%</b> of days</p>
                           <p className="tabular-nums text-gray-400">Spot: Feb {fmtNum(d.febSpot)} → Mar {fmtNum(d.marSpot)} ct ({(d.marSpot - d.febSpot) >= 0 ? '+' : ''}{fmtNum(d.marSpot - d.febSpot)})</p>
                         </div>
                       </div>
                     )
                   }} />
-                  {/* Highlight CSS ≥ 0 zones (gas profitable hours) as background bars */}
-                  <Bar yAxisId="css" dataKey="marCssPositivePct" maxBarSize={20} radius={[2, 2, 0, 0]} fillOpacity={0.15}>
+                  {/* CSS ≥ 0 bars: Feb (background, lighter) + March (foreground) */}
+                  <Bar yAxisId="css" dataKey="febCssPositivePct" maxBarSize={24} radius={[2, 2, 0, 0]} fillOpacity={0.08}>
+                    {factChartData.hourlyDetail.map((d, i) => (
+                      <Cell key={i} fill={d.febCssPositivePct > 50 ? '#7C3AED' : '#D4D4D4'} />
+                    ))}
+                  </Bar>
+                  <Bar yAxisId="css" dataKey="marCssPositivePct" maxBarSize={16} radius={[2, 2, 0, 0]} fillOpacity={0.2}>
                     {factChartData.hourlyDetail.map((d, i) => (
                       <Cell key={i} fill={d.marCssPositivePct > 50 ? '#7C3AED' : '#D4D4D4'} />
                     ))}
@@ -1716,7 +1725,8 @@ function AnalysisInner() {
             <div className="flex items-center gap-4 text-[10px] text-gray-500">
               <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.green }} /> Mar RES share</span>
               <span className="flex items-center gap-1"><span className="w-3 border-t-2 border-dashed" style={{ borderColor: COLORS.green }} /> Feb RES share</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400" style={{ opacity: 0.3 }} /> CSS ≥ 0 (gas profitable)</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400" style={{ opacity: 0.1 }} /> Feb CSS ≥ 0</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400" style={{ opacity: 0.3 }} /> Mar CSS ≥ 0</span>
               <span className="text-[9px] text-gray-300 ml-auto">CSS = Spot − (Gas/η + CO₂) | SMARD + EPEX SPOT</span>
             </div>
           </CardContent>

@@ -1137,12 +1137,19 @@ function DynamicInner() {
                             <span className="text-gray-500">Consumption</span>
                             <span className="tabular-nums font-medium text-gray-600">{selectedDayTotals.consumptionKwh.toFixed(2)} kWh</span>
                           </div>
-                          {standingCharge > 0 && (
-                            <div className="flex justify-between text-[12px] leading-snug">
-                              <span className="text-gray-500">Standing charge</span>
-                              <span className="tabular-nums font-medium text-gray-600">{fmtEur(standingCharge)} EUR/yr</span>
-                            </div>
-                          )}
+                          {standingCharge > 0 && (() => {
+                            const daysInMo = prices.selectedDate ? new Date(
+                              parseInt(prices.selectedDate.slice(0, 4)),
+                              parseInt(prices.selectedDate.slice(5, 7)), 0
+                            ).getDate() : 30
+                            const perDay = standingCharge / 12 / daysInMo
+                            return (
+                              <div className="flex justify-between text-[12px] leading-snug">
+                                <span className="text-gray-500">Standing charge</span>
+                                <span className="tabular-nums font-medium text-gray-600">{fmtEur(perDay)} EUR/day</span>
+                              </div>
+                            )
+                          })()}
                         </div>
                         <div className="border-t border-red-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
                           <span className="text-gray-500 font-medium">Daily cost</span>
