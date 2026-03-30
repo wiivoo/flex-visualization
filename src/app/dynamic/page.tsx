@@ -57,6 +57,7 @@ function DynamicInner() {
   const [plzLocation, setPlzLocation] = useState('')
   const [plzLoading, setPlzLoading] = useState(false)
   const [plzSupplier, setPlzSupplier] = useState('')
+  const [competitors, setCompetitors] = useState<{ name: string; type: string; ctKwh: number; standingChargeEur: number; yearlyTotalEur: number }[]>([])
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
   const [showRenewable, setShowRenewable] = useState(false)
   const [standingCharge, setStandingCharge] = useState(() => {
@@ -104,6 +105,7 @@ function DynamicInner() {
     if (!/^\d{5}$/.test(plz)) {
       setPlzLocation('')
       setPlzSupplier('')
+      setCompetitors([])
       return
     }
     setPlzLoading(true)
@@ -113,6 +115,7 @@ function DynamicInner() {
         if (!data) return
         setPlzLocation(data.location || '')
         setPlzSupplier(data.defaultSupplier || '')
+        setCompetitors(data.competitors || [])
         // Apply regional grid fee and taxes breakdown
         // The taxes bundle includes a ~2.15 ct supplier margin — subtract it
         // so we don't double-count with our own margin field
@@ -510,6 +513,41 @@ function DynamicInner() {
                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fixed Price Comparison</p>
                     <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
                   </div>
+                  {/* Tariff presets from PLZ lookup */}
+                  {competitors.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      {competitors.map(c => {
+                        const isActive = Math.abs(fixedPrice - c.ctKwh) < 0.5 && Math.abs(standingCharge - c.standingChargeEur) < 5
+                        const typeLabel = c.type === 'default supplier' ? 'Grundversorger' : c.type === 'market leader' ? 'Market leader' : 'Discount'
+                        return (
+                          <button
+                            key={c.name}
+                            onClick={() => { setFixedPrice(Math.round(c.ctKwh * 2) / 2); setStandingCharge(Math.round(c.standingChargeEur / 6) * 6) }}
+                            className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
+                              isActive
+                                ? 'bg-red-50 border-[#EA1C0A]/30 text-[#313131]'
+                                : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                            }`}
+                          >
+                            <span className="font-semibold">{c.name}</span>
+                            <span className="text-gray-400 ml-1">({typeLabel})</span>
+                            <span className="float-right tabular-nums font-medium">{c.ctKwh.toFixed(1)} ct + {Math.round(c.standingChargeEur)} EUR/yr</span>
+                          </button>
+                        )
+                      })}
+                      <button
+                        onClick={() => { setFixedPrice(34); setStandingCharge(120) }}
+                        className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
+                          competitors.every(c => Math.abs(fixedPrice - c.ctKwh) >= 0.5 || Math.abs(standingCharge - c.standingChargeEur) >= 5)
+                            ? 'bg-gray-50 border-gray-300 text-[#313131]'
+                            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span className="font-semibold">Custom</span>
+                        <span className="text-gray-400 ml-1">(manual)</span>
+                      </button>
+                    </div>
+                  )}
                   <input
                     type="range"
                     min={20}

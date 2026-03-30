@@ -45,6 +45,13 @@ interface HourEntry {
 interface CompetitorCost {
   competitorName: string
   competitorType: string
+  assumedConsumption: number
+  energyTotal: number        // brutto EUR/yr
+  energyTotalExVat: number
+  fixedFees: number          // brutto EUR/yr (standing charge)
+  fixedFeesExVat: number
+  yearlyTotal: number        // brutto EUR/yr
+  yearlyTotalExVat: number
 }
 
 interface PriceOverview {
@@ -129,6 +136,21 @@ export async function GET(req: NextRequest) {
     }
 
     // Grid fee and taxes are constant across all hours (verified)
+    // Build competitor tariff list
+    const competitors = (priceData.annualCompetitorCost ?? []).map(c => {
+      const consumption = c.assumedConsumption || 2500
+      // Derive ct/kWh brutto from energy total: energyTotal / consumption * 100
+      const ctKwh = consumption > 0 ? Math.round((c.energyTotal / consumption) * 10000) / 100 : 0
+      return {
+        name: c.competitorName,
+        type: c.competitorType,
+        ctKwh,                                          // brutto ct/kWh
+        standingChargeEur: Math.round(c.fixedFees * 100) / 100, // brutto EUR/yr
+        yearlyTotalEur: Math.round(c.yearlyTotal * 100) / 100,
+        consumption,
+      }
+    })
+
     const result = {
       plz,
       location: locationData?.valid ? locationData.result : 'Unknown',
@@ -139,6 +161,7 @@ export async function GET(req: NextRequest) {
       defaultSupplier: priceData.annualCompetitorCost?.find(
         c => c.competitorType === 'default supplier'
       )?.competitorName ?? 'Unknown',
+      competitors,
       cached: false,
     }
 
