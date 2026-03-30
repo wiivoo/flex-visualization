@@ -45,7 +45,7 @@ function DynamicInner() {
   })
   const [fixedPrice, setFixedPrice] = useState(() => {
     const v = Number(searchParams.get('fixed'))
-    return v > 0 ? v : 32
+    return v > 0 ? v : 34
   })
   const [selectedYear, setSelectedYear] = useState(() => {
     const v = Number(searchParams.get('year'))
@@ -61,7 +61,7 @@ function DynamicInner() {
   const [showRenewable, setShowRenewable] = useState(false)
   const [standingCharge, setStandingCharge] = useState(() => {
     const v = Number(searchParams.get('grundpreis'))
-    return v >= 0 ? v : 0
+    return v >= 0 ? v : 120
   })
   const [showCheaperBand, setShowCheaperBand] = useState(true)
   const [showExpensiveBand, setShowExpensiveBand] = useState(true)
