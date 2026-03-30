@@ -110,14 +110,16 @@ function DynamicInner() {
         setPlzLocation(data.location || '')
         setPlzSupplier(data.defaultSupplier || '')
         // Apply regional grid fee and taxes breakdown
+        // The taxes bundle includes a ~2.15 ct supplier margin — subtract it
+        // so we don't double-count with our own margin field
+        const SUPPLIER_MARKUP_IN_TAXES = 2.15
         setSurcharges(prev => ({
           ...prev,
           gridFee: data.gridFeeNetto,
-          // taxes = stromsteuer + konzessionsabgabe + kwkg + offshore + par19
-          // Tibber bundles them; back out individual components from the total
-          // Keep known fixed values, adjust konzessionsabgabe to match
+          // Derive regional Konzessionsabgabe from the taxes total
+          // taxes = stromsteuer + kwkg + offshore + par19 + konzessionsabgabe + supplier_markup
           konzessionsabgabe: Math.max(0,
-            data.taxesNetto - prev.stromsteuer - prev.kwkg - prev.offshore - prev.par19
+            data.taxesNetto - SUPPLIER_MARKUP_IN_TAXES - prev.stromsteuer - prev.kwkg - prev.offshore - prev.par19
           ),
         }))
       })
