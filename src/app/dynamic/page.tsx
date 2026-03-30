@@ -53,6 +53,10 @@ function DynamicInner() {
   })
   const [surcharges, setSurcharges] = useState<Surcharges>(() => surchargesForYear(Number(searchParams.get('year')) >= 2020 ? Number(searchParams.get('year')) : 2025))
   const [showSurcharges, setShowSurcharges] = useState(false)
+  const [plz, setPlz] = useState(() => searchParams.get('plz') || '')
+  const [plzLocation, setPlzLocation] = useState('')
+  const [plzLoading, setPlzLoading] = useState(false)
+  const [plzSupplier, setPlzSupplier] = useState('')
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
   const [showRenewable, setShowRenewable] = useState(false)
   const [showCheaperBand, setShowCheaperBand] = useState(true)
@@ -90,6 +94,36 @@ function DynamicInner() {
       setSelectedYear(availableYears[0])
     }
   }, [availableYears, selectedYear])
+
+  // Fetch regional tariff components when PLZ is entered
+  useEffect(() => {
+    if (!/^\d{5}$/.test(plz)) {
+      setPlzLocation('')
+      setPlzSupplier('')
+      return
+    }
+    setPlzLoading(true)
+    fetch(`/api/tariff-components?plz=${plz}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (!data) return
+        setPlzLocation(data.location || '')
+        setPlzSupplier(data.defaultSupplier || '')
+        // Apply regional grid fee and taxes breakdown
+        setSurcharges(prev => ({
+          ...prev,
+          gridFee: data.gridFeeNetto,
+          // taxes = stromsteuer + konzessionsabgabe + kwkg + offshore + par19
+          // Tibber bundles them; back out individual components from the total
+          // Keep known fixed values, adjust konzessionsabgabe to match
+          konzessionsabgabe: Math.max(0,
+            data.taxesNetto - prev.stromsteuer - prev.kwkg - prev.offshore - prev.par19
+          ),
+        }))
+      })
+      .catch(() => {})
+      .finally(() => setPlzLoading(false))
+  }, [plz]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-select today on initial load (dynamic page shows current date)
   const initialDateSet = useRef(false)
@@ -311,8 +345,9 @@ function DynamicInner() {
     p.set('fixed', String(fixedPrice))
     p.set('year', String(selectedYear))
     if (prices.selectedDate) p.set('date', prices.selectedDate)
+    if (plz.length === 5) p.set('plz', plz)
     router.replace(`/dynamic?${p.toString()}`, { scroll: false })
-  }, [yearlyKwh, fixedPrice, selectedYear, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearlyKwh, fixedPrice, selectedYear, prices.selectedDate, plz]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const surchargesTotal = totalSurchargesNetto(surcharges)
   const bruttoSurcharges = surchargesTotal * (1 + VAT_RATE / 100)
@@ -486,6 +521,36 @@ function DynamicInner() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* PLZ — regional tariff lookup */}
+                <div className="space-y-2 pt-2 border-t border-gray-100">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Postal Code (PLZ)</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      maxLength={5}
+                      placeholder="e.g. 10115"
+                      value={plz}
+                      onChange={e => setPlz(e.target.value.replace(/\D/g, '').slice(0, 5))}
+                      className="w-20 rounded border border-gray-200 px-2 py-1 text-[12px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
+                    />
+                    {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
+                    {plzLocation && !plzLoading && (
+                      <span className="text-[11px] text-gray-600 font-medium truncate">{plzLocation}</span>
+                    )}
+                  </div>
+                  {plzLocation && plzSupplier && (
+                    <p className="text-[9px] text-gray-400">
+                      Regional grid fee applied ({plzSupplier} area)
+                    </p>
+                  )}
+                  {!plz && (
+                    <p className="text-[9px] text-gray-400">
+                      Enter PLZ for regional grid fees. Default: national avg.
+                    </p>
+                  )}
                 </div>
 
                 {/* Surcharges */}
