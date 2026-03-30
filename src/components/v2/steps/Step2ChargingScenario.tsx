@@ -924,6 +924,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; wdLS: number; weLS: number; wdArb: number; weArb: number }>()
     for (const w of overnightWindows) {
       if (w.prices.length < minSlots) continue
+      if (w.isProjected) continue  // exclude forecast data from monthly trend
       const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, wdLS: 0, weLS: 0, wdArb: 0, weArb: 0 }
       if (w.isWeekend) {
         entry.weSavings += w.savingsEur; entry.weDays++

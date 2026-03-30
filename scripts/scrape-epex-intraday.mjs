@@ -198,12 +198,22 @@ async function isAlreadyCached(dateStr, cachePrefix = '') {
   const cacheType = `${cachePrefix}intraday`
   const { data } = await supabase
     .from('price_cache')
-    .select('cached_at')
+    .select('cached_at, prices_json')
     .eq('date', dateStr)
     .eq('type', cacheType)
     .single()
   if (!data) return false
-  return new Date(data.cached_at) > new Date(Date.now() - 12 * 3600000)
+  // Never consider empty data as cached
+  const prices = data.prices_json || []
+  const validCount = Array.isArray(prices) ? prices.filter(p => p.price_ct_kwh != null).length : 0
+  if (validCount === 0) return false
+  // Past dates: cache for 7 days (data is final). Today/yesterday: 12h (may update).
+  const cachedAt = new Date(data.cached_at)
+  const dateObj = new Date(`${dateStr}T12:00:00Z`)
+  const ageMs = Date.now() - cachedAt.getTime()
+  const daysSinceDate = (Date.now() - dateObj.getTime()) / 86400000
+  const ttlMs = daysSinceDate > 2 ? 7 * 86400000 : 12 * 3600000
+  return ageMs < ttlMs
 }
 
 // --- CLI ---
@@ -267,6 +277,13 @@ async function main() {
   for (const dateStr of toScrape) {
     const entries = await scrapeDate(page, dateStr, area.epexCode)
     if (!entries) continue
+
+    // Guard: never overwrite good data with empty scrape results
+    const validCount = entries.filter(e => e.id_full !== null || e.weight_avg !== null).length
+    if (validCount === 0) {
+      console.log(`  ${dateStr}: 0 valid prices — skipping write to preserve existing data`)
+      continue
+    }
 
     if (dryRun) {
       console.log(`  [DRY] Sample:`)

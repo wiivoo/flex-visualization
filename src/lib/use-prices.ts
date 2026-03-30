@@ -321,9 +321,12 @@ export function usePrices(country: string = 'DE'): PriceData {
       setDaily(dailySummaries)
       setMonthly(deriveMonthlyStats(dailySummaries, merged))
 
-      // Update lastRealDate to include incremental real data
-      const lastNewDate = unique[unique.length - 1].date
-      setLastRealDate(prev => lastNewDate > prev ? lastNewDate : prev)
+      // Update lastRealDate — only advance to the last non-projected date
+      const realPrices = unique.filter(p => !p.isProjected)
+      if (realPrices.length > 0) {
+        const lastRealNewDate = realPrices[realPrices.length - 1].date
+        setLastRealDate(prev => lastRealNewDate > prev ? lastRealNewDate : prev)
+      }
 
       // Only advance selected date if it's empty — don't override user's choice
       // and never advance past yesterday (today/tomorrow may have incomplete data)

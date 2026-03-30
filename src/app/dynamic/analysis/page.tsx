@@ -257,6 +257,15 @@ function AnalysisInner() {
       .finally(() => setGenLoading(false))
   }, [marEnd])
 
+  // CSS (Clean Spark Spread) data — EPEX hourly
+  const [cssData, setCssData] = useState<{ t: number; p: number }[]>([])
+  useEffect(() => {
+    fetch('/data/epex-css.json')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setCssData(data))
+      .catch(() => {})
+  }, [])
+
   // Daily results — profile-weighted
   const allDaily = useMemo(() => {
     if (prices.hourly.length === 0) return []
@@ -594,6 +603,88 @@ function AnalysisInner() {
       marPctNeg: marTotal > 0 ? -(marCounts[i] / marTotal) * 100 : 0,
     }))
   }, [prices.hourly])
+
+  // Chart S4: CSS + H25 consumer impact — "Wall Street vs Main Street"
+  const cssStoryData = useMemo(() => {
+    if (cssData.length === 0 || prices.hourly.length === 0) return null
+    // Build CSS lookup by timestamp
+    const cssMap = new Map<number, number>()
+    for (const c of cssData) cssMap.set(c.t, c.p)
+
+    // Time-of-day buckets
+    const buckets = [
+      { key: 'night', label: 'Night 22–06h', hours: [22, 23, 0, 1, 2, 3, 4, 5] },
+      { key: 'morning', label: 'Morning 06–10h', hours: [6, 7, 8, 9] },
+      { key: 'solar', label: 'Solar Peak 10–16h', hours: [10, 11, 12, 13, 14, 15] },
+      { key: 'evening', label: 'Evening 16–22h', hours: [16, 17, 18, 19, 20, 21] },
+    ]
+
+    // Hourly CSS profiles + spot profiles (Feb vs Mar)
+    const hourlyCSS: { hour: number; febCSS: number; marCSS: number; febSpot: number; marSpot: number }[] = []
+    for (let h = 0; h < 24; h++) {
+      const febCss: number[] = [], marCss: number[] = []
+      const febSpot: number[] = [], marSpot: number[] = []
+      for (const p of prices.hourly) {
+        if (p.hour !== h || p.minute !== 0) continue
+        const css = cssMap.get(p.timestamp)
+        if (p.date >= febStart && p.date < febEnd) {
+          febSpot.push(p.priceCtKwh)
+          if (css !== undefined) febCss.push(css / 10)  // EUR/MWh → ct/kWh
+        }
+        if (p.date >= marStart && p.date < marEnd) {
+          marSpot.push(p.priceCtKwh)
+          if (css !== undefined) marCss.push(css / 10)
+        }
+      }
+      const avg = (a: number[]) => a.length > 0 ? a.reduce((s, v) => s + v, 0) / a.length : 0
+      hourlyCSS.push({ hour: h, febCSS: avg(febCss), marCSS: avg(marCss), febSpot: avg(febSpot), marSpot: avg(marSpot) })
+    }
+
+    // CSS by time-bucket (for grouped bar chart)
+    const bucketData = buckets.map(b => {
+      const febVals: number[] = [], marVals: number[] = []
+      for (const h of b.hours) {
+        if (hourlyCSS[h].febCSS !== 0) febVals.push(hourlyCSS[h].febCSS)
+        if (hourlyCSS[h].marCSS !== 0) marVals.push(hourlyCSS[h].marCSS)
+      }
+      const avg = (a: number[]) => a.length > 0 ? a.reduce((s, v) => s + v, 0) / a.length : 0
+      return { ...b, febCSS: avg(febVals), marCSS: avg(marVals), delta: avg(marVals) - avg(febVals) }
+    })
+
+    // Daily CSS average timeline
+    const cssByDate = new Map<string, number[]>()
+    for (const c of cssData) {
+      const d = new Date(c.t)
+      const dateStr = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+      if (!cssByDate.has(dateStr)) cssByDate.set(dateStr, [])
+      cssByDate.get(dateStr)!.push(c.p / 10) // ct/kWh
+    }
+    const dailyCSS = Array.from(cssByDate.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([date, vals]) => ({
+        date,
+        label: date.slice(5),
+        avg: vals.reduce((a, b) => a + b, 0) / vals.length,
+        min: Math.min(...vals),
+        max: Math.max(...vals),
+        isMarch: date >= marStart,
+      }))
+
+    // H25 monthly cost from allDaily (already computed with profile weighting)
+    const febCost = febDays.reduce((s, d) => s + d.dynamicCostEur, 0)
+    const marCost = marDays.reduce((s, d) => s + d.dynamicCostEur, 0)
+    const febFixed = febDays.reduce((s, d) => s + d.fixedCostEur, 0)
+    const marFixed = marDays.reduce((s, d) => s + d.fixedCostEur, 0)
+    const febDaysN = febDays.length || 1
+    const marDaysN = marDays.length || 1
+    // Normalize to 30 days for fair comparison
+    const febCost30 = (febCost / febDaysN) * 30
+    const marCost30 = (marCost / marDaysN) * 30
+    const febFixed30 = (febFixed / febDaysN) * 30
+    const marFixed30 = (marFixed / marDaysN) * 30
+
+    return { hourlyCSS, bucketData, dailyCSS, febCost30, marCost30, febFixed30, marFixed30 }
+  }, [cssData, prices.hourly, febDays, marDays])
 
   // Full timeline chart data
   const chartData = useMemo(() => {
@@ -1465,6 +1556,213 @@ function AnalysisInner() {
             </div>
           </CardContent>
         </Card>
+
+        {/* S4: Clean Spark Spread + H25 Consumer Impact */}
+        {cssStoryData && (
+        <Card className="shadow-sm border-gray-200/80">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-1.5 py-0.5">S4</span>
+              <CardTitle className="text-base font-bold text-[#313131]">The Gas Margin Squeeze — and Why Your Bill Barely Moved</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              The <b>Clean Spark Spread</b> (CSS) measures what gas plants earn per MWh after fuel + CO₂ costs. It collapsed in March — yet household costs on dynamic tariffs barely changed. The H25 load profile explains why.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-5">
+            {/* Row 1: Daily CSS timeline */}
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 mb-2">Clean Spark Spread — Daily Average (ct/kWh)</p>
+              <div className="h-[220px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={cssStoryData.dailyCSS} margin={{ top: 8, right: 12, bottom: 2, left: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                    <XAxis dataKey="label" tick={{ fontSize: 8, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                      interval={Math.floor(cssStoryData.dailyCSS.length / 10)} />
+                    <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                      label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                    <Tooltip content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const d = payload[0].payload
+                      return (
+                        <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                          <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
+                          <p className="tabular-nums">Avg CSS: <b className={d.avg >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtNum(d.avg)} ct</b></p>
+                          <p className="tabular-nums text-gray-400">Range: {fmtNum(d.min)} to {fmtNum(d.max)} ct</p>
+                        </div>
+                      )
+                    }} />
+                    <ReferenceLine y={0} stroke="#9CA3AF" strokeWidth={1} strokeDasharray="4 3" />
+                    {/* Min-max band */}
+                    <Area dataKey="max" type="monotone" fill="#7C3AED" fillOpacity={0.06} stroke="none" />
+                    <Area dataKey="min" type="monotone" fill="white" fillOpacity={1} stroke="none" />
+                    {/* Daily avg line */}
+                    <Line dataKey="avg" type="monotone" strokeWidth={2} dot={false}
+                      stroke="#7C3AED" />
+                    {(() => {
+                      const idx = cssStoryData.dailyCSS.findIndex(d => d.date >= eventDate)
+                      return idx >= 0 ? <ReferenceLine x={cssStoryData.dailyCSS[idx].label} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2}
+                        label={{ value: 'Feb 28', position: 'top', style: { fontSize: 10, fill: '#EA1C0A', fontWeight: 700 } }} /> : null
+                    })()}
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                <span className="font-semibold text-purple-600">CSS &lt; 0</span> = gas plants lose money. By late March, average CSS hit <b className="text-red-600">{fmtNum(cssStoryData.dailyCSS[cssStoryData.dailyCSS.length - 1]?.avg ?? 0)} ct/kWh</b> — generators losing money on every MWh.
+              </p>
+            </div>
+
+            {/* Row 2: CSS by time-of-day + H25 cost comparison */}
+            <div className="grid grid-cols-2 gap-6">
+              {/* Left: CSS by time block */}
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 mb-2">CSS by Time Block (ct/kWh)</p>
+                <div className="h-[200px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={cssStoryData.bucketData} layout="vertical" margin={{ top: 4, right: 12, bottom: 2, left: 80 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
+                      <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fill: '#6B7280', fontWeight: 600 }} tickLine={false} axisLine={false} width={75} />
+                      <XAxis type="number" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
+                      <Tooltip content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null
+                        const d = payload[0].payload
+                        return (
+                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                            <p className="font-semibold text-gray-700 mb-1">{d.label}</p>
+                            <p className="tabular-nums"><span className="text-blue-600">Feb CSS:</span> <b>{fmtNum(d.febCSS)} ct</b></p>
+                            <p className="tabular-nums"><span className="text-red-600">Mar CSS:</span> <b>{fmtNum(d.marCSS)} ct</b></p>
+                            <p className="tabular-nums font-bold">Δ: <span className="text-red-600">{fmtNum(d.delta)} ct</span></p>
+                          </div>
+                        )
+                      }} />
+                      <ReferenceLine x={0} stroke="#9CA3AF" strokeWidth={1} />
+                      <Bar dataKey="febCSS" fill={COLORS.before} fillOpacity={0.6} barSize={10} radius={[0, 3, 3, 0]} />
+                      <Bar dataKey="marCSS" fill={COLORS.after} fillOpacity={0.6} barSize={10} radius={[0, 3, 3, 0]} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Right: H25 consumer cost comparison */}
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 mb-2">{profile} Consumer — Monthly Cost (30 days, {consumption} kWh/yr)</p>
+                <div className="space-y-3 mt-3">
+                  {/* Dynamic tariff cost */}
+                  <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                    <p className="text-[9px] text-gray-400 font-bold uppercase mb-2">Dynamic Tariff Cost / Month</p>
+                    <div className="flex items-center gap-3">
+                      <div className="text-center">
+                        <p className="text-[9px] text-blue-500 font-bold">FEB</p>
+                        <p className="text-[18px] font-bold tabular-nums text-blue-600">{fmtNum(cssStoryData.febCost30)} €</p>
+                      </div>
+                      <span className="text-gray-300 text-lg">→</span>
+                      <div className="text-center">
+                        <p className="text-[9px] text-red-500 font-bold">MAR</p>
+                        <p className="text-[18px] font-bold tabular-nums text-red-600">{fmtNum(cssStoryData.marCost30)} €</p>
+                      </div>
+                      <div className="ml-auto text-right">
+                        <p className="text-[9px] text-gray-400">DELTA</p>
+                        <p className={`text-[16px] font-bold tabular-nums ${cssStoryData.marCost30 - cssStoryData.febCost30 > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                          {cssStoryData.marCost30 - cssStoryData.febCost30 >= 0 ? '+' : ''}{fmtNum(cssStoryData.marCost30 - cssStoryData.febCost30)} €
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Fixed tariff cost */}
+                  <div className="rounded-lg bg-gray-50 border border-gray-100 p-3">
+                    <p className="text-[9px] text-gray-400 font-bold uppercase mb-2">Fixed Tariff ({fixedPrice} ct/kWh) / Month</p>
+                    <div className="flex items-center gap-3">
+                      <div className="text-center">
+                        <p className="text-[9px] text-blue-500 font-bold">FEB</p>
+                        <p className="text-[18px] font-bold tabular-nums text-blue-600">{fmtNum(cssStoryData.febFixed30)} €</p>
+                      </div>
+                      <span className="text-gray-300 text-lg">→</span>
+                      <div className="text-center">
+                        <p className="text-[9px] text-red-500 font-bold">MAR</p>
+                        <p className="text-[18px] font-bold tabular-nums text-red-600">{fmtNum(cssStoryData.marFixed30)} €</p>
+                      </div>
+                      <div className="ml-auto text-right">
+                        <p className="text-[9px] text-gray-400">DELTA</p>
+                        <p className="text-[16px] font-bold tabular-nums text-gray-500">
+                          {cssStoryData.marFixed30 - cssStoryData.febFixed30 >= 0 ? '+' : ''}{fmtNum(cssStoryData.marFixed30 - cssStoryData.febFixed30)} €
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  {/* CSS wholesale delta for contrast */}
+                  <div className="rounded-lg bg-purple-50/50 border border-purple-200/50 p-3">
+                    <p className="text-[9px] text-purple-400 font-bold uppercase mb-1">Meanwhile on wholesale markets</p>
+                    <p className="text-[11px] text-purple-700">
+                      Avg CSS collapsed from <b className="tabular-nums">{fmtNum(cssStoryData.bucketData.reduce((s, b) => s + b.febCSS, 0) / 4)} ct</b> →{' '}
+                      <b className="tabular-nums text-red-600">{fmtNum(cssStoryData.bucketData.reduce((s, b) => s + b.marCSS, 0) / 4)} ct</b> per kWh.
+                      Gas plants went from marginal profit to losing {fmtNum(Math.abs(cssStoryData.bucketData.reduce((s, b) => s + b.marCSS, 0) / 4))} ct on every kWh generated.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Row 3: The explanation — hourly CSS × H25 profile */}
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 mb-2">Why the disconnect? — Hourly CSS vs. Spot Price (24h profile)</p>
+              <div className="h-[200px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={cssStoryData.hourlyCSS} margin={{ top: 8, right: 12, bottom: 2, left: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                    <XAxis dataKey="hour" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                      tickFormatter={(h: number) => `${String(h).padStart(2, '0')}h`} />
+                    <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                      label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                    <Tooltip content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null
+                      const d = payload[0].payload
+                      return (
+                        <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                          <p className="font-semibold text-gray-700 mb-1">{String(d.hour).padStart(2, '0')}:00</p>
+                          <p className="tabular-nums text-purple-600">Mar CSS: <b>{fmtNum(d.marCSS)} ct</b> (Feb: {fmtNum(d.febCSS)})</p>
+                          <p className="tabular-nums text-gray-600">Mar Spot: <b>{fmtNum(d.marSpot)} ct</b> (Feb: {fmtNum(d.febSpot)})</p>
+                        </div>
+                      )
+                    }} />
+                    <ReferenceLine y={0} stroke="#9CA3AF" strokeWidth={1} strokeDasharray="4 3" />
+                    {/* Feb CSS as thin reference */}
+                    <Line dataKey="febCSS" type="monotone" stroke="#7C3AED" strokeWidth={1} strokeDasharray="4 3" dot={false} />
+                    {/* Mar CSS — the dramatic collapse */}
+                    <Line dataKey="marCSS" type="monotone" stroke="#7C3AED" strokeWidth={2.5} dot={false} />
+                    {/* Mar Spot — what consumers actually pay */}
+                    <Line dataKey="marSpot" type="monotone" stroke={COLORS.after} strokeWidth={1.5} dot={false} />
+                    {/* Shade negative CSS area */}
+                    <Area dataKey="marCSS" type="monotone" fill="#7C3AED" fillOpacity={0.08} stroke="none" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Bottom callout */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-lg bg-purple-50/50 border border-purple-200/50 p-3">
+                <p className="text-[11px] font-bold text-purple-700">Gas plants: squeezed from both sides</p>
+                <p className="text-[10px] text-purple-600/80 mt-0.5">
+                  TTF gas nearly doubled (fuel cost up), while solar floods pushed midday spot prices to zero (revenue down). The CSS collapse from −0.5 to −8.7 ct/kWh at solar peak means generators lose €87/MWh during midday — unprecedented.
+                </p>
+              </div>
+              <div className="rounded-lg bg-emerald-50/50 border border-emerald-200/50 p-3">
+                <p className="text-[11px] font-bold text-emerald-700">{profile} consumers: the averaging effect</p>
+                <p className="text-[10px] text-emerald-600/80 mt-0.5">
+                  The standard load profile spreads consumption across all hours. Expensive evening hours (+3 ct) are offset by cheap solar hours (−2 ct). Net result: dynamic tariff cost moved by just {fmtNum(Math.abs(cssStoryData.marCost30 - cssStoryData.febCost30))} €/month — wholesale chaos barely reaches the consumer.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-4 text-[10px] text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: '#7C3AED' }} /> Mar CSS</span>
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 1, backgroundColor: '#7C3AED', borderTop: '1px dashed' }} /> Feb CSS</span>
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 1.5, backgroundColor: COLORS.after }} /> Mar Spot</span>
+              <span className="text-[9px] text-gray-300 ml-auto">CSS = Spot − (Gas/η + CO₂) | Source: EPEX SPOT</span>
+            </div>
+          </CardContent>
+        </Card>
+        )}
 
         {/* ─── 5: Peak / Off-Peak + DA Spread ─── */}
         <Card className="shadow-sm border-gray-200/80">
