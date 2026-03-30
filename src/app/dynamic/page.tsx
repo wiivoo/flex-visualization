@@ -692,14 +692,13 @@ function DynamicInner() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                   </button>
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-gray-500">Total (netto)</span>
-                    <span className="font-semibold tabular-nums text-[#313131]">{fmtCt(surchargesTotal)} ct/kWh</span>
-                  </div>
-                  <p className="text-[9px] text-gray-400">Included in both fixed and dynamic prices</p>
-
                   {showSurcharges && (
-                    <div className="pt-2 border-t border-gray-100 space-y-2">
+                    <div className="pt-2 space-y-2">
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-gray-500">Total (netto)</span>
+                        <span className="font-semibold tabular-nums text-[#313131]">{fmtCt(surchargesTotal)} ct/kWh</span>
+                      </div>
+                      <p className="text-[9px] text-gray-400 mb-1">Included in both fixed and dynamic prices</p>
                       {SURCHARGE_FIELDS.map(f => (
                         <div key={f.key} className="flex items-center justify-between gap-2">
                           <span className="text-[10px] text-gray-600 flex-1">{f.label}</span>
