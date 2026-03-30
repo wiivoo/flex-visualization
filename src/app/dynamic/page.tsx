@@ -514,10 +514,12 @@ function DynamicInner() {
                     />
                     {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
                     {plzLocation && !plzLoading && (
-                      <span className="text-[12px] text-gray-700 font-medium truncate">
-                        {plzLocation.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')}
-                        {plzSupplier && <span className="text-gray-400 font-normal"> · {plzSupplier}</span>}
-                      </span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[12px] text-gray-700 font-semibold truncate">
+                          {plzLocation.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')}
+                        </span>
+                        {plzSupplier && <span className="text-[10px] text-gray-400 truncate">{plzSupplier}</span>}
+                      </div>
                     )}
                     {!plz && (
                       <button
