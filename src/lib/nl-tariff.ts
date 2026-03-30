@@ -15,7 +15,7 @@
  *   where constant = energiebelasting × 1.21
  */
 import type { HourlyPrice } from '@/lib/v2-config'
-import { getNlDayType, getNlHourlyWeights } from '@/lib/nl-slp'
+import { getNlDayType, getNlHourlyWeights, type NlLoadProfile } from '@/lib/nl-slp'
 
 /** NL surcharge components in ct/kWh (before BTW) */
 export interface NlSurcharges {
@@ -175,6 +175,7 @@ export function nlCalculateYearlyCost(
   fixedPriceCtKwh: number,
   year: number,
   useProfile: boolean = true,
+  profile: NlLoadProfile = 'E1A',
 ): NlYearlyCostResult {
   const flatHourlyKwh = yearlyKwh / 8760 // flat profile fallback
 
@@ -197,7 +198,7 @@ export function nlCalculateYearlyCost(
     const month = dateStr.slice(0, 7)
     const monthNum = parseInt(dateStr.slice(5, 7))
     const dayType = getNlDayType(dateStr)
-    const profileWeights = useProfile ? getNlHourlyWeights(monthNum, dayType) : null
+    const profileWeights = useProfile ? getNlHourlyWeights(monthNum, dayType, profile) : null
 
     const priceByHour = new Map<number, number>()
     for (const p of prices) {
@@ -303,11 +304,12 @@ export function nlGetDailyEndPrices(
   yearlyKwh: number,
   isQH: boolean = false,
   useProfile: boolean = true,
+  profile: NlLoadProfile = 'E1A',
 ): NlChartDataPoint[] {
   const flatHourlyKwh = yearlyKwh / 8760
   const monthNum = parseInt(dateStr.slice(5, 7))
   const dayType = getNlDayType(dateStr)
-  const profileWeights = useProfile ? getNlHourlyWeights(monthNum, dayType) : null
+  const profileWeights = useProfile ? getNlHourlyWeights(monthNum, dayType, profile) : null
 
   const dayPrices = prices.filter(p => p.date === dateStr)
 

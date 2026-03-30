@@ -14,6 +14,7 @@ import {
   nlCalculateYearlyCost, nlGetDailyEndPrices,
   type NlSurcharges,
 } from '@/lib/nl-tariff'
+import { NL_LOAD_PROFILES, type NlLoadProfile } from '@/lib/nl-slp'
 import { DynamicDailySavings } from '@/components/dynamic/DynamicDailySavings'
 import type { DailyResult } from '@/lib/dynamic-tariff'
 
@@ -33,8 +34,8 @@ interface NlProvider {
 const NL_PROVIDERS: NlProvider[] = [
   { name: 'Tibber', type: 'dynamic', monthlyFeeEur: 5.99, marginCtKwh: 0, fixedCtKwh: null },
   { name: 'Frank Energie', type: 'dynamic', monthlyFeeEur: 4.95, marginCtKwh: 0, fixedCtKwh: null },
-  { name: 'EasyEnergy', type: 'dynamic', monthlyFeeEur: 0, marginCtKwh: 0.45, fixedCtKwh: null },
   { name: 'ANWB Energie', type: 'dynamic', monthlyFeeEur: 4.95, marginCtKwh: 0, fixedCtKwh: null },
+  { name: 'EasyEnergy', type: 'dynamic', monthlyFeeEur: 0, marginCtKwh: 0.45, fixedCtKwh: null },
 ]
 
 /* ────── Main Component ────── */
@@ -80,6 +81,7 @@ function NlDynamicInner() {
   // NL grid fee is monthly capacity-based (not per-kWh)
   const [monthlyGridFee, setMonthlyGridFee] = useState(27) // EUR/mo typical 3x25A
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
+  const [loadProfile, setLoadProfile] = useState<NlLoadProfile>('E1A')
 
   const prices = usePrices('NL')
   const isQH = resolution === 'quarterhour'
@@ -158,12 +160,12 @@ function NlDynamicInner() {
     if (prices.hourly.length === 0) return []
     const all: ReturnType<typeof nlCalculateYearlyCost>['dailyBreakdown'] = []
     for (const y of availableYears) {
-      const result = nlCalculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y)
+      const result = nlCalculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y, true, loadProfile)
       all.push(...result.dailyBreakdown)
     }
     all.sort((a, b) => a.date.localeCompare(b.date))
     return all
-  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice])
+  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile])
 
   // 365 days ending at selected date
   const allDailyBreakdown = useMemo(() => {
@@ -206,7 +208,7 @@ function NlDynamicInner() {
   const dailyChartData = useMemo(() => {
     if (chartPrices.length === 0 || !prices.selectedDate) return []
     const useQH = isQH && prices.hourlyQH.length > 0
-    const raw = nlGetDailyEndPrices(chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, useQH)
+    const raw = nlGetDailyEndPrices(chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, useQH, true, loadProfile)
     return raw.map(d => {
       const fixedCostCent = d.consumptionKwh * fixedPrice
       return {
@@ -225,7 +227,7 @@ function NlDynamicInner() {
         costRedBand: d.costCent > fixedCostCent ? [fixedCostCent, d.costCent] : [fixedCostCent, fixedCostCent],
       }
     })
-  }, [chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, fixedPrice, isQH, prices.hourlyQH.length])
+  }, [chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, fixedPrice, isQH, prices.hourlyQH.length, loadProfile])
 
   const hasForecastData = dailyChartData.some(d => d.isProjected)
   const forecastStartIdx = hasForecastData ? dailyChartData.findIndex(d => d.isProjected) : -1
@@ -311,7 +313,7 @@ function NlDynamicInner() {
   const yearlySavingsData = useMemo(() => {
     if (prices.hourly.length === 0) return []
     return availableYears.map(y => {
-      const result = nlCalculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y)
+      const result = nlCalculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y, true, loadProfile)
       const monthsWithData = result.monthlyBreakdown.length
       const standingTotal = standingCharge / 12 * monthsWithData
       const dynamicFeeTotal = dynamicMonthlyFeeActive * monthsWithData
@@ -336,7 +338,7 @@ function NlDynamicInner() {
         expensiveDays,
       }
     }).sort((a, b) => a.year - b.year)
-  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, standingCharge, dynamicMonthlyFeeActive])
+  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, standingCharge, dynamicMonthlyFeeActive, loadProfile])
 
   // URL sync
   useEffect(() => {
@@ -685,7 +687,26 @@ function NlDynamicInner() {
                     onChange={e => setYearlyKwh(Number(e.target.value))}
                     className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
-                  <p className="text-[9px] text-gray-400">Flat consumption profile (equal across all hours)</p>
+                  {/* Load profile selector */}
+                  <div className="space-y-1.5 pt-2 border-t border-gray-100">
+                    <p className="text-[10px] font-semibold text-gray-500">Load profile (NEDU 2025)</p>
+                    <div className="flex flex-col gap-1">
+                      {NL_LOAD_PROFILES.map(p => (
+                        <button
+                          key={p.id}
+                          onClick={() => setLoadProfile(p.id)}
+                          className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
+                            loadProfile === p.id
+                              ? 'bg-orange-50 border-orange-300/50 text-[#313131]'
+                              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          <span className="font-semibold font-mono">{p.label}</span>
+                          <span className="ml-1.5 text-gray-400">{p.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Monthly grid fee */}
@@ -740,7 +761,7 @@ function NlDynamicInner() {
                       {chartMode === 'cost' ? 'Hourly Cost' : 'Day-Ahead Spot Price (NL)'} — {prices.selectedDate || '...'}
                     </CardTitle>
                     <p className="text-[10px] text-gray-400 mt-0.5">
-                      {chartMode === 'cost' ? 'E1A-weighted cost per hour (cent)' : 'EPEX Spot NL prices + energiebelasting + BTW'}
+                      {chartMode === 'cost' ? '{loadProfile}-weighted cost per hour (cent)' : 'EPEX Spot NL prices + energiebelasting + BTW'}
                       {selectedDayTotals && (
                         <>
                           {' · '}{selectedDayTotals.consumptionKwh.toFixed(2)} kWh
@@ -962,7 +983,7 @@ function NlDynamicInner() {
                 <Card className="shadow-sm border-gray-200/80">
                   <CardHeader className="pb-3 border-b border-gray-100">
                     <CardTitle className="text-base font-bold text-[#313131]">Daily Cost Breakdown</CardTitle>
-                    <p className="text-[11px] text-gray-400 mt-1">{prices.selectedDate} · {selectedDayTotals.consumptionKwh.toFixed(2)} kWh · flat profile</p>
+                    <p className="text-[11px] text-gray-400 mt-1">{prices.selectedDate} · {selectedDayTotals.consumptionKwh.toFixed(2)} kWh · {loadProfile} profile</p>
                   </CardHeader>
                   <CardContent className="pt-5 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
@@ -1049,7 +1070,7 @@ function NlDynamicInner() {
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base font-bold text-[#313131]">Monthly Costs — Last 12 Months</CardTitle>
                 <p className="text-[11px] text-gray-500 mt-1">
-                  {yearlyKwh.toLocaleString()} kWh/yr · flat profile
+                  {yearlyKwh.toLocaleString()} kWh/yr · {loadProfile} profile
                   {monthlyChartData.length > 0 && <> · {monthlyChartData[0]?.month} – {monthlyChartData[monthlyChartData.length - 1]?.month}</>}
                 </p>
               </CardHeader>
