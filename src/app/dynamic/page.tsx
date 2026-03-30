@@ -63,7 +63,7 @@ function DynamicInner() {
     const raw = searchParams.get('grundpreis')
     return raw !== null ? Number(raw) : 120
   })
-  const [dynamicFeeType, setDynamicFeeType] = useState<'margin' | 'monthly'>('margin')
+  const [dynamicFeeType, setDynamicFeeType] = useState<'margin' | 'monthly'>('monthly')
   const [dynamicMonthlyFee, setDynamicMonthlyFee] = useState(5.99) // EUR/mo (e.g. Tibber)
   const [showCheaperBand, setShowCheaperBand] = useState(true)
   const [showExpensiveBand, setShowExpensiveBand] = useState(true)
@@ -635,36 +635,19 @@ function DynamicInner() {
                   {/* Supplier fee type toggle */}
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                     <button
-                      onClick={() => { setDynamicFeeType('margin'); setSurcharges(s => ({ ...s, margin: 2.00 })) }}
-                      className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'margin' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                    >
-                      Margin ct/kWh
-                    </button>
-                    <button
                       onClick={() => { setDynamicFeeType('monthly'); setSurcharges(s => ({ ...s, margin: 0 })) }}
                       className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'monthly' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                     >
                       Monthly fee
                     </button>
+                    <button
+                      onClick={() => { setDynamicFeeType('margin'); setSurcharges(s => ({ ...s, margin: 2.00 })) }}
+                      className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'margin' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Margin ct/kWh
+                    </button>
                   </div>
-                  {dynamicFeeType === 'margin' ? (
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500">Supplier margin</span>
-                        <span className="text-sm font-bold tabular-nums text-[#313131]">{surcharges.margin.toFixed(2)} ct/kWh</span>
-                      </div>
-                      <input
-                        type="range"
-                        min={0}
-                        max={5}
-                        step={0.1}
-                        value={surcharges.margin}
-                        onChange={e => setSurcharges(s => ({ ...s, margin: Number(e.target.value) }))}
-                        className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
-                      />
-                      <p className="text-[9px] text-gray-400">Added per kWh on top of spot + surcharges, before VAT</p>
-                    </div>
-                  ) : (
+                  {dynamicFeeType === 'monthly' ? (
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-gray-500">Monthly fee</span>
@@ -680,6 +663,23 @@ function DynamicInner() {
                         className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                       />
                       <p className="text-[9px] text-gray-400">Flat fee (e.g. Tibber 5.99 EUR/mo) · no per-kWh margin</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500">Supplier margin</span>
+                        <span className="text-sm font-bold tabular-nums text-[#313131]">{surcharges.margin.toFixed(2)} ct/kWh</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={5}
+                        step={0.1}
+                        value={surcharges.margin}
+                        onChange={e => setSurcharges(s => ({ ...s, margin: Number(e.target.value) }))}
+                        className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                      />
+                      <p className="text-[9px] text-gray-400">Added per kWh on top of spot + surcharges, before VAT</p>
                     </div>
                   )}
                 </div>
