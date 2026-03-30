@@ -79,7 +79,7 @@ function NlDynamicInner() {
 
   // NL grid fee is monthly capacity-based (not per-kWh)
   const [monthlyGridFee, setMonthlyGridFee] = useState(27) // EUR/mo typical 3x25A
-  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
+  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
 
   const prices = usePrices('NL')
   const isQH = resolution === 'quarterhour'
