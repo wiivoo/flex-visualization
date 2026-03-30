@@ -197,9 +197,10 @@ export function MonthlyPriceTrend({ dailyBreakdown, loadProfile }: Props) {
 
     const dataMin = Math.min(...visibleVals)
     const dataMax = Math.max(...visibleVals)
-    const padding = (dataMax - dataMin) * 0.15 || 2
-    const lo = Math.max(0, Math.floor((dataMin - padding) / 5) * 5)
-    const hi = Math.ceil((dataMax + padding) / 5) * 5
+    const range = dataMax - dataMin || 1
+    const step = range > 20 ? 5 : range > 5 ? 2 : 1
+    const lo = Math.max(0, Math.floor(dataMin / step) * step)
+    const hi = Math.ceil(dataMax / step) * step + step
     return [lo, hi] as [number, number]
   }, [chartData, years, hiddenYears])
 
