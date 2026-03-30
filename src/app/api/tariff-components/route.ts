@@ -93,14 +93,21 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    // Fetch location name and price overview in parallel
-    const [locationRes, priceRes] = await Promise.all([
+    // Fetch location name, price overview, and DSO info in parallel
+    const [locationRes, priceRes, dsoRes] = await Promise.all([
       fetch(`${LOOKUP_BASE}/location?postalCode=${plz}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
       }),
       fetch(`${LOOKUP_BASE}/price-overview?postalCode=${plz}`, {
         headers: { 'User-Agent': 'Mozilla/5.0' },
       }),
+      fetch('https://api.oeg-kraken.energy/v1/graphql/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: `{ streetAddressAutocomplete(postalCode: "${plz}", streetName: "A", first: 1) { edges { node { city electricityNetworkOperator { code name } } } } }`,
+        }),
+      }).catch(() => null),
     ])
 
     if (!priceRes.ok) {
@@ -114,6 +121,20 @@ export async function GET(req: NextRequest) {
       ? await locationRes.json()
       : null
     const priceData: PriceOverview = await priceRes.json()
+
+    // Parse DSO info from Kraken
+    let dsoName: string | null = null
+    let dsoCode: string | null = null
+    try {
+      if (dsoRes?.ok) {
+        const dsoData = await dsoRes.json()
+        const node = dsoData?.data?.streetAddressAutocomplete?.edges?.[0]?.node
+        if (node?.electricityNetworkOperator) {
+          dsoName = node.electricityNetworkOperator.name
+          dsoCode = node.electricityNetworkOperator.code
+        }
+      }
+    } catch { /* best-effort */ }
 
     // Extract components from the first available hour
     const hours = priceData.energy?.yesterdayHours ?? priceData.energy?.todayHours ?? []
@@ -146,28 +167,37 @@ export async function GET(req: NextRequest) {
         ctKwh,
         standingChargeEur: Math.round(c.fixedFees * 100) / 100,
         yearlyTotalEur: Math.round(c.yearlyTotal * 100) / 100,
+        monthlyTotalEur: Math.round(c.yearlyTotal / 12 * 100) / 100,
         consumption,
+        isGreen: false as boolean,
+        validFrom: null as string | null,
         source: 'tibber' as string,
       }
     })
 
-    // Enrich with Octopus Energy Kraken API (Grundversorger tariff details)
+    // Enrich with Octopus Energy Kraken API (all Grundversorger tariff variants)
     try {
       const krakenRes = await fetch('https://api.oeg-kraken.energy/v1/graphql/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: `{
-            defaultElectricitySuppliers(postcode: "${plz}", annualConsumption: 2500) {
+          query: `query DefaultElectricitySuppliers($postcode: String!, $annualConsumption: Int!) {
+            defaultElectricitySuppliers(postcode: $postcode, annualConsumption: $annualConsumption) {
               supplierName
+              supplierNumber
               tariffs {
                 tariffName
-                unitRatePerKwh
-                annualStandingCharge
                 totalEstimatedAnnualBill
+                totalEstimatedMonthlyBill
+                annualStandingCharge
+                monthlyStandingCharge
+                unitRatePerKwh
+                isGreen
+                validFrom
               }
             }
           }`,
+          variables: { postcode: plz, annualConsumption: 2500 },
         }),
       })
       if (krakenRes.ok) {
@@ -175,26 +205,31 @@ export async function GET(req: NextRequest) {
         const suppliers = krakenData?.data?.defaultElectricitySuppliers
         if (Array.isArray(suppliers)) {
           for (const s of suppliers) {
-            const tariff = s.tariffs?.[0] // Take first (standard) tariff
-            if (!tariff) continue
-            // unitRatePerKwh is EUR/kWh gross (e.g. 0.3465)
-            const ctKwh = tariff.unitRatePerKwh ? Math.round(parseFloat(tariff.unitRatePerKwh) * 10000) / 100 : 0
-            // annualStandingCharge is EUR/yr gross
-            const standingChargeEur = tariff.annualStandingCharge ? Math.round(parseFloat(tariff.annualStandingCharge) * 100) / 100 : 0
-            const yearlyTotal = tariff.totalEstimatedAnnualBill ? Math.round(parseFloat(tariff.totalEstimatedAnnualBill) * 100) / 100 : 0
-            // Only add if we don't already have this supplier from Tibber
-            const firstWord = s.supplierName?.split(' ')[0]?.toLowerCase() || '___'
-            const alreadyHas = competitors.some(c => c.name.toLowerCase().includes(firstWord))
-            if (!alreadyHas && ctKwh > 0) {
-              competitors.push({
-                name: `${s.supplierName} — ${tariff.tariffName}`,
-                type: 'grundversorgung',
-                ctKwh,
-                standingChargeEur,
-                yearlyTotalEur: yearlyTotal,
-                consumption: 2500,
-                source: 'octopus' as string,
-              })
+            if (!Array.isArray(s.tariffs)) continue
+            for (const tariff of s.tariffs) {
+              // unitRatePerKwh is EUR/kWh gross (e.g. 0.3465)
+              const ctKwh = tariff.unitRatePerKwh ? Math.round(parseFloat(tariff.unitRatePerKwh) * 10000) / 100 : 0
+              // annualStandingCharge is EUR/yr gross
+              const standingChargeEur = tariff.annualStandingCharge ? Math.round(parseFloat(tariff.annualStandingCharge) * 100) / 100 : 0
+              const yearlyTotal = tariff.totalEstimatedAnnualBill ? Math.round(parseFloat(tariff.totalEstimatedAnnualBill) * 100) / 100 : 0
+              const monthlyTotal = tariff.totalEstimatedMonthlyBill ? Math.round(parseFloat(tariff.totalEstimatedMonthlyBill) * 100) / 100 : 0
+              // Only add if we don't already have this exact tariff from Tibber
+              const firstWord = s.supplierName?.split(' ')[0]?.toLowerCase() || '___'
+              const alreadyHas = competitors.some(c => c.name.toLowerCase().includes(firstWord) && Math.abs(c.ctKwh - ctKwh) < 0.5)
+              if (!alreadyHas && ctKwh > 0) {
+                competitors.push({
+                  name: `${s.supplierName} — ${tariff.tariffName}`,
+                  type: 'grundversorgung',
+                  ctKwh,
+                  standingChargeEur,
+                  yearlyTotalEur: yearlyTotal,
+                  monthlyTotalEur: monthlyTotal,
+                  consumption: 2500,
+                  isGreen: tariff.isGreen ?? false,
+                  validFrom: tariff.validFrom ?? null,
+                  source: 'octopus' as string,
+                })
+              }
             }
           }
         }
@@ -206,6 +241,8 @@ export async function GET(req: NextRequest) {
     const result = {
       plz,
       location: locationData?.valid ? locationData.result : 'Unknown',
+      dso: dsoName,
+      dsoCode,
       gridFeeNetto: Math.round(gridComp.priceExcludingVat * 10000) / 100,   // EUR → ct/kWh
       taxesNetto: Math.round(taxesComp.priceExcludingVat * 10000) / 100,
       gridFeeBrutto: Math.round(gridComp.priceIncludingVat * 10000) / 100,
