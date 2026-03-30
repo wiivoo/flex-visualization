@@ -175,7 +175,7 @@ function DynamicInner() {
     const m = new Map<string, number>()
     for (const d of allDailyBreakdownFull) {
       const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-      m.set(d.date, d.fixedCostEur + standingCharge / daysInMo - d.dynamicCostEur)
+      m.set(d.date, d.fixedCostEur + standingCharge / 12 / daysInMo - d.dynamicCostEur)
     }
     return m
   }, [allDailyBreakdownFull, standingCharge])
@@ -252,7 +252,7 @@ function DynamicInner() {
       parseInt(prices.selectedDate.slice(0, 4)),
       parseInt(prices.selectedDate.slice(5, 7)), 0
     ).getDate() : 30
-    const fixedCost = totalConsumption * fixedPrice / 100 + standingCharge / daysInMonth
+    const fixedCost = totalConsumption * fixedPrice / 100 + standingCharge / 12 / daysInMonth
     const dayType = getDayType(prices.selectedDate)
     const expectedSlots = isQH ? 96 : 24
     return {
@@ -303,7 +303,7 @@ function DynamicInner() {
     let runSum = 0
     return months.filter(m => monthMap.has(m)).map(m => {
       const d = monthMap.get(m)!
-      const fixedWithStanding = d.fixed + standingCharge
+      const fixedWithStanding = d.fixed + standingCharge / 12
       const savings = fixedWithStanding - d.dynamic
       runSum += savings
       const mNum = parseInt(m.slice(5, 7))
@@ -333,13 +333,13 @@ function DynamicInner() {
       const result = calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, y, loadProfile)
       // Add standing charge: pro-rate by months with data
       const monthsWithData = result.monthlyBreakdown.length
-      const standingTotal = standingCharge * monthsWithData
+      const standingTotal = standingCharge / 12 * monthsWithData
       let cheaperDays = 0
       let expensiveDays = 0
       for (const d of result.dailyBreakdown) {
         // Per-day standing charge share
         const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-        const dayFixed = d.fixedCostEur + standingCharge / daysInMo
+        const dayFixed = d.fixedCostEur + standingCharge / 12 / daysInMo
         if (d.dynamicCostEur < dayFixed) cheaperDays++
         else expensiveDays++
       }
@@ -520,30 +520,27 @@ function DynamicInner() {
                     className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
                   <p className="text-[9px] text-gray-400">Gross price incl. all taxes & VAT · drag chart line to adjust</p>
-                  {/* Standing charge (Grundpreis) */}
-                  <div className="flex items-center justify-between pt-2 border-t border-gray-50">
-                    <span className="text-[10px] text-gray-500">Standing charge</span>
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="number"
-                        min={0}
-                        max={30}
-                        step={0.5}
-                        value={standingCharge}
-                        onChange={e => {
-                          const val = Number(e.target.value)
-                          if (!isNaN(val) && val >= 0) setStandingCharge(val)
-                        }}
-                        className="w-16 rounded border border-gray-200 px-1.5 py-0.5 text-[11px] tabular-nums text-right text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
-                      />
-                      <span className="text-[9px] text-gray-400">EUR/mo</span>
+                  {/* Standing charge (Grundpreis) — EUR/year */}
+                  <div className="space-y-1.5 pt-2 border-t border-gray-50">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-gray-500">Standing charge</span>
+                      <span className="text-sm font-bold tabular-nums text-[#313131]">{standingCharge} EUR/yr</span>
                     </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={240}
+                      step={6}
+                      value={standingCharge}
+                      onChange={e => setStandingCharge(Number(e.target.value))}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                    />
+                    {standingCharge > 0 && (
+                      <p className="text-[9px] text-gray-400">
+                        = {(standingCharge / 12).toFixed(2)} EUR/mo · added to fixed tariff only
+                      </p>
+                    )}
                   </div>
-                  {standingCharge > 0 && (
-                    <p className="text-[9px] text-gray-400">
-                      = {(standingCharge * 12).toFixed(0)} EUR/yr added to fixed tariff
-                    </p>
-                  )}
                 </div>
 
                 {/* Load Profile */}
@@ -1143,7 +1140,7 @@ function DynamicInner() {
                           {standingCharge > 0 && (
                             <div className="flex justify-between text-[12px] leading-snug">
                               <span className="text-gray-500">Standing charge</span>
-                              <span className="tabular-nums font-medium text-gray-600">{fmtEur(standingCharge)} EUR/mo</span>
+                              <span className="tabular-nums font-medium text-gray-600">{fmtEur(standingCharge)} EUR/yr</span>
                             </div>
                           )}
                         </div>
@@ -1213,7 +1210,7 @@ function DynamicInner() {
               dailyBreakdown={standingCharge > 0
                 ? allDailyBreakdown.map(d => {
                     const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / daysInMo }
+                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / 12 / daysInMo }
                   })
                 : allDailyBreakdown}
               selectedDate={prices.selectedDate}
@@ -1359,7 +1356,7 @@ function DynamicInner() {
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base font-bold text-[#313131]">Yearly Savings</CardTitle>
                 <p className="text-[11px] text-gray-500 mt-1">
-                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed{standingCharge > 0 ? ` + ${standingCharge} EUR/mo` : ''}
+                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed{standingCharge > 0 ? ` + ${standingCharge} EUR/yr` : ''}
                 </p>
               </CardHeader>
               <CardContent className="pt-4 flex-1 flex flex-col justify-center space-y-3">
