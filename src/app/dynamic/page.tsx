@@ -514,7 +514,10 @@ function DynamicInner() {
                     />
                     {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
                     {plzLocation && !plzLoading && (
-                      <span className="text-[12px] text-gray-700 font-medium truncate">{plzLocation}</span>
+                      <span className="text-[12px] text-gray-700 font-medium truncate">
+                        {plzLocation.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')}
+                        {plzSupplier && <span className="text-gray-400 font-normal"> · {plzSupplier}</span>}
+                      </span>
                     )}
                     {!plz && (
                       <button
@@ -543,11 +546,6 @@ function DynamicInner() {
                       </button>
                     )}
                   </div>
-                  {plzLocation && plzSupplier && (
-                    <p className="text-[9px] text-gray-400">
-                      Grid: {plzSupplier}
-                    </p>
-                  )}
                   {!plz && (
                     <p className="text-[9px] text-gray-400">
                       Enter PLZ for regional grid fees & local tariff offers.
