@@ -105,7 +105,8 @@ export async function GET(req: NextRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: `{ streetAddressAutocomplete(postalCode: "${plz}", streetName: "A", first: 1) { edges { node { city electricityNetworkOperator { code name } } } } }`,
+          query: `query DsoLookup($postalCode: String!, $streetName: String!, $first: Int) { streetAddressAutocomplete(postalCode: $postalCode, streetName: $streetName, first: $first) { edges { node { city electricityNetworkOperator { code name } } } } }`,
+          variables: { postalCode: plz, streetName: 'A', first: 1 },
         }),
       }).catch(() => null),
     ])

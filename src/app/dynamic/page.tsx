@@ -395,7 +395,6 @@ function DynamicInner() {
   // Format helpers
   const fmtEur = (n: number) => n.toFixed(2)
   const fmtCt = (n: number) => n.toFixed(2)
-  const fmtPct = (n: number) => n.toFixed(1)
 
   // Edge-scroll: press & hold left/right to scrub through days (v2-style)
   const sortedDates = useMemo(() => prices.daily.map(d => d.date), [prices.daily])

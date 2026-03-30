@@ -761,7 +761,7 @@ function NlDynamicInner() {
                       {chartMode === 'cost' ? 'Hourly Cost' : 'Day-Ahead Spot Price (NL)'} — {prices.selectedDate || '...'}
                     </CardTitle>
                     <p className="text-[10px] text-gray-400 mt-0.5">
-                      {chartMode === 'cost' ? '{loadProfile}-weighted cost per hour (cent)' : 'EPEX Spot NL prices + energiebelasting + BTW'}
+                      {chartMode === 'cost' ? `${loadProfile}-weighted cost per hour (cent)` : 'EPEX Spot NL prices + energiebelasting + BTW'}
                       {selectedDayTotals && (
                         <>
                           {' · '}{selectedDayTotals.consumptionKwh.toFixed(2)} kWh
@@ -1034,7 +1034,7 @@ function NlDynamicInner() {
                       </div>
                     </div>
                     <p className="text-[10px] text-gray-400">
-                      Drag the dashed fixed-price line on the chart to adjust. Flat consumption profile (equal kWh per hour).
+                      Drag the dashed fixed-price line on the chart to adjust. {loadProfile} consumption profile (NEDU 2025).
                       Grid fee ({monthlyGridFee.toFixed(2)} EUR/mo) applies equally to both tariffs and is excluded from the chart.
                     </p>
                   </CardContent>
