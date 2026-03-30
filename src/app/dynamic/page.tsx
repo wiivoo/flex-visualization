@@ -30,7 +30,6 @@ const SURCHARGE_FIELDS: { key: keyof Surcharges; label: string; fixed?: boolean 
   { key: 'kwkg', label: 'KWKG-Umlage' },
   { key: 'offshore', label: 'Offshore-Netzumlage' },
   { key: 'par19', label: '§19 StromNEV-Umlage' },
-  { key: 'margin', label: 'Supplier Margin' },
 ]
 
 /* ────── Main Component ────── */
@@ -64,6 +63,8 @@ function DynamicInner() {
     const raw = searchParams.get('grundpreis')
     return raw !== null ? Number(raw) : 120
   })
+  const [dynamicFeeType, setDynamicFeeType] = useState<'margin' | 'monthly'>('margin')
+  const [dynamicMonthlyFee, setDynamicMonthlyFee] = useState(5.99) // EUR/mo (e.g. Tibber)
   const [showCheaperBand, setShowCheaperBand] = useState(true)
   const [showExpensiveBand, setShowExpensiveBand] = useState(true)
   const [showMonthlyTable, setShowMonthlyTable] = useState(false)
@@ -82,6 +83,14 @@ function DynamicInner() {
 
   const prices = usePrices('DE')
   const isQH = resolution === 'quarterhour'
+
+  // Effective surcharges: when using monthly fee, set margin to 0
+  const effectiveSurcharges = useMemo(() => {
+    if (dynamicFeeType === 'monthly') return { ...surcharges, margin: 0 }
+    return surcharges
+  }, [surcharges, dynamicFeeType])
+  // Monthly fee for dynamic tariff (added to dynamic cost when in monthly mode)
+  const dynamicMonthlyFeeActive = dynamicFeeType === 'monthly' ? dynamicMonthlyFee : 0
 
   // Available years from price data
   const availableYears = useMemo(() => {
@@ -155,20 +164,20 @@ function DynamicInner() {
   // Yearly cost calculation
   const yearlyResult = useMemo(() => {
     if (prices.hourly.length === 0) return null
-    return calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, selectedYear, loadProfile)
-  }, [yearlyKwh, prices.hourly, surcharges, fixedPrice, selectedYear, loadProfile])
+    return calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, selectedYear, loadProfile)
+  }, [yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, selectedYear, loadProfile])
 
   // All daily breakdowns across all years
   const allDailyBreakdownFull = useMemo(() => {
     if (prices.hourly.length === 0) return []
     const all: import('@/lib/dynamic-tariff').DailyResult[] = []
     for (const y of availableYears) {
-      const result = calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, y, loadProfile)
+      const result = calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y, loadProfile)
       all.push(...result.dailyBreakdown)
     }
     all.sort((a, b) => a.date.localeCompare(b.date))
     return all
-  }, [prices.hourly, availableYears, yearlyKwh, surcharges, fixedPrice, loadProfile])
+  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile])
 
   // 365 days ending at selected date — for heatmap
   const allDailyBreakdown = useMemo(() => {
@@ -182,10 +191,10 @@ function DynamicInner() {
     const m = new Map<string, number>()
     for (const d of allDailyBreakdownFull) {
       const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-      m.set(d.date, d.fixedCostEur + standingCharge / 12 / daysInMo - d.dynamicCostEur)
+      m.set(d.date, d.fixedCostEur + standingCharge / 12 / daysInMo - d.dynamicCostEur - dynamicMonthlyFeeActive / daysInMo)
     }
     return m
-  }, [allDailyBreakdownFull, standingCharge])
+  }, [allDailyBreakdownFull, standingCharge, dynamicMonthlyFeeActive])
 
   const dateStripColorFn = useCallback((date: string): string => {
     const savings = dateSavingsMap.get(date)
@@ -214,7 +223,7 @@ function DynamicInner() {
   const chartPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
   const dailyChartData = useMemo(() => {
     if (chartPrices.length === 0 || !prices.selectedDate) return []
-    const raw = getDailyEndPrices(chartPrices, prices.selectedDate, surcharges, yearlyKwh, isQH && prices.hourlyQH.length > 0, generationForDate, loadProfile)
+    const raw = getDailyEndPrices(chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, isQH && prices.hourlyQH.length > 0, generationForDate, loadProfile)
     // Split into solid + forecast lines, add shading fields
     const mapped = raw.map((d, _i) => {
       const fixedCostCent = d.consumptionKwh * fixedPrice
@@ -243,7 +252,7 @@ function DynamicInner() {
       mapped[firstFcIdx - 1].dynamicCostForecast = mapped[firstFcIdx - 1].dynamicCost
     }
     return mapped
-  }, [chartPrices, prices.selectedDate, surcharges, yearlyKwh, isQH, prices.hourlyQH.length, generationForDate, fixedPrice, loadProfile])
+  }, [chartPrices, prices.selectedDate, effectiveSurcharges, yearlyKwh, isQH, prices.hourlyQH.length, generationForDate, fixedPrice, loadProfile])
 
   // Forecast detection
   const hasForecastData = dailyChartData.some(d => d.isProjected)
@@ -252,13 +261,15 @@ function DynamicInner() {
   // Daily totals for selected date
   const selectedDayTotals = useMemo(() => {
     if (dailyChartData.length === 0) return null
-    const dynamicCost = dailyChartData.reduce((s, d) => s + d.costCent, 0) / 100
+    const dynamicCostEnergy = dailyChartData.reduce((s, d) => s + d.costCent, 0) / 100
     const totalConsumption = dailyChartData.reduce((s, d) => s + d.consumptionKwh, 0)
     // Add standing charge pro-rated per day
     const daysInMonth = prices.selectedDate ? new Date(
       parseInt(prices.selectedDate.slice(0, 4)),
       parseInt(prices.selectedDate.slice(5, 7)), 0
     ).getDate() : 30
+    // Dynamic cost includes monthly fee pro-rated per day
+    const dynamicCost = dynamicCostEnergy + dynamicMonthlyFeeActive / daysInMonth
     const fixedCost = totalConsumption * fixedPrice / 100 + standingCharge / 12 / daysInMonth
     const dayType = getDayType(prices.selectedDate)
     const expectedSlots = isQH ? 96 : 24
@@ -272,7 +283,7 @@ function DynamicInner() {
       slotsAvailable: dailyChartData.length,
       slotsExpected: expectedSlots,
     }
-  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH, standingCharge])
+  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH, standingCharge, dynamicMonthlyFeeActive])
 
   // Monthly chart data — rolling 12 months ending at selected date
   const monthlyChartData = useMemo(() => {
@@ -311,7 +322,8 @@ function DynamicInner() {
     return months.filter(m => monthMap.has(m)).map(m => {
       const d = monthMap.get(m)!
       const fixedWithStanding = d.fixed + standingCharge / 12
-      const savings = fixedWithStanding - d.dynamic
+      const dynamicWithFee = d.dynamic + dynamicMonthlyFeeActive
+      const savings = fixedWithStanding - dynamicWithFee
       runSum += savings
       const mNum = parseInt(m.slice(5, 7))
       const mYear = parseInt(m.slice(0, 4))
@@ -326,34 +338,35 @@ function DynamicInner() {
         daysWithData: d.days,
         avgSpotCtKwh: d.kwhSum > 0 ? d.spotSum / d.kwhSum : 0,
         avgEndPriceCtKwh: d.kwhSum > 0 ? (d.endPriceSum / d.kwhSum) * 100 : 0,
-        dynamicCostEur: d.dynamic,
+        dynamicCostEur: dynamicWithFee,
         fixedCostEur: fixedWithStanding,
         consumptionKwh: d.consumption,
       }
     })
-  }, [allDailyBreakdown, prices.selectedDate, standingCharge])
+  }, [allDailyBreakdown, prices.selectedDate, standingCharge, dynamicMonthlyFeeActive])
 
   // Yearly savings per available year (for yearly bar chart)
   const yearlySavingsData = useMemo(() => {
     if (prices.hourly.length === 0) return []
     return availableYears.map(y => {
-      const result = calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, y, loadProfile)
+      const result = calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y, loadProfile)
       // Add standing charge: pro-rate by months with data
       const monthsWithData = result.monthlyBreakdown.length
       const standingTotal = standingCharge / 12 * monthsWithData
+      const dynamicFeeTotal = dynamicMonthlyFeeActive * monthsWithData
       let cheaperDays = 0
       let expensiveDays = 0
       for (const d of result.dailyBreakdown) {
-        // Per-day standing charge share
         const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
         const dayFixed = d.fixedCostEur + standingCharge / 12 / daysInMo
-        if (d.dynamicCostEur < dayFixed) cheaperDays++
+        const dayDynamic = d.dynamicCostEur + dynamicMonthlyFeeActive / daysInMo
+        if (dayDynamic < dayFixed) cheaperDays++
         else expensiveDays++
       }
       return {
         year: y,
-        savings: result.savingsEur + standingTotal,
-        dynamicCost: result.totalDynamicCostEur,
+        savings: result.savingsEur + standingTotal - dynamicFeeTotal,
+        dynamicCost: result.totalDynamicCostEur + dynamicFeeTotal,
         fixedCost: result.totalFixedCostEur + standingTotal,
         avgDynamic: result.avgEffectivePriceCtKwh,
         daysWithData: result.daysWithData,
@@ -362,7 +375,7 @@ function DynamicInner() {
         expensiveDays,
       }
     }).sort((a, b) => a.year - b.year)
-  }, [prices.hourly, availableYears, yearlyKwh, surcharges, fixedPrice, loadProfile, standingCharge])
+  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile, standingCharge, dynamicFeeType, dynamicMonthlyFee])
 
   // URL sync
   useEffect(() => {
@@ -376,7 +389,7 @@ function DynamicInner() {
     router.replace(`/dynamic?${p.toString()}`, { scroll: false })
   }, [yearlyKwh, fixedPrice, selectedYear, prices.selectedDate, plz, standingCharge]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const surchargesTotal = totalSurchargesNetto(surcharges)
+  const surchargesTotal = totalSurchargesNetto(effectiveSurcharges)
   const bruttoSurcharges = surchargesTotal * (1 + VAT_RATE / 100)
 
   // Format helpers
@@ -544,24 +557,25 @@ function DynamicInner() {
               </CardContent>
             </Card>
 
-            {/* ━━━ Section 2: Tariff ━━━ */}
+            {/* ━━━ Section 2: Tariffs ━━━ */}
             <Card className="shadow-sm border-gray-200/80">
               <CardHeader className="pb-1.5">
-                <CardTitle className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Fixed Tariff Comparison</CardTitle>
+                <CardTitle className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Tariffs</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-0">
-                {/* Local tariff presets from PLZ lookup */}
-                {competitors.length > 0 && (
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] font-semibold text-gray-500">Local offers</p>
+                {/* ── Fixed tariff ── */}
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Fixed Tariff</p>
+                  {/* Local tariff presets from PLZ lookup */}
+                  {competitors.length > 0 && (
                     <div className="flex flex-col gap-1">
                       {competitors.map(c => {
-                        const isActive = Math.abs(fixedPrice - c.ctKwh) < 0.5 && Math.abs(standingCharge - c.standingChargeEur) < 5
+                        const isActive = Math.abs(fixedPrice - c.ctKwh) < 0.2 && Math.abs(standingCharge - c.standingChargeEur) < 2
                         const typeLabel = c.type === 'default supplier' ? 'Grundversorger' : c.type === 'market leader' ? 'Market leader' : 'Discount'
                         return (
                           <button
                             key={c.name}
-                            onClick={() => { setFixedPrice(Math.round(c.ctKwh * 2) / 2); setStandingCharge(Math.round(c.standingChargeEur / 6) * 6) }}
+                            onClick={() => { setFixedPrice(Math.round(c.ctKwh * 10) / 10); setStandingCharge(Math.round(c.standingChargeEur)) }}
                             className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
                               isActive
                                 ? 'bg-red-50 border-[#EA1C0A]/30 text-[#313131]'
@@ -577,7 +591,7 @@ function DynamicInner() {
                       <button
                         onClick={() => { setFixedPrice(34); setStandingCharge(120) }}
                         className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
-                          competitors.every(c => Math.abs(fixedPrice - c.ctKwh) >= 0.5 || Math.abs(standingCharge - c.standingChargeEur) >= 5)
+                          competitors.every(c => Math.abs(fixedPrice - c.ctKwh) >= 0.2 || Math.abs(standingCharge - c.standingChargeEur) >= 2)
                             ? 'bg-gray-50 border-gray-300 text-[#313131]'
                             : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                         }`}
@@ -586,46 +600,136 @@ function DynamicInner() {
                         <span className="text-gray-400 ml-1">(manual)</span>
                       </button>
                     </div>
-                  </div>
-                )}
-
-                {/* Fixed Price slider */}
-                <div className="space-y-2">
+                  )}
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold text-gray-500">Energy price</span>
-                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice} ct/kWh</span>
+                    <span className="text-[10px] text-gray-500">Energy price</span>
+                    <span className="text-sm font-bold tabular-nums text-[#313131]">{fixedPrice.toFixed(1)} ct/kWh</span>
                   </div>
                   <input
                     type="range"
                     min={20}
                     max={45}
-                    step={0.5}
+                    step={0.1}
                     value={fixedPrice}
                     onChange={e => setFixedPrice(Number(e.target.value))}
                     className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
-                  <p className="text-[9px] text-gray-400">Gross incl. all taxes & VAT · drag chart line to adjust</p>
-                </div>
-
-                {/* Standing charge */}
-                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-semibold text-gray-500">Standing charge</span>
+                    <span className="text-[10px] text-gray-500">Standing charge</span>
                     <span className="text-sm font-bold tabular-nums text-[#313131]">{standingCharge} EUR/yr</span>
                   </div>
                   <input
                     type="range"
                     min={0}
                     max={240}
-                    step={6}
+                    step={1}
                     value={standingCharge}
                     onChange={e => setStandingCharge(Number(e.target.value))}
                     className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
-                  {standingCharge > 0 && (
-                    <p className="text-[9px] text-gray-400">
-                      = {(standingCharge / 12).toFixed(2)} EUR/mo · added to fixed tariff only
-                    </p>
+                  <p className="text-[9px] text-gray-400">Gross incl. all taxes & VAT · drag chart line to adjust</p>
+                </div>
+
+                {/* ── Dynamic tariff ── */}
+                <div className="space-y-2 pt-3 border-t border-gray-200">
+                  <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Dynamic Tariff</p>
+                  <p className="text-[9px] text-gray-400">EPEX Spot + surcharges + supplier fee</p>
+                  {/* Supplier fee type toggle */}
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                    <button
+                      onClick={() => { setDynamicFeeType('margin'); setSurcharges(s => ({ ...s, margin: 2.00 })) }}
+                      className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'margin' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Margin ct/kWh
+                    </button>
+                    <button
+                      onClick={() => { setDynamicFeeType('monthly'); setSurcharges(s => ({ ...s, margin: 0 })) }}
+                      className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'monthly' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Monthly fee
+                    </button>
+                  </div>
+                  {dynamicFeeType === 'margin' ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500">Supplier margin</span>
+                        <span className="text-sm font-bold tabular-nums text-[#313131]">{surcharges.margin.toFixed(2)} ct/kWh</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={5}
+                        step={0.1}
+                        value={surcharges.margin}
+                        onChange={e => setSurcharges(s => ({ ...s, margin: Number(e.target.value) }))}
+                        className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                      />
+                      <p className="text-[9px] text-gray-400">Added per kWh on top of spot + surcharges, before VAT</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500">Monthly fee</span>
+                        <span className="text-sm font-bold tabular-nums text-[#313131]">{dynamicMonthlyFee.toFixed(2)} EUR/mo</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={15}
+                        step={0.01}
+                        value={dynamicMonthlyFee}
+                        onChange={e => setDynamicMonthlyFee(Number(e.target.value))}
+                        className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                      />
+                      <p className="text-[9px] text-gray-400">Flat fee (e.g. Tibber 5.99 EUR/mo) · no per-kWh margin</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Surcharges (apply to both) ── */}
+                <div className="space-y-2 pt-3 border-t border-gray-200">
+                  <button onClick={() => setShowSurcharges(!showSurcharges)} className="w-full flex items-center justify-between">
+                    <p className="text-[10px] font-semibold text-gray-500">Surcharges & grid fees</p>
+                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${showSurcharges ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  <div className="flex justify-between text-[11px]">
+                    <span className="text-gray-500">Total (netto)</span>
+                    <span className="font-semibold tabular-nums text-[#313131]">{fmtCt(surchargesTotal)} ct/kWh</span>
+                  </div>
+                  <p className="text-[9px] text-gray-400">Included in both fixed and dynamic prices</p>
+
+                  {showSurcharges && (
+                    <div className="pt-2 border-t border-gray-100 space-y-2">
+                      {SURCHARGE_FIELDS.map(f => (
+                        <div key={f.key} className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-gray-600 flex-1">{f.label}</span>
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={surcharges[f.key]}
+                              disabled={f.fixed}
+                              onChange={e => {
+                                const val = Number(e.target.value)
+                                if (!isNaN(val)) setSurcharges(s => ({ ...s, [f.key]: val }))
+                              }}
+                              className={`w-16 rounded border px-1.5 py-0.5 text-[11px] tabular-nums text-right ${
+                                f.fixed ? 'bg-gray-50 text-gray-400 border-gray-100' : 'border-gray-200 text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30'
+                              }`}
+                            />
+                            <span className="text-[9px] text-gray-400">ct</span>
+                          </div>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => setSurcharges(surchargesForYear(selectedYear))}
+                        className="w-full text-[10px] text-gray-500 hover:text-[#EA1C0A] py-1 transition-colors"
+                      >
+                        Reset to {selectedYear} defaults
+                      </button>
+                    </div>
                   )}
                 </div>
               </CardContent>
@@ -682,56 +786,6 @@ function DynamicInner() {
                   </div>
                 </div>
 
-                {/* Price Components (Dynamic) — collapsible */}
-                <div className="space-y-2 pt-2 border-t border-gray-100">
-                  <button onClick={() => setShowSurcharges(!showSurcharges)} className="w-full flex items-center justify-between">
-                    <p className="text-[10px] font-semibold text-gray-500">Price components (dynamic tariff)</p>
-                    <svg className={`w-4 h-4 text-gray-400 transition-transform ${showSurcharges ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-gray-500">Total surcharges (netto)</span>
-                    <span className="font-semibold tabular-nums text-[#313131]">{fmtCt(surchargesTotal)} ct/kWh</span>
-                  </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-gray-500">+ 19% VAT</span>
-                    <span className="font-semibold tabular-nums text-[#313131]">{fmtCt(bruttoSurcharges)} ct/kWh</span>
-                  </div>
-
-                  {showSurcharges && (
-                    <div className="pt-2 border-t border-gray-100 space-y-2">
-                      <p className="text-[10px] text-gray-400">Dynamic end price = (EPEX Spot + surcharges below) x 1.19 VAT</p>
-                      {SURCHARGE_FIELDS.map(f => (
-                        <div key={f.key} className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-gray-600 flex-1">{f.label}</span>
-                          <div className="flex items-center gap-1">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={surcharges[f.key]}
-                              disabled={f.fixed}
-                              onChange={e => {
-                                const val = Number(e.target.value)
-                                if (!isNaN(val)) setSurcharges(s => ({ ...s, [f.key]: val }))
-                              }}
-                              className={`w-16 rounded border px-1.5 py-0.5 text-[11px] tabular-nums text-right ${
-                                f.fixed ? 'bg-gray-50 text-gray-400 border-gray-100' : 'border-gray-200 text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30'
-                              }`}
-                            />
-                            <span className="text-[9px] text-gray-400">ct</span>
-                          </div>
-                        </div>
-                      ))}
-                      <button
-                        onClick={() => setSurcharges(surchargesForYear(selectedYear))}
-                        className="w-full text-[10px] text-gray-500 hover:text-[#EA1C0A] py-1 transition-colors"
-                      >
-                        Reset to {selectedYear} defaults
-                      </button>
-                    </div>
-                  )}
-                </div>
               </CardContent>
             </Card>
           </div>
@@ -1259,6 +1313,18 @@ function DynamicInner() {
                             <span className="text-gray-500">Consumption</span>
                             <span className="tabular-nums font-medium text-gray-600">{selectedDayTotals.consumptionKwh.toFixed(2)} kWh</span>
                           </div>
+                          {dynamicMonthlyFeeActive > 0 && (() => {
+                            const daysInMo = prices.selectedDate ? new Date(
+                              parseInt(prices.selectedDate.slice(0, 4)),
+                              parseInt(prices.selectedDate.slice(5, 7)), 0
+                            ).getDate() : 30
+                            return (
+                              <div className="flex justify-between text-[12px] leading-snug">
+                                <span className="text-gray-500">Monthly fee</span>
+                                <span className="tabular-nums font-medium text-gray-600">{fmtEur(dynamicMonthlyFeeActive / daysInMo)} EUR/day</span>
+                              </div>
+                            )
+                          })()}
                         </div>
                         <div className="border-t border-blue-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
                           <span className="text-gray-500 font-medium">Daily cost</span>
@@ -1302,10 +1368,10 @@ function DynamicInner() {
         {allDailyBreakdown.length > 0 && (
           <div className="mt-4">
             <DynamicDailySavings
-              dailyBreakdown={standingCharge > 0
+              dailyBreakdown={(standingCharge > 0 || dynamicMonthlyFeeActive > 0)
                 ? allDailyBreakdown.map(d => {
                     const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / 12 / daysInMo }
+                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / 12 / daysInMo, dynamicCostEur: d.dynamicCostEur + dynamicMonthlyFeeActive / daysInMo }
                   })
                 : allDailyBreakdown}
               selectedDate={prices.selectedDate}
