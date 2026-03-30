@@ -483,7 +483,21 @@ function DynamicInner() {
       {/* Header */}
       <header className="bg-white border-b border-gray-200">
         <div className="max-w-[1440px] mx-auto px-8 py-2 flex items-center justify-between">
-          <h1 className="text-sm font-semibold text-gray-400">Dynamic Tariff Calculator</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-sm font-semibold text-gray-400">Dynamic Tariff Calculator</h1>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+              <button
+                className="text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 bg-white text-[#313131] shadow-sm">
+                <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]"><rect width="14" height="3.33" fill="#000"/><rect y="3.33" width="14" height="3.34" fill="#D00"/><rect y="6.67" width="14" height="3.33" fill="#FC0"/></svg>
+                DE
+              </button>
+              <a href="/dynamic/nl"
+                className="text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 text-gray-400 hover:text-gray-600">
+                <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]"><rect width="14" height="3.33" fill="#AE1C28"/><rect y="3.33" width="14" height="3.34" fill="#FFF"/><rect y="6.67" width="14" height="3.33" fill="#21468B"/></svg>
+                NL
+              </a>
+            </div>
+          </div>
         </div>
       </header>
 
