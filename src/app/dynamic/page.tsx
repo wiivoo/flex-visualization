@@ -59,6 +59,10 @@ function DynamicInner() {
   const [plzSupplier, setPlzSupplier] = useState('')
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
   const [showRenewable, setShowRenewable] = useState(false)
+  const [standingCharge, setStandingCharge] = useState(() => {
+    const v = Number(searchParams.get('grundpreis'))
+    return v >= 0 ? v : 0
+  })
   const [showCheaperBand, setShowCheaperBand] = useState(true)
   const [showExpensiveBand, setShowExpensiveBand] = useState(true)
   const [showMonthlyTable, setShowMonthlyTable] = useState(false)
@@ -170,10 +174,11 @@ function DynamicInner() {
   const dateSavingsMap = useMemo(() => {
     const m = new Map<string, number>()
     for (const d of allDailyBreakdownFull) {
-      m.set(d.date, d.fixedCostEur - d.dynamicCostEur)
+      const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
+      m.set(d.date, d.fixedCostEur + standingCharge / daysInMo - d.dynamicCostEur)
     }
     return m
-  }, [allDailyBreakdownFull])
+  }, [allDailyBreakdownFull, standingCharge])
 
   const dateStripColorFn = useCallback((date: string): string => {
     const savings = dateSavingsMap.get(date)
@@ -242,7 +247,12 @@ function DynamicInner() {
     if (dailyChartData.length === 0) return null
     const dynamicCost = dailyChartData.reduce((s, d) => s + d.costCent, 0) / 100
     const totalConsumption = dailyChartData.reduce((s, d) => s + d.consumptionKwh, 0)
-    const fixedCost = totalConsumption * fixedPrice / 100
+    // Add standing charge pro-rated per day
+    const daysInMonth = prices.selectedDate ? new Date(
+      parseInt(prices.selectedDate.slice(0, 4)),
+      parseInt(prices.selectedDate.slice(5, 7)), 0
+    ).getDate() : 30
+    const fixedCost = totalConsumption * fixedPrice / 100 + standingCharge / daysInMonth
     const dayType = getDayType(prices.selectedDate)
     const expectedSlots = isQH ? 96 : 24
     return {
@@ -255,7 +265,7 @@ function DynamicInner() {
       slotsAvailable: dailyChartData.length,
       slotsExpected: expectedSlots,
     }
-  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH])
+  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH, standingCharge])
 
   // Monthly chart data — rolling 12 months ending at selected date
   const monthlyChartData = useMemo(() => {
@@ -293,7 +303,8 @@ function DynamicInner() {
     let runSum = 0
     return months.filter(m => monthMap.has(m)).map(m => {
       const d = monthMap.get(m)!
-      const savings = d.fixed - d.dynamic
+      const fixedWithStanding = d.fixed + standingCharge
+      const savings = fixedWithStanding - d.dynamic
       runSum += savings
       const mNum = parseInt(m.slice(5, 7))
       const mYear = parseInt(m.slice(0, 4))
@@ -309,28 +320,34 @@ function DynamicInner() {
         avgSpotCtKwh: d.kwhSum > 0 ? d.spotSum / d.kwhSum : 0,
         avgEndPriceCtKwh: d.kwhSum > 0 ? (d.endPriceSum / d.kwhSum) * 100 : 0,
         dynamicCostEur: d.dynamic,
-        fixedCostEur: d.fixed,
+        fixedCostEur: fixedWithStanding,
         consumptionKwh: d.consumption,
       }
     })
-  }, [allDailyBreakdown, prices.selectedDate])
+  }, [allDailyBreakdown, prices.selectedDate, standingCharge])
 
   // Yearly savings per available year (for yearly bar chart)
   const yearlySavingsData = useMemo(() => {
     if (prices.hourly.length === 0) return []
     return availableYears.map(y => {
       const result = calculateYearlyCost(yearlyKwh, prices.hourly, surcharges, fixedPrice, y, loadProfile)
+      // Add standing charge: pro-rate by months with data
+      const monthsWithData = result.monthlyBreakdown.length
+      const standingTotal = standingCharge * monthsWithData
       let cheaperDays = 0
       let expensiveDays = 0
       for (const d of result.dailyBreakdown) {
-        if (d.dynamicCostEur < d.fixedCostEur) cheaperDays++
+        // Per-day standing charge share
+        const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
+        const dayFixed = d.fixedCostEur + standingCharge / daysInMo
+        if (d.dynamicCostEur < dayFixed) cheaperDays++
         else expensiveDays++
       }
       return {
         year: y,
-        savings: result.savingsEur,
+        savings: result.savingsEur + standingTotal,
         dynamicCost: result.totalDynamicCostEur,
-        fixedCost: result.totalFixedCostEur,
+        fixedCost: result.totalFixedCostEur + standingTotal,
         avgDynamic: result.avgEffectivePriceCtKwh,
         daysWithData: result.daysWithData,
         kwhConsumed: result.totalKwhConsumed,
@@ -338,7 +355,7 @@ function DynamicInner() {
         expensiveDays,
       }
     }).sort((a, b) => a.year - b.year)
-  }, [prices.hourly, availableYears, yearlyKwh, surcharges, fixedPrice, loadProfile])
+  }, [prices.hourly, availableYears, yearlyKwh, surcharges, fixedPrice, loadProfile, standingCharge])
 
   // URL sync
   useEffect(() => {
@@ -348,8 +365,9 @@ function DynamicInner() {
     p.set('year', String(selectedYear))
     if (prices.selectedDate) p.set('date', prices.selectedDate)
     if (plz.length === 5) p.set('plz', plz)
+    if (standingCharge > 0) p.set('grundpreis', String(standingCharge))
     router.replace(`/dynamic?${p.toString()}`, { scroll: false })
-  }, [yearlyKwh, fixedPrice, selectedYear, prices.selectedDate, plz]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearlyKwh, fixedPrice, selectedYear, prices.selectedDate, plz, standingCharge]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const surchargesTotal = totalSurchargesNetto(surcharges)
   const bruttoSurcharges = surchargesTotal * (1 + VAT_RATE / 100)
@@ -502,6 +520,30 @@ function DynamicInner() {
                     className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                   />
                   <p className="text-[9px] text-gray-400">Gross price incl. all taxes & VAT · drag chart line to adjust</p>
+                  {/* Standing charge (Grundpreis) */}
+                  <div className="flex items-center justify-between pt-2 border-t border-gray-50">
+                    <span className="text-[10px] text-gray-500">Standing charge</span>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min={0}
+                        max={30}
+                        step={0.5}
+                        value={standingCharge}
+                        onChange={e => {
+                          const val = Number(e.target.value)
+                          if (!isNaN(val) && val >= 0) setStandingCharge(val)
+                        }}
+                        className="w-16 rounded border border-gray-200 px-1.5 py-0.5 text-[11px] tabular-nums text-right text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
+                      />
+                      <span className="text-[9px] text-gray-400">EUR/mo</span>
+                    </div>
+                  </div>
+                  {standingCharge > 0 && (
+                    <p className="text-[9px] text-gray-400">
+                      = {(standingCharge * 12).toFixed(0)} EUR/yr added to fixed tariff
+                    </p>
+                  )}
                 </div>
 
                 {/* Load Profile */}
@@ -1098,6 +1140,12 @@ function DynamicInner() {
                             <span className="text-gray-500">Consumption</span>
                             <span className="tabular-nums font-medium text-gray-600">{selectedDayTotals.consumptionKwh.toFixed(2)} kWh</span>
                           </div>
+                          {standingCharge > 0 && (
+                            <div className="flex justify-between text-[12px] leading-snug">
+                              <span className="text-gray-500">Standing charge</span>
+                              <span className="tabular-nums font-medium text-gray-600">{fmtEur(standingCharge)} EUR/mo</span>
+                            </div>
+                          )}
                         </div>
                         <div className="border-t border-red-200/80 mt-2.5 pt-2 flex justify-between text-[12px]">
                           <span className="text-gray-500 font-medium">Daily cost</span>
@@ -1162,7 +1210,12 @@ function DynamicInner() {
         {allDailyBreakdown.length > 0 && (
           <div className="mt-4">
             <DynamicDailySavings
-              dailyBreakdown={allDailyBreakdown}
+              dailyBreakdown={standingCharge > 0
+                ? allDailyBreakdown.map(d => {
+                    const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
+                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / daysInMo }
+                  })
+                : allDailyBreakdown}
               selectedDate={prices.selectedDate}
               onSelect={prices.setSelectedDate}
               yearlyKwh={yearlyKwh}
@@ -1306,7 +1359,7 @@ function DynamicInner() {
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base font-bold text-[#313131]">Yearly Savings</CardTitle>
                 <p className="text-[11px] text-gray-500 mt-1">
-                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed
+                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed{standingCharge > 0 ? ` + ${standingCharge} EUR/mo` : ''}
                 </p>
               </CardHeader>
               <CardContent className="pt-4 flex-1 flex flex-col justify-center space-y-3">
