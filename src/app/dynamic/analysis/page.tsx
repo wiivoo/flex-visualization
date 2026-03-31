@@ -247,6 +247,7 @@ function AnalysisInner() {
   const [genLoading, setGenLoading] = useState(true)
   const [showGasOverlay, setShowGasOverlay] = useState(false)
   const [showResOverlay, setShowResOverlay] = useState(false)
+  const [showDetailedCharts, setShowDetailedCharts] = useState(false)
 
   useEffect(() => {
     setGenLoading(true)
@@ -774,28 +775,25 @@ function AnalysisInner() {
 
       <main className="max-w-[1440px] mx-auto px-8 py-6 space-y-4">
 
-        {/* ─── 1: EPEX DA Spot + TTF + Gas Generation (full timeline) ─── */}
+        {/* ─── Overview: EPEX DA Spot + TTF + Gas Generation (full timeline) ─── */}
         <Card className="shadow-sm border-gray-200/80">
           <CardHeader className="pb-2 border-b border-gray-100">
             <div className="flex items-center justify-between">
               <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">1</span>
-                  <CardTitle className="text-base font-bold text-[#313131]">EPEX Spot DE Day-Ahead + TTF Gas + Generation Mix</CardTitle>
-                </div>
+                <CardTitle className="text-base font-bold text-[#313131]">EPEX Spot DE Day-Ahead + TTF Gas + Generation Mix</CardTitle>
                 <p className="text-[11px] text-gray-400 mt-0.5">
-                  Left axis: daily avg. DA spot price (ct/kWh, unweighted). Right axis: TTF front-month (EUR/MWh, purple), gas share of load (%, teal), RES share of load (%, green area).
+                  Daily avg DA spot (ct/kWh) | TTF front-month (EUR/MWh, purple) | Gas share (%, teal) | RES share (%, green)
                 </p>
               </div>
             </div>
           </CardHeader>
           <CardContent className="pt-4">
-            <div className="h-[340px]">
+            <div className="h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} {...chartCommon} margin={{ top: 8, right: 55, bottom: 2, left: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
                   <XAxis {...xAxisProps} />
-                  <YAxis yAxisId="elec" {...yAxisProps} label={{ value: 'ct/kWh (gross)', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <YAxis yAxisId="elec" {...yAxisProps} label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
                   <YAxis yAxisId="right" orientation="right" {...yAxisProps} label={{ value: 'EUR/MWh | %', angle: 90, position: 'insideRight', style: { fontSize: 9, fill: '#9CA3AF' } }} />
                   <Tooltip content={({ active, payload }) => {
                     if (!active || !payload?.length) return null
@@ -804,40 +802,539 @@ function AnalysisInner() {
                       <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
                         <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
                         <p className="tabular-nums">Spot avg: <b>{fmtNum(d.spot)} ct</b> | {profile}-weighted: <b>{fmtNum(d.weightedPrice)} ct</b></p>
-                        {d.gas != null && <p className="tabular-nums">TTF front-month: <b className="text-purple-600">{fmtNum(d.gas)} EUR/MWh</b></p>}
-                        {d.gasShare != null && <p className="tabular-nums">Gas share: <b className="text-teal-600">{fmtNum(d.gasShare, 1)}%</b> | RES share: <b className="text-emerald-600">{fmtNum(d.resShare ?? 0, 1)}%</b></p>}
-                        <p className="tabular-nums">Spread: <b>{fmtNum(d.spread)} ct</b> (min {fmtNum(d.minPrice)}, max {fmtNum(d.maxPrice)})</p>
+                        {d.gas != null && <p className="tabular-nums">TTF: <b className="text-purple-600">{fmtNum(d.gas)} EUR/MWh</b></p>}
+                        {d.gasShare != null && <p className="tabular-nums">Gas: <b className="text-teal-600">{fmtNum(d.gasShare, 1)}%</b> | RES: <b className="text-emerald-600">{fmtNum(d.resShare ?? 0, 1)}%</b></p>}
+                        <p className="tabular-nums">Spread: <b>{fmtNum(d.spread)} ct</b></p>
                       </div>
                     )
                   }} />
                   {eventIdx >= 0 && <ReferenceLine yAxisId="elec" x={eventIdx} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2}
                     label={{ value: 'Feb 28', position: 'top', style: { fontSize: 10, fill: '#EA1C0A', fontWeight: 700 } }} />}
-                  {/* RES share area + Gas share line */}
-                  <Area yAxisId="right" dataKey="resShare" type="monotone" fill={COLORS.green} fillOpacity={0.06} stroke={COLORS.green} strokeWidth={1} dot={false} connectNulls
-                    name="RES share (%)" />
-                  <Line yAxisId="right" dataKey="gasShare" type="monotone" stroke={COLORS.teal} strokeWidth={1.5} dot={false} connectNulls strokeDasharray="4 2"
-                    name="Gas share (%)" />
-                  {/* Spot bars */}
+                  <Area yAxisId="right" dataKey="resShare" type="monotone" fill={COLORS.green} fillOpacity={0.06} stroke={COLORS.green} strokeWidth={1} dot={false} connectNulls />
+                  <Line yAxisId="right" dataKey="gasShare" type="monotone" stroke={COLORS.teal} strokeWidth={1.5} dot={false} connectNulls strokeDasharray="4 2" />
                   <Bar yAxisId="elec" dataKey="spot" fill="#94A3B8" fillOpacity={0.12} radius={[1, 1, 0, 0]} maxBarSize={3} />
-                  {/* Rolling avgs */}
                   <Line yAxisId="elec" dataKey="r7" type="monotone" stroke={COLORS.amber} strokeWidth={1.5} dot={false} connectNulls />
                   <Line yAxisId="elec" dataKey="r14" type="monotone" stroke={COLORS.before} strokeWidth={2.5} dot={false} connectNulls />
-                  {/* TTF gas price */}
                   <Line yAxisId="right" dataKey="gas" type="monotone" stroke={COLORS.gas} strokeWidth={2.5} dot={false} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
             <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300/30" /> DA spot (ct/kWh)</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300/30" /> Spot</span>
               <span className="flex items-center gap-1"><span className="w-3" style={{ height: 1.5, backgroundColor: COLORS.amber }} /> 7d avg</span>
               <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.before }} /> 14d avg</span>
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.gas }} /> TTF front-month (EUR/MWh)</span>
-              <span className="flex items-center gap-1"><span className="w-3 border-b-2 border-dashed" style={{ borderColor: COLORS.teal }} /> Gas share (%)</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS.green, opacity: 0.2 }} /> RES share (%)</span>
-              <span className="text-[9px] text-gray-300 ml-auto">EPEX Spot | ICE Endex | SMARD BNetzA</span>
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.gas }} /> TTF</span>
+              <span className="flex items-center gap-1"><span className="w-3 border-b-2 border-dashed" style={{ borderColor: COLORS.teal }} /> Gas %</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS.green, opacity: 0.2 }} /> RES %</span>
+              <span className="text-[9px] text-gray-300 ml-auto">EPEX Spot | ICE Endex | SMARD</span>
             </div>
           </CardContent>
         </Card>
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* THE STORY: Why spreads exploded — and what it means for you   */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <div className="relative pt-2">
+          <div className="border-t-2 border-dashed border-amber-300/60" />
+          <div className="flex items-center gap-3 mt-3 mb-1">
+            <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-2 py-0.5 uppercase tracking-wider">The Story</span>
+            <p className="text-sm font-bold text-[#313131]">Why did spreads explode in March — and what does it mean for your bill?</p>
+          </div>
+          <p className="text-[11px] text-gray-400 mb-3">Five charts, one narrative: from observation to explanation to consumer impact.</p>
+        </div>
+
+        {/* S1: Daily price corridor — the widening band */}
+        <Card className="shadow-sm border-gray-200/80 ring-1 ring-amber-100">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full w-5 h-5 flex items-center justify-center">1</span>
+              <CardTitle className="text-base font-bold text-[#313131]">The Widening Corridor — Daily Price Range</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              Each bar shows the daily min-to-max price range. The corridor blows wide open in March: cheaper lows + more expensive peaks = massive spread increase.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={dailyBandData} margin={{ top: 8, right: 12, bottom: 2, left: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 8, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    interval={Math.floor(dailyBandData.length / 12)} />
+                  <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <Tooltip content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const d = payload[0].payload
+                    return (
+                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                        <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
+                        <p className="tabular-nums">Max: <b className="text-red-500">{fmtNum(d.max)} ct</b></p>
+                        <p className="tabular-nums">Min: <b className="text-blue-500">{fmtNum(d.min)} ct</b></p>
+                        <p className="tabular-nums font-bold">Spread: <b className="text-amber-600">{fmtNum(d.spread)} ct</b></p>
+                      </div>
+                    )
+                  }} />
+                  <ReferenceLine y={0} stroke="#9CA3AF" strokeWidth={0.5} />
+                  {(() => {
+                    const idx = dailyBandData.findIndex(d => d.date >= eventDate)
+                    return idx >= 0 ? <ReferenceLine x={dailyBandData[idx].label} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2}
+                      label={{ value: 'Feb 28', position: 'top', style: { fontSize: 10, fill: '#EA1C0A', fontWeight: 700 } }} /> : null
+                  })()}
+                  <Line dataKey="max" type="monotone" stroke="#EF4444" strokeWidth={1.5} dot={false} />
+                  <Line dataKey="min" type="monotone" stroke="#3B82F6" strokeWidth={1.5} dot={false} />
+                  <Bar dataKey="spread" radius={[1, 1, 0, 0]} maxBarSize={5}>
+                    {dailyBandData.map((d, i) => (
+                      <Cell key={i} fill={d.isMarch ? '#F59E0B' : '#D1D5DB'} fillOpacity={0.6} />
+                    ))}
+                  </Bar>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid grid-cols-3 gap-3 mt-3">
+              {[
+                { label: 'Avg daily spread', feb: dailyBandData.filter(d => !d.isMarch).reduce((s, d) => s + d.spread, 0) / (dailyBandData.filter(d => !d.isMarch).length || 1), mar: dailyBandData.filter(d => d.isMarch).reduce((s, d) => s + d.spread, 0) / (dailyBandData.filter(d => d.isMarch).length || 1), unit: 'ct' },
+                { label: 'Avg daily low', feb: dailyBandData.filter(d => !d.isMarch).reduce((s, d) => s + d.min, 0) / (dailyBandData.filter(d => !d.isMarch).length || 1), mar: dailyBandData.filter(d => d.isMarch).reduce((s, d) => s + d.min, 0) / (dailyBandData.filter(d => d.isMarch).length || 1), unit: 'ct' },
+                { label: 'Avg daily high', feb: dailyBandData.filter(d => !d.isMarch).reduce((s, d) => s + d.max, 0) / (dailyBandData.filter(d => !d.isMarch).length || 1), mar: dailyBandData.filter(d => d.isMarch).reduce((s, d) => s + d.max, 0) / (dailyBandData.filter(d => d.isMarch).length || 1), unit: 'ct' },
+              ].map(m => (
+                <div key={m.label} className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
+                  <p className="text-[9px] text-gray-400 font-bold uppercase">{m.label}</p>
+                  <div className="flex items-center justify-center gap-2 mt-1">
+                    <span className="text-[13px] font-bold tabular-nums text-blue-600">{fmtNum(m.feb)}</span>
+                    <span className="text-[11px] text-gray-300">&rarr;</span>
+                    <span className="text-[13px] font-bold tabular-nums text-red-600">{fmtNum(m.mar)}</span>
+                    <span className="text-[10px] font-bold tabular-nums text-amber-600">({m.mar > m.feb ? '+' : ''}{fmtNum(m.mar - m.feb)} {m.unit})</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* S2: Two Forces — Solar midday vs Gas evening */}
+        <Card className="shadow-sm border-gray-200/80 ring-1 ring-amber-100">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full w-5 h-5 flex items-center justify-center">2</span>
+              <CardTitle className="text-base font-bold text-[#313131]">Two Forces — Solar Surplus vs. Gas Peaks</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              The spread widened from <b>both sides</b>. Solar midday hours got cheaper (spring = 3x more solar). Evening gas hours got more expensive (TTF nearly doubled).
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="grid grid-cols-2 gap-6">
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 mb-2">Avg Spot Price by Time Block (ct/kWh)</p>
+                <div className="h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={twoForcesData} layout="vertical" margin={{ top: 4, right: 12, bottom: 2, left: 70 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
+                      <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fill: '#6B7280', fontWeight: 600 }} tickLine={false} axisLine={false} width={65} />
+                      <XAxis type="number" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                        label={{ value: 'ct/kWh', position: 'insideBottom', offset: -2, style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                      <Tooltip content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null
+                        const d = payload[0].payload
+                        return (
+                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                            <p className="font-semibold text-gray-700 mb-1">{d.label}</p>
+                            <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febPrice)} ct</b></p>
+                            <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marPrice)} ct</b></p>
+                            <p className="tabular-nums font-bold">Delta: <span className={d.delta > 0 ? 'text-red-600' : 'text-emerald-600'}>{d.delta >= 0 ? '+' : ''}{fmtNum(d.delta)} ct</span></p>
+                          </div>
+                        )
+                      }} />
+                      <Bar dataKey="febPrice" fill={COLORS.before} fillOpacity={0.7} barSize={12} radius={[0, 3, 3, 0]} />
+                      <Bar dataKey="marPrice" fill={COLORS.after} fillOpacity={0.7} barSize={12} radius={[0, 3, 3, 0]} />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-gray-400 mb-2">Price Change by Time Block (ct/kWh)</p>
+                <div className="h-[240px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={twoForcesData} layout="vertical" margin={{ top: 4, right: 12, bottom: 2, left: 70 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
+                      <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fill: '#6B7280', fontWeight: 600 }} tickLine={false} axisLine={false} width={65} />
+                      <XAxis type="number" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                        domain={[(min: number) => Math.min(min, -2), (max: number) => Math.max(max, 3)]} />
+                      <Tooltip content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null
+                        const d = payload[0].payload
+                        return (
+                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                            <p className="font-semibold text-gray-700 mb-1">{d.label}</p>
+                            <p className="tabular-nums font-bold">&Delta; Price: <span className={d.delta > 0 ? 'text-red-600' : 'text-emerald-600'}>{d.delta >= 0 ? '+' : ''}{fmtNum(d.delta)} ct</span></p>
+                          </div>
+                        )
+                      }} />
+                      <ReferenceLine x={0} stroke="#9CA3AF" strokeWidth={1} />
+                      <Bar dataKey="delta" barSize={18} radius={[0, 4, 4, 0]}>
+                        {twoForcesData.map((d, i) => (
+                          <Cell key={i} fill={d.delta > 0 ? '#EF4444' : '#10B981'} fillOpacity={0.7} />
+                        ))}
+                      </Bar>
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 mt-3">
+              <div className="rounded-lg bg-emerald-50/50 border border-emerald-200/50 p-3">
+                <p className="text-[11px] font-bold text-emerald-700">Solar surplus pushes lows down</p>
+                <p className="text-[10px] text-emerald-600/80 mt-0.5">
+                  Spring transition: solar output tripled. Midday RES shares above 80-100% flood the market, pushing prices toward zero or negative.
+                </p>
+              </div>
+              <div className="rounded-lg bg-red-50/50 border border-red-200/50 p-3">
+                <p className="text-[11px] font-bold text-red-700">Gas cost drives peaks up</p>
+                <p className="text-[10px] text-red-600/80 mt-0.5">
+                  TTF gas nearly doubled (31 &rarr; 55 EUR/MWh). Evening gas hours see the full cost pass-through on spot.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* S3: Price Histogram — Distribution shift */}
+        <Card className="shadow-sm border-gray-200/80 ring-1 ring-amber-100">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full w-5 h-5 flex items-center justify-center">3</span>
+              <CardTitle className="text-base font-bold text-[#313131]">Price Distribution — Fat Tails in March</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              Histogram of hourly prices (% of hours per 2 ct/kWh bin). February is concentrated in the middle. March develops fat tails on <b>both</b> sides.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="h-[240px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={histogramData} margin={{ top: 8, right: 12, bottom: 16, left: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    label={{ value: 'Price bin (ct/kWh)', position: 'insideBottom', offset: -8, style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    label={{ value: '% of hours', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <Tooltip content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const d = payload[0].payload
+                    return (
+                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                        <p className="font-semibold text-gray-700 mb-1">{d.bucket} &ndash; {d.bucket + 2} ct/kWh</p>
+                        <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febPct, 1)}%</b></p>
+                        <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marPct, 1)}%</b></p>
+                      </div>
+                    )
+                  }} />
+                  <Bar dataKey="febPct" fill={COLORS.before} fillOpacity={0.5} barSize={16} radius={[2, 2, 0, 0]} />
+                  <Bar dataKey="marPct" fill={COLORS.after} fillOpacity={0.5} barSize={16} radius={[2, 2, 0, 0]} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid grid-cols-4 gap-2 mt-3">
+              {[
+                { label: 'Hours < 2 ct', feb: '14', mar: '83', accent: 'text-blue-600' },
+                { label: 'Negative hours', feb: '7', mar: '30', accent: 'text-blue-700' },
+                { label: 'Hours > 15 ct', feb: '12', mar: '101', accent: 'text-red-600' },
+                { label: 'Hours > 20 ct', feb: '1', mar: '19', accent: 'text-red-700' },
+              ].map(s => (
+                <div key={s.label} className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
+                  <p className="text-[9px] text-gray-400 font-bold uppercase">{s.label}</p>
+                  <div className="flex items-center justify-center gap-1.5 mt-1">
+                    <span className="text-[12px] font-bold tabular-nums text-blue-600">{s.feb}</span>
+                    <span className="text-[11px] text-gray-300">&rarr;</span>
+                    <span className={`text-[14px] font-bold tabular-nums ${s.accent}`}>{s.mar}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Narrative transition */}
+        <div className="text-center py-1">
+          <p className="text-[11px] text-gray-400 italic">So spreads exploded. But what does this actually mean for a household on a dynamic tariff?</p>
+        </div>
+
+        {/* F1: Wider Spreads, Same Bill */}
+        {factChartData && (
+        <Card className="shadow-sm border-gray-200/80 ring-1 ring-amber-100">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full w-5 h-5 flex items-center justify-center">4</span>
+              <CardTitle className="text-base font-bold text-[#313131]">Wider Spreads, Same Bill — The {profile} Averaging Effect</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              March has <b>cheaper lows</b> (solar midday) and <b>more expensive peaks</b> (gas evening) — but the {profile}-weighted average barely moved.
+              The load profile spreads consumption across all hours, so cheap and expensive cancel out.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-4">
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={factChartData.hourlyDetail} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
+                  <YAxis yAxisId="price" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <YAxis yAxisId="weight" orientation="right" tick={{ fontSize: 9, fill: '#D4D4D4' }} tickLine={false} axisLine={false}
+                    label={{ value: '% consumption', angle: 90, position: 'insideRight', style: { fontSize: 9, fill: '#D4D4D4' } }} />
+                  <Tooltip content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const d = payload[0].payload
+                    const delta = d.marSpot - d.febSpot
+                    return (
+                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                        <p className="font-semibold text-gray-700 mb-1">{String(d.hour).padStart(2, '0')}:00</p>
+                        <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febSpot)} ct</b></p>
+                        <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marSpot)} ct</b></p>
+                        <p className={`tabular-nums font-bold ${delta > 0 ? 'text-red-500' : 'text-emerald-500'}`}>&Delta;: {delta >= 0 ? '+' : ''}{fmtNum(delta)} ct</p>
+                        <p className="tabular-nums text-gray-400">{profile} weight: {fmtNum(d.h25Weight, 1)}%</p>
+                      </div>
+                    )
+                  }} />
+                  <Area yAxisId="weight" dataKey="h25Weight" type="monotone" fill="#D4D4D4" fillOpacity={0.25} stroke="#D4D4D4" strokeWidth={0.5} dot={false} />
+                  <Line yAxisId="price" dataKey="febSpot" type="monotone" stroke={COLORS.before} strokeWidth={2} dot={false} />
+                  <Line yAxisId="price" dataKey="marSpot" type="monotone" stroke={COLORS.after} strokeWidth={2.5} dot={false} />
+                  <ReferenceLine yAxisId="price" y={factChartData.febWeightedAvg} stroke={COLORS.before} strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ value: `Feb avg: ${fmtNum(factChartData.febWeightedAvg)} ct`, position: 'left', style: { fontSize: 9, fill: COLORS.before, fontWeight: 700 } }} />
+                  <ReferenceLine yAxisId="price" y={factChartData.marWeightedAvg} stroke={COLORS.after} strokeDasharray="6 3" strokeWidth={1.5}
+                    label={{ value: `Mar avg: ${fmtNum(factChartData.marWeightedAvg)} ct`, position: 'right', style: { fontSize: 9, fill: COLORS.after, fontWeight: 700 } }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid grid-cols-4 gap-3">
+              <div className="text-center rounded-lg bg-blue-50/50 border border-blue-100 py-2">
+                <p className="text-[9px] text-blue-400 font-bold uppercase">Feb {profile}-weighted</p>
+                <p className="text-[15px] font-bold tabular-nums text-blue-600">{fmtNum(factChartData.febWeightedAvg)} ct</p>
+              </div>
+              <div className="text-center rounded-lg bg-red-50/50 border border-red-100 py-2">
+                <p className="text-[9px] text-red-400 font-bold uppercase">Mar {profile}-weighted</p>
+                <p className="text-[15px] font-bold tabular-nums text-red-600">{fmtNum(factChartData.marWeightedAvg)} ct</p>
+              </div>
+              <div className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
+                <p className="text-[9px] text-gray-400 font-bold uppercase">Delta</p>
+                <p className={`text-[15px] font-bold tabular-nums ${factChartData.marWeightedAvg - factChartData.febWeightedAvg > 0.5 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {factChartData.marWeightedAvg - factChartData.febWeightedAvg >= 0 ? '+' : ''}{fmtNum(factChartData.marWeightedAvg - factChartData.febWeightedAvg)} ct
+                </p>
+              </div>
+              <div className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
+                <p className="text-[9px] text-gray-400 font-bold uppercase">Monthly cost &Delta;</p>
+                <p className={`text-[15px] font-bold tabular-nums ${factChartData.marCost30 - factChartData.febCost30 > 1 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {factChartData.marCost30 - factChartData.febCost30 >= 0 ? '+' : ''}{fmtNum(factChartData.marCost30 - factChartData.febCost30)} &euro;
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 text-[10px] text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2, backgroundColor: COLORS.before }} /> Feb spot</span>
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.after }} /> Mar spot</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-200" /> {profile} weight</span>
+              <span className="flex items-center gap-1"><span className="w-3 border-t-2 border-dashed border-blue-500" /> Weighted avg</span>
+            </div>
+          </CardContent>
+        </Card>
+        )}
+
+        {/* F2: What Drives Cheap and Expensive Hours */}
+        {factChartData && (
+        <Card className="shadow-sm border-gray-200/80 ring-1 ring-amber-100">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-white bg-amber-500 rounded-full w-5 h-5 flex items-center justify-center">5</span>
+              <CardTitle className="text-base font-bold text-[#313131]">What Drives Cheap and Expensive Hours</CardTitle>
+            </div>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              <b>Cheap hours</b> (midday) are driven by high renewable share. <b>Expensive hours</b> (evening) are driven by gas costs — CSS (Clean Spark Spread) shows where gas plants are profitable and price-setting.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4 space-y-4">
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={factChartData.hourlyDetail} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
+                  <YAxis yAxisId="share" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    label={{ value: '% of load', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <YAxis yAxisId="css" orientation="right" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
+                    label={{ value: 'CSS >= 0 (%)', angle: 90, position: 'insideRight', style: { fontSize: 9, fill: '#9CA3AF' } }} />
+                  <Tooltip content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const d = payload[0].payload
+                    return (
+                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                        <p className="font-semibold text-gray-700 mb-1">{String(d.hour).padStart(2, '0')}:00</p>
+                        <p className="tabular-nums"><span className="text-emerald-600">RES:</span> Feb {fmtNum(d.febResShare, 1)}% &rarr; Mar <b>{fmtNum(d.marResShare, 1)}%</b></p>
+                        <p className="tabular-nums"><span className="text-purple-600">CSS &ge; 0:</span> Feb <b>{fmtNum(d.febCssPositivePct, 0)}%</b> &rarr; Mar <b>{fmtNum(d.marCssPositivePct, 0)}%</b></p>
+                        <p className="tabular-nums text-gray-400">Spot: {fmtNum(d.febSpot)} &rarr; {fmtNum(d.marSpot)} ct</p>
+                      </div>
+                    )
+                  }} />
+                  <Bar yAxisId="css" dataKey="febCssPositivePct" maxBarSize={24} radius={[2, 2, 0, 0]} fillOpacity={0.08}>
+                    {factChartData.hourlyDetail.map((d, i) => (
+                      <Cell key={i} fill={d.febCssPositivePct > 50 ? '#7C3AED' : '#D4D4D4'} />
+                    ))}
+                  </Bar>
+                  <Bar yAxisId="css" dataKey="marCssPositivePct" maxBarSize={16} radius={[2, 2, 0, 0]} fillOpacity={0.2}>
+                    {factChartData.hourlyDetail.map((d, i) => (
+                      <Cell key={i} fill={d.marCssPositivePct > 50 ? '#7C3AED' : '#D4D4D4'} />
+                    ))}
+                  </Bar>
+                  <Line yAxisId="share" dataKey="febResShare" type="monotone" stroke={COLORS.green} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
+                  <Line yAxisId="share" dataKey="marResShare" type="monotone" stroke={COLORS.green} strokeWidth={2.5} dot={false} />
+                  <ReferenceLine yAxisId="css" y={50} stroke="#7C3AED" strokeDasharray="3 3" strokeWidth={0.5} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-lg bg-emerald-50/50 border border-emerald-200/50 p-3">
+                <p className="text-[11px] font-bold text-emerald-700">Cheap hours: renewables flood the market</p>
+                <p className="text-[10px] text-emerald-600/80 mt-0.5">
+                  10-15h: RES share reaches {fmtNum(Math.max(...factChartData.hourlyDetail.filter(d => d.hour >= 10 && d.hour <= 15).map(d => d.marResShare)), 0)}% in March.
+                  More solar &rarr; prices crash. Gas is unprofitable (CSS &lt; 0).
+                </p>
+              </div>
+              <div className="rounded-lg bg-purple-50/50 border border-purple-200/50 p-3">
+                <p className="text-[11px] font-bold text-purple-700">Expensive hours: gas costs set the price</p>
+                <p className="text-[10px] text-purple-600/80 mt-0.5">
+                  16-20h: RES share drops. Gas becomes profitable — CSS &ge; 0 in {fmtNum(factChartData.hourlyDetail.filter(d => d.hour >= 16 && d.hour <= 20).reduce((s, d) => s + d.marCssPositivePct, 0) / 5, 0)}% of evening hours.
+                  With TTF doubled, spot peaks at {fmtNum(Math.max(...factChartData.hourlyDetail.filter(d => d.hour >= 16 && d.hour <= 20).map(d => d.marSpot)))} ct.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 text-[10px] text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.green }} /> Mar RES %</span>
+              <span className="flex items-center gap-1"><span className="w-3 border-t-2 border-dashed" style={{ borderColor: COLORS.green }} /> Feb RES %</span>
+              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400" style={{ opacity: 0.2 }} /> CSS &ge; 0</span>
+              <span className="text-[9px] text-gray-300 ml-auto">CSS = Spot - (Gas/&eta; + CO&sub2;)</span>
+            </div>
+          </CardContent>
+        </Card>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* CONCLUSION: Summary stats + Savings                           */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <div className="relative pt-2">
+          <div className="border-t border-gray-200" />
+          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mt-3 mb-2">Summary &amp; Bottom Line</p>
+        </div>
+
+        {/* 7a/7b: Combined stats */}
+        <div className="grid grid-cols-2 gap-4">
+          <Card className="shadow-sm border-gray-200/80">
+            <CardHeader className="pb-2 border-b border-gray-100">
+              <CardTitle className="text-sm font-bold text-[#313131]">Price Metrics — Feb vs. Mar</CardTitle>
+              <p className="text-[10px] text-gray-400">
+                {profile}-weighted, {consumption.toLocaleString()} kWh/yr. <span className="text-blue-600 font-semibold">Feb</span> ({febStats.days}d) vs. <span className="text-red-600 font-semibold">Mar</span> ({marStats.days}d)
+              </p>
+            </CardHeader>
+            <CardContent className="pt-3">
+              <StatRow label="Avg DA spot (simple)" before={febStats.avgSpot} after={marStats.avgSpot} unit="ct" />
+              <StatRow label={`Avg end-price (${profile}-weighted, gross)`} before={febStats.avgWeightedPrice} after={marStats.avgWeightedPrice} unit="ct" bold />
+              <StatRow label="Avg daily DA spread (max-min)" before={febStats.avgSpread} after={marStats.avgSpread} unit="ct" />
+              {(() => {
+                const bg = gasForDate('2026-02-15')
+                const ag = gasForDate('2026-03-15')
+                if (bg == null || ag == null) return null
+                return <StatRow label="TTF front-month (mid-month)" before={bg} after={ag} unit="EUR" bold />
+              })()}
+              {!genLoading && gasGenDaily.length > 0 && (() => {
+                const febGen = gasGenDaily.filter(g => g.date >= febStart && g.date < febEnd)
+                const marGen = gasGenDaily.filter(g => g.date >= marStart && g.date < marEnd)
+                const avgFebGas = febGen.length > 0 ? febGen.reduce((s, g) => s + g.avgGasShare, 0) / febGen.length : 0
+                const avgMarGas = marGen.length > 0 ? marGen.reduce((s, g) => s + g.avgGasShare, 0) / marGen.length : 0
+                const avgFebRes = febGen.length > 0 ? febGen.reduce((s, g) => s + g.avgResShare, 0) / febGen.length : 0
+                const avgMarRes = marGen.length > 0 ? marGen.reduce((s, g) => s + g.avgResShare, 0) / marGen.length : 0
+                return <>
+                  <StatRow label="Avg gas share of load" before={avgFebGas} after={avgMarGas} unit="%" />
+                  <StatRow label="Avg RES share of load" before={avgFebRes} after={avgMarRes} unit="%" inverted />
+                </>
+              })()}
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-sm border-gray-200/80">
+            <CardHeader className="pb-2 border-b border-gray-100">
+              <CardTitle className="text-sm font-bold text-[#313131]">Consumer Impact — Feb vs. Mar</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-3">
+              <StatRow label="Peak avg DA spot (WT 8-20h)" before={febStats.avgPeakSpot} after={marStats.avgPeakSpot} unit="ct" />
+              <StatRow label="Off-peak avg DA spot" before={febStats.avgOffPeakSpot} after={marStats.avgOffPeakSpot} unit="ct" />
+              <StatRow label="Peak-offpeak delta" before={febStats.peakOffPeakDelta} after={marStats.peakOffPeakDelta} unit="ct" bold />
+              <StatRow label="Avg daily savings vs. fixed" before={febStats.avgSavingsEur} after={marStats.avgSavingsEur} unit="EUR" inverted />
+              <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
+                <span className="text-[11px] text-gray-600">Days where dynamic is cheaper</span>
+                <span className="text-[11px] tabular-nums font-bold text-gray-500">
+                  {febStats.days > 0 ? ((febStats.greenDays / febStats.days) * 100).toFixed(0) : 0}% &rarr; {marStats.days > 0 ? ((marStats.greenDays / marStats.days) * 100).toFixed(0) : 0}%
+                </span>
+              </div>
+              <div className="flex items-center justify-between py-1.5">
+                <span className="text-[11px] text-gray-600">Period savings total</span>
+                <span className={`text-[11px] tabular-nums font-bold ${marStats.totalSavingsEur >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {fmtNum(febStats.totalSavingsEur)} &rarr; {fmtNum(marStats.totalSavingsEur)} EUR
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* 8: Dynamic vs Fixed — Annualized Savings */}
+        <Card className="shadow-sm border-gray-200/80">
+          <CardHeader className="pb-2 border-b border-gray-100">
+            <CardTitle className="text-base font-bold text-[#313131]">Dynamic vs. Fixed Tariff — Annualized Savings</CardTitle>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {profile}-weighted, {consumption.toLocaleString()} kWh/yr vs. {fixedPrice} ct/kWh fixed. Positive = dynamic is cheaper.
+            </p>
+          </CardHeader>
+          <CardContent className="pt-4">
+            <div className="h-[200px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={chartData} {...chartCommon}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+                  <XAxis {...xAxisProps} />
+                  <YAxis {...yAxisProps} label={{ value: 'EUR/yr', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                  <Tooltip content={({ active, payload }) => {
+                    if (!active || !payload?.length) return null
+                    const d = payload[0].payload
+                    return (
+                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
+                        <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
+                        <p className="tabular-nums">Annualized: <b className={d.savings >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtNum(d.savings, 0)} EUR/yr</b></p>
+                      </div>
+                    )
+                  }} />
+                  {eventIdx >= 0 && <ReferenceLine x={eventIdx} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2} />}
+                  <ReferenceLine y={0} stroke="#9CA3AF" strokeWidth={1} />
+                  <Bar dataKey="savings" maxBarSize={3} fillOpacity={0.15} radius={[1, 1, 0, 0]}>
+                    {chartData.map((d, i) => (
+                      <Cell key={i} fill={d.savings >= 0 ? '#059669' : '#EA1C0A'} />
+                    ))}
+                  </Bar>
+                  <Line dataKey="savR14" type="monotone" stroke={COLORS.green} strokeWidth={2.5} dot={false} connectNulls />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        {/* DETAILED ANALYSIS: Collapsible deep-dive charts               */}
+        {/* ═══════════════════════════════════════════════════════════════ */}
+        <div className="relative pt-2">
+          <div className="border-t border-gray-200" />
+          <button
+            onClick={() => setShowDetailedCharts(v => !v)}
+            className="mt-3 flex items-center gap-2 text-[11px] font-semibold text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <span className={`transition-transform ${showDetailedCharts ? 'rotate-90' : ''}`}>&rsaquo;</span>
+            {showDetailedCharts ? 'Hide' : 'Show'} Detailed Analysis (Generation, Correlations, Price Shape)
+          </button>
+        </div>
+
+        {showDetailedCharts && (<>
 
         {/* ─── 2: Gas Generation — When Does Gas Set the Price? ─── */}
         <Card className="shadow-sm border-gray-200/80">
@@ -1303,676 +1800,9 @@ function AnalysisInner() {
           </CardContent>
         </Card>
 
-        {/* ─── S: The Spread Story — 3 charts ─── */}
-        <div className="relative">
-          <div className="absolute -top-2 left-0 right-0 border-t-2 border-dashed border-amber-300/50" />
-          <p className="text-[10px] font-bold text-amber-600 uppercase tracking-wider mt-3 mb-3">Why did spreads explode in March?</p>
-        </div>
+        </>)}
 
-        {/* S1: Daily price corridor — the widening band */}
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-1.5 py-0.5">S1</span>
-              <CardTitle className="text-base font-bold text-[#313131]">The Widening Corridor — Daily Price Range</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              Each bar shows the daily min-to-max price range. The corridor blows wide open in March: cheaper lows + more expensive peaks = massive spread increase.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={dailyBandData} margin={{ top: 8, right: 12, bottom: 2, left: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 8, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    interval={Math.floor(dailyBandData.length / 12)} />
-                  <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const d = payload[0].payload
-                    return (
-                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                        <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
-                        <p className="tabular-nums">Max: <b className="text-red-500">{fmtNum(d.max)} ct</b></p>
-                        <p className="tabular-nums">Min: <b className="text-blue-500">{fmtNum(d.min)} ct</b></p>
-                        <p className="tabular-nums font-bold">Spread: <b className="text-amber-600">{fmtNum(d.spread)} ct</b></p>
-                      </div>
-                    )
-                  }} />
-                  <ReferenceLine y={0} stroke="#9CA3AF" strokeWidth={0.5} />
-                  {/* Feb 28 event line */}
-                  {(() => {
-                    const idx = dailyBandData.findIndex(d => d.date >= eventDate)
-                    return idx >= 0 ? <ReferenceLine x={dailyBandData[idx].label} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2}
-                      label={{ value: 'Feb 28', position: 'top', style: { fontSize: 10, fill: '#EA1C0A', fontWeight: 700 } }} /> : null
-                  })()}
-                  {/* Max line (ceiling) */}
-                  <Line dataKey="max" type="monotone" stroke="#EF4444" strokeWidth={1.5} dot={false} />
-                  {/* Min line (floor) */}
-                  <Line dataKey="min" type="monotone" stroke="#3B82F6" strokeWidth={1.5} dot={false} />
-                  {/* Spread as filled area between min and max */}
-                  <Area dataKey="max" type="monotone" fill="none" stroke="none" />
-                  {dailyBandData.map((d, i) => {
-                    // We can't do a true between-area in Recharts, so use bars for spread
-                    return null
-                  })}
-                  {/* Spread bars */}
-                  <Bar dataKey="spread" maxBarSize={4} radius={[1, 1, 0, 0]}>
-                    {dailyBandData.map((d, i) => (
-                      <Cell key={i} fill={d.isMarch ? '#F59E0B' : '#94A3B8'} fillOpacity={d.isMarch ? 0.5 : 0.25} />
-                    ))}
-                  </Bar>
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Summary callout */}
-            <div className="grid grid-cols-3 gap-3 mt-3">
-              {[
-                { label: 'Avg daily spread', feb: dailyBandData.filter(d => !d.isMarch).reduce((s, d) => s + d.spread, 0) / (dailyBandData.filter(d => !d.isMarch).length || 1), mar: dailyBandData.filter(d => d.isMarch).reduce((s, d) => s + d.spread, 0) / (dailyBandData.filter(d => d.isMarch).length || 1), unit: 'ct' },
-                { label: 'Avg daily low', feb: dailyBandData.filter(d => !d.isMarch).reduce((s, d) => s + d.min, 0) / (dailyBandData.filter(d => !d.isMarch).length || 1), mar: dailyBandData.filter(d => d.isMarch).reduce((s, d) => s + d.min, 0) / (dailyBandData.filter(d => d.isMarch).length || 1), unit: 'ct' },
-                { label: 'Avg daily high', feb: dailyBandData.filter(d => !d.isMarch).reduce((s, d) => s + d.max, 0) / (dailyBandData.filter(d => !d.isMarch).length || 1), mar: dailyBandData.filter(d => d.isMarch).reduce((s, d) => s + d.max, 0) / (dailyBandData.filter(d => d.isMarch).length || 1), unit: 'ct' },
-              ].map(m => (
-                <div key={m.label} className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
-                  <p className="text-[9px] text-gray-400 font-bold uppercase">{m.label}</p>
-                  <div className="flex items-center justify-center gap-2 mt-1">
-                    <span className="text-[13px] font-bold tabular-nums text-blue-600">{fmtNum(m.feb)}</span>
-                    <span className="text-[11px] text-gray-300">→</span>
-                    <span className="text-[13px] font-bold tabular-nums text-red-600">{fmtNum(m.mar)}</span>
-                    <span className="text-[10px] font-bold tabular-nums text-amber-600">({m.mar > m.feb ? '+' : ''}{fmtNum(m.mar - m.feb)} {m.unit})</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 1.5, backgroundColor: '#EF4444' }} /> Daily max</span>
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 1.5, backgroundColor: '#3B82F6' }} /> Daily min</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-300" /> Feb spread</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-400" /> Mar spread</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* S2: Two Forces — Solar midday vs Gas evening */}
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-1.5 py-0.5">S2</span>
-              <CardTitle className="text-base font-bold text-[#313131]">Two Forces — Solar Surplus vs. Gas Peaks</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              The spread widened from <b>both sides</b>. Solar midday hours got cheaper (spring = 3× more solar). Evening gas hours got more expensive (TTF nearly doubled).
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid grid-cols-2 gap-6">
-              {/* Left: Grouped bar chart — prices by time block */}
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 mb-2">Avg Spot Price by Time Block (ct/kWh)</p>
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={twoForcesData} layout="vertical" margin={{ top: 4, right: 12, bottom: 2, left: 70 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
-                      <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fill: '#6B7280', fontWeight: 600 }} tickLine={false} axisLine={false} width={65} />
-                      <XAxis type="number" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                        label={{ value: 'ct/kWh', position: 'insideBottom', offset: -2, style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                      <Tooltip content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null
-                        const d = payload[0].payload
-                        return (
-                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                            <p className="font-semibold text-gray-700 mb-1">{d.label}</p>
-                            <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febPrice)} ct</b></p>
-                            <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marPrice)} ct</b></p>
-                            <p className="tabular-nums font-bold">Delta: <span className={d.delta > 0 ? 'text-red-600' : 'text-emerald-600'}>{d.delta >= 0 ? '+' : ''}{fmtNum(d.delta)} ct</span></p>
-                            <hr className="my-1 border-gray-100" />
-                            <p className="tabular-nums text-gray-400">Gas: {fmtNum(d.febGasMw, 1)} → {fmtNum(d.marGasMw, 1)} GW</p>
-                            <p className="tabular-nums text-gray-400">RES: {fmtNum(d.febResShare, 0)} → {fmtNum(d.marResShare, 0)}%</p>
-                          </div>
-                        )
-                      }} />
-                      <Bar dataKey="febPrice" fill={COLORS.before} fillOpacity={0.7} barSize={12} radius={[0, 3, 3, 0]} />
-                      <Bar dataKey="marPrice" fill={COLORS.after} fillOpacity={0.7} barSize={12} radius={[0, 3, 3, 0]} />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-              {/* Right: The delta + explanation */}
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 mb-2">Price Change by Time Block (ct/kWh)</p>
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={twoForcesData} layout="vertical" margin={{ top: 4, right: 12, bottom: 2, left: 70 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
-                      <YAxis type="category" dataKey="label" tick={{ fontSize: 10, fill: '#6B7280', fontWeight: 600 }} tickLine={false} axisLine={false} width={65} />
-                      <XAxis type="number" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                        domain={[(min: number) => Math.min(min, -2), (max: number) => Math.max(max, 3)]} />
-                      <Tooltip content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null
-                        const d = payload[0].payload
-                        return (
-                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                            <p className="font-semibold text-gray-700 mb-1">{d.label}</p>
-                            <p className="tabular-nums font-bold">Δ Price: <span className={d.delta > 0 ? 'text-red-600' : 'text-emerald-600'}>{d.delta >= 0 ? '+' : ''}{fmtNum(d.delta)} ct</span></p>
-                            <p className="tabular-nums text-gray-400">Gas Δ: {d.marGasMw > d.febGasMw ? '+' : ''}{fmtNum(d.marGasMw - d.febGasMw, 1)} GW</p>
-                            <p className="tabular-nums text-gray-400">RES Δ: {d.marResShare > d.febResShare ? '+' : ''}{fmtNum(d.marResShare - d.febResShare, 0)}%</p>
-                          </div>
-                        )
-                      }} />
-                      <ReferenceLine x={0} stroke="#9CA3AF" strokeWidth={1} />
-                      <Bar dataKey="delta" barSize={18} radius={[0, 4, 4, 0]}>
-                        {twoForcesData.map((d, i) => (
-                          <Cell key={i} fill={d.delta > 0 ? '#EF4444' : '#10B981'} fillOpacity={0.7} />
-                        ))}
-                      </Bar>
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-            {/* Annotation boxes */}
-            <div className="grid grid-cols-2 gap-4 mt-3">
-              <div className="rounded-lg bg-emerald-50/50 border border-emerald-200/50 p-3">
-                <p className="text-[11px] font-bold text-emerald-700">Solar surplus pushes lows down</p>
-                <p className="text-[10px] text-emerald-600/80 mt-0.5">
-                  Spring transition: solar output tripled (3.8 → 10.1 GW avg). Midday hours see RES shares above 80–100%, flooding the market and pushing prices toward zero or negative.
-                </p>
-              </div>
-              <div className="rounded-lg bg-red-50/50 border border-red-200/50 p-3">
-                <p className="text-[11px] font-bold text-red-700">Gas cost drives peaks up</p>
-                <p className="text-[10px] text-red-600/80 mt-0.5">
-                  TTF gas nearly doubled (31 → 55 EUR/MWh). Evening hours when gas sets the clearing price see the full cost pass-through: every €1/MWh TTF increase ≈ +0.1 ct/kWh on spot.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS.before, opacity: 0.7 }} /> February</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS.after, opacity: 0.7 }} /> March</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-400" /> Cheaper (solar effect)</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-400" /> More expensive (gas effect)</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* S3: Price Histogram — Distribution shift */}
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-1.5 py-0.5">S3</span>
-              <CardTitle className="text-base font-bold text-[#313131]">Price Distribution — Fat Tails in March</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              Histogram of hourly prices (% of hours in each 2 ct/kWh bin). February is concentrated in the middle. March develops fat tails on <b>both</b> sides — more extreme hours in both directions.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="h-[260px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={histogramData} margin={{ top: 8, right: 12, bottom: 16, left: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    label={{ value: 'Price bin (ct/kWh)', position: 'insideBottom', offset: -8, style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    label={{ value: '% of hours', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const d = payload[0].payload
-                    return (
-                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                        <p className="font-semibold text-gray-700 mb-1">{d.bucket} – {d.bucket + 2} ct/kWh</p>
-                        <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febPct, 1)}%</b> of hours</p>
-                        <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marPct, 1)}%</b> of hours</p>
-                      </div>
-                    )
-                  }} />
-                  <Bar dataKey="febPct" fill={COLORS.before} fillOpacity={0.5} barSize={16} radius={[2, 2, 0, 0]} />
-                  <Bar dataKey="marPct" fill={COLORS.after} fillOpacity={0.5} barSize={16} radius={[2, 2, 0, 0]} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Key stat callouts */}
-            <div className="grid grid-cols-4 gap-2 mt-3">
-              {[
-                { label: 'Hours < 2 ct', feb: '14', mar: '83', icon: '↓', accent: 'text-blue-600' },
-                { label: 'Negative hours', feb: '7', mar: '30', icon: '↓↓', accent: 'text-blue-700' },
-                { label: 'Hours > 15 ct', feb: '12', mar: '101', icon: '↑', accent: 'text-red-600' },
-                { label: 'Hours > 20 ct', feb: '1', mar: '19', icon: '↑↑', accent: 'text-red-700' },
-              ].map(s => (
-                <div key={s.label} className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
-                  <p className="text-[9px] text-gray-400 font-bold uppercase">{s.label}</p>
-                  <div className="flex items-center justify-center gap-1.5 mt-1">
-                    <span className="text-[12px] font-bold tabular-nums text-blue-600">{s.feb}</span>
-                    <span className="text-[11px] text-gray-300">→</span>
-                    <span className={`text-[14px] font-bold tabular-nums ${s.accent}`}>{s.mar}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS.before, opacity: 0.5 }} /> February</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: COLORS.after, opacity: 0.5 }} /> March</span>
-              <span className="text-[9px] text-gray-300 ml-auto">Same avg (~10 ct), completely different distribution</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ─── Fact 1: Wider Spreads, Same Weighted Average ─── */}
-        {factChartData && (
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-1.5 py-0.5">F1</span>
-              <CardTitle className="text-base font-bold text-[#313131]">Wider Spreads, Same Bill — The {profile} Averaging Effect</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              March has <b>cheaper lows</b> (solar midday) and <b>more expensive peaks</b> (gas evening) — but the {profile}-weighted average barely moved.
-              The load profile spreads consumption across all hours, so cheap and expensive cancel out.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4 space-y-4">
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={factChartData.hourlyDetail} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
-                  <YAxis yAxisId="price" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                  <YAxis yAxisId="weight" orientation="right" tick={{ fontSize: 9, fill: '#D4D4D4' }} tickLine={false} axisLine={false}
-                    label={{ value: '% consumption', angle: 90, position: 'insideRight', style: { fontSize: 9, fill: '#D4D4D4' } }} />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const d = payload[0].payload
-                    const delta = d.marSpot - d.febSpot
-                    return (
-                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                        <p className="font-semibold text-gray-700 mb-1">{String(d.hour).padStart(2, '0')}:00</p>
-                        <p className="tabular-nums"><span className="text-blue-600">Feb:</span> <b>{fmtNum(d.febSpot)} ct</b></p>
-                        <p className="tabular-nums"><span className="text-red-600">Mar:</span> <b>{fmtNum(d.marSpot)} ct</b></p>
-                        <p className={`tabular-nums font-bold ${delta > 0 ? 'text-red-500' : 'text-emerald-500'}`}>Δ: {delta >= 0 ? '+' : ''}{fmtNum(delta)} ct</p>
-                        <p className="tabular-nums text-gray-400">{profile} weight: {fmtNum(d.h25Weight, 1)}% of daily kWh</p>
-                      </div>
-                    )
-                  }} />
-                  {/* H25 consumption weight as subtle area */}
-                  <Area yAxisId="weight" dataKey="h25Weight" type="monotone" fill="#D4D4D4" fillOpacity={0.25} stroke="#D4D4D4" strokeWidth={0.5} dot={false} />
-                  {/* Feb spot profile */}
-                  <Line yAxisId="price" dataKey="febSpot" type="monotone" stroke={COLORS.before} strokeWidth={2} dot={false} />
-                  {/* Mar spot profile */}
-                  <Line yAxisId="price" dataKey="marSpot" type="monotone" stroke={COLORS.after} strokeWidth={2.5} dot={false} />
-                  {/* Weighted average reference lines */}
-                  <ReferenceLine yAxisId="price" y={factChartData.febWeightedAvg} stroke={COLORS.before} strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ value: `Feb avg: ${fmtNum(factChartData.febWeightedAvg)} ct`, position: 'left', style: { fontSize: 9, fill: COLORS.before, fontWeight: 700 } }} />
-                  <ReferenceLine yAxisId="price" y={factChartData.marWeightedAvg} stroke={COLORS.after} strokeDasharray="6 3" strokeWidth={1.5}
-                    label={{ value: `Mar avg: ${fmtNum(factChartData.marWeightedAvg)} ct`, position: 'right', style: { fontSize: 9, fill: COLORS.after, fontWeight: 700 } }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Key stats row */}
-            <div className="grid grid-cols-4 gap-3">
-              <div className="text-center rounded-lg bg-blue-50/50 border border-blue-100 py-2">
-                <p className="text-[9px] text-blue-400 font-bold uppercase">Feb {profile}-weighted</p>
-                <p className="text-[15px] font-bold tabular-nums text-blue-600">{fmtNum(factChartData.febWeightedAvg)} ct</p>
-              </div>
-              <div className="text-center rounded-lg bg-red-50/50 border border-red-100 py-2">
-                <p className="text-[9px] text-red-400 font-bold uppercase">Mar {profile}-weighted</p>
-                <p className="text-[15px] font-bold tabular-nums text-red-600">{fmtNum(factChartData.marWeightedAvg)} ct</p>
-              </div>
-              <div className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
-                <p className="text-[9px] text-gray-400 font-bold uppercase">Delta</p>
-                <p className={`text-[15px] font-bold tabular-nums ${factChartData.marWeightedAvg - factChartData.febWeightedAvg > 0.5 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {factChartData.marWeightedAvg - factChartData.febWeightedAvg >= 0 ? '+' : ''}{fmtNum(factChartData.marWeightedAvg - factChartData.febWeightedAvg)} ct
-                </p>
-              </div>
-              <div className="text-center rounded-lg bg-gray-50 border border-gray-100 py-2">
-                <p className="text-[9px] text-gray-400 font-bold uppercase">Monthly cost Δ</p>
-                <p className={`text-[15px] font-bold tabular-nums ${factChartData.marCost30 - factChartData.febCost30 > 1 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {factChartData.marCost30 - factChartData.febCost30 >= 0 ? '+' : ''}{fmtNum(factChartData.marCost30 - factChartData.febCost30)} €
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2, backgroundColor: COLORS.before }} /> Feb spot profile</span>
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.after }} /> Mar spot profile</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-gray-200" /> {profile} consumption weight</span>
-              <span className="flex items-center gap-1"><span className="w-3 border-t-2 border-dashed border-blue-500" /> Weighted avg</span>
-              <span className="text-[9px] text-gray-300 ml-auto">BDEW {profile} WT profile | EPEX Spot</span>
-            </div>
-          </CardContent>
-        </Card>
-        )}
-
-        {/* ─── Fact 2: What Drives Cheap and Expensive Hours ─── */}
-        {factChartData && (
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-white bg-amber-500 rounded px-1.5 py-0.5">F2</span>
-              <CardTitle className="text-base font-bold text-[#313131]">What Drives Cheap and Expensive Hours</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              <b>Cheap hours</b> (midday) are driven by high renewable share — more solar in March pushes prices to zero.{' '}
-              <b>Expensive hours</b> (evening) are driven by gas costs — with TTF nearly doubled, the CSS (Clean Spark Spread = Spot − Gas costs) shows where gas plants are profitable and price-setting.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4 space-y-4">
-            {/* Chart: RES share + price delta + CSS profitability */}
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={factChartData.hourlyDetail} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false} />
-                  <YAxis yAxisId="share" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    label={{ value: '% of load', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                  <YAxis yAxisId="css" orientation="right" tick={{ fontSize: 9, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                    label={{ value: 'CSS ≥ 0 (%)', angle: 90, position: 'insideRight', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const d = payload[0].payload
-                    return (
-                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                        <p className="font-semibold text-gray-700 mb-1">{String(d.hour).padStart(2, '0')}:00</p>
-                        <div className="space-y-0.5">
-                          <p className="tabular-nums"><span className="text-emerald-600">RES share:</span> Feb {fmtNum(d.febResShare, 1)}% → Mar <b>{fmtNum(d.marResShare, 1)}%</b></p>
-                          <p className="tabular-nums"><span className="text-purple-600">CSS ≥ 0:</span> Feb <b>{fmtNum(d.febCssPositivePct, 0)}%</b> → Mar <b>{fmtNum(d.marCssPositivePct, 0)}%</b> of days</p>
-                          <p className="tabular-nums text-gray-400">Spot: Feb {fmtNum(d.febSpot)} → Mar {fmtNum(d.marSpot)} ct ({(d.marSpot - d.febSpot) >= 0 ? '+' : ''}{fmtNum(d.marSpot - d.febSpot)})</p>
-                        </div>
-                      </div>
-                    )
-                  }} />
-                  {/* CSS ≥ 0 bars: Feb (background, lighter) + March (foreground) */}
-                  <Bar yAxisId="css" dataKey="febCssPositivePct" maxBarSize={24} radius={[2, 2, 0, 0]} fillOpacity={0.08}>
-                    {factChartData.hourlyDetail.map((d, i) => (
-                      <Cell key={i} fill={d.febCssPositivePct > 50 ? '#7C3AED' : '#D4D4D4'} />
-                    ))}
-                  </Bar>
-                  <Bar yAxisId="css" dataKey="marCssPositivePct" maxBarSize={16} radius={[2, 2, 0, 0]} fillOpacity={0.2}>
-                    {factChartData.hourlyDetail.map((d, i) => (
-                      <Cell key={i} fill={d.marCssPositivePct > 50 ? '#7C3AED' : '#D4D4D4'} />
-                    ))}
-                  </Bar>
-                  {/* Feb RES share */}
-                  <Line yAxisId="share" dataKey="febResShare" type="monotone" stroke={COLORS.green} strokeWidth={1.5} strokeDasharray="4 3" dot={false} />
-                  {/* Mar RES share */}
-                  <Line yAxisId="share" dataKey="marResShare" type="monotone" stroke={COLORS.green} strokeWidth={2.5} dot={false} />
-                  {/* Reference line at 50% CSS */}
-                  <ReferenceLine yAxisId="css" y={50} stroke="#7C3AED" strokeDasharray="3 3" strokeWidth={0.5} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-            {/* Explanation callouts */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="rounded-lg bg-emerald-50/50 border border-emerald-200/50 p-3">
-                <p className="text-[11px] font-bold text-emerald-700">Cheap hours: renewables flood the market</p>
-                <p className="text-[10px] text-emerald-600/80 mt-0.5">
-                  10–15h: RES share reaches {fmtNum(Math.max(...factChartData.hourlyDetail.filter(d => d.hour >= 10 && d.hour <= 15).map(d => d.marResShare)), 0)}% in March
-                  (vs. {fmtNum(Math.max(...factChartData.hourlyDetail.filter(d => d.hour >= 10 && d.hour <= 15).map(d => d.febResShare)), 0)}% in Feb).
-                  More solar → prices crash to {fmtNum(Math.min(...factChartData.hourlyDetail.filter(d => d.hour >= 10 && d.hour <= 15).map(d => d.marSpot)))} ct.
-                  Gas is unprofitable (CSS &lt; 0) — only{' '}
-                  {fmtNum(factChartData.hourlyDetail.filter(d => d.hour >= 10 && d.hour <= 15).reduce((s, d) => s + d.marCssPositivePct, 0) / 6, 0)}% of midday hours have CSS ≥ 0.
-                </p>
-              </div>
-              <div className="rounded-lg bg-purple-50/50 border border-purple-200/50 p-3">
-                <p className="text-[11px] font-bold text-purple-700">Expensive hours: gas costs set the price</p>
-                <p className="text-[10px] text-purple-600/80 mt-0.5">
-                  16–20h: RES share drops to {fmtNum(Math.min(...factChartData.hourlyDetail.filter(d => d.hour >= 16 && d.hour <= 20).map(d => d.marResShare)), 0)}%.
-                  Gas becomes profitable — CSS ≥ 0 in{' '}
-                  {fmtNum(factChartData.hourlyDetail.filter(d => d.hour >= 16 && d.hour <= 20).reduce((s, d) => s + d.marCssPositivePct, 0) / 5, 0)}% of evening hours.
-                  With TTF near doubled, the gas marginal cost pushes spot to {fmtNum(Math.max(...factChartData.hourlyDetail.filter(d => d.hour >= 16 && d.hour <= 20).map(d => d.marSpot)))} ct — the price peak.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-4 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2.5, backgroundColor: COLORS.green }} /> Mar RES share</span>
-              <span className="flex items-center gap-1"><span className="w-3 border-t-2 border-dashed" style={{ borderColor: COLORS.green }} /> Feb RES share</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400" style={{ opacity: 0.1 }} /> Feb CSS ≥ 0</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-purple-400" style={{ opacity: 0.3 }} /> Mar CSS ≥ 0</span>
-              <span className="text-[9px] text-gray-300 ml-auto">CSS = Spot − (Gas/η + CO₂) | SMARD + EPEX SPOT</span>
-            </div>
-          </CardContent>
-        </Card>
-        )}
-
-        {/* ─── 5: Peak / Off-Peak + DA Spread ─── */}
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">5</span>
-              <CardTitle className="text-base font-bold text-[#313131]">Peak vs. Off-Peak + Daily DA Spread</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              Peak (WT 8-20h) and off-peak (7d rolling avg). Daily DA spread = max minus min hourly price within each day. Gas lifts peak hours while renewables keep midday cheap &rarr; wider spread = more arbitrage value.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="h-[240px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} {...chartCommon}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                  <XAxis {...xAxisProps} />
-                  <YAxis {...yAxisProps} label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const d = payload[0].payload
-                    return (
-                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                        <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
-                        <p className="tabular-nums">Peak 7d: <b className="text-amber-600">{fmtNum(d.peak ?? 0)}</b> | Off-peak 7d: <b className="text-blue-600">{fmtNum(d.offPeak ?? 0)}</b></p>
-                        <p className="tabular-nums">Peak-offpeak delta: <b>{fmtNum(d.peakDelta)}</b> ct | DA spread: <b>{fmtNum(d.spread)}</b> ct</p>
-                      </div>
-                    )
-                  }} />
-                  {eventIdx >= 0 && <ReferenceLine x={eventIdx} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2} />}
-                  <Bar dataKey="spread" fill="#F59E0B" fillOpacity={0.15} radius={[1, 1, 0, 0]} maxBarSize={4} />
-                  <Line dataKey="peak" type="monotone" stroke={COLORS.amber} strokeWidth={2} dot={false} connectNulls />
-                  <Line dataKey="offPeak" type="monotone" stroke={COLORS.before} strokeWidth={2} dot={false} connectNulls />
-                  <Area dataKey="peakDelta" type="monotone" fill="#9CA3AF" fillOpacity={0.05} stroke="#9CA3AF" strokeWidth={1} strokeDasharray="3 2" dot={false} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-            <div className="flex items-center gap-4 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2, backgroundColor: COLORS.amber }} /> Peak (7d avg)</span>
-              <span className="flex items-center gap-1"><span className="w-3" style={{ height: 2, backgroundColor: COLORS.before }} /> Off-peak (7d avg)</span>
-              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-200" /> Daily DA spread</span>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ─── 6: Generation Mix vs. Spread & Price Extremes ─── */}
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">6</span>
-              <CardTitle className="text-base font-bold text-[#313131]">Generation Mix vs. DA Spread & Price Extremes</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              How gas share and renewable share relate to daily DA spread and max/min prices. High gas share + low RES = wider spreads and higher price spikes.
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="grid grid-cols-2 gap-4">
-              {/* Left: Gas/RES share vs spread (scatter) */}
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 mb-2">Gas Share vs. Daily DA Spread</p>
-                <div className="h-[220px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ScatterChart margin={{ top: 8, right: 12, bottom: 16, left: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                      <XAxis type="number" dataKey="gasShare" name="Gas Share" tick={{ fontSize: 9, fill: '#9CA3AF' }}
-                        label={{ value: 'Gas share of load (%)', position: 'insideBottom', offset: -8, style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                      <YAxis type="number" dataKey="spread" name="Spread" tick={{ fontSize: 9, fill: '#9CA3AF' }}
-                        label={{ value: 'DA spread (ct/kWh)', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                      <Tooltip content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null
-                        const d = payload[0].payload
-                        return (
-                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                            <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
-                            <p className="tabular-nums">Gas: <b className="text-teal-600">{fmtNum(d.gasShare ?? 0, 1)}%</b> | Spread: <b>{fmtNum(d.spread)} ct</b></p>
-                            <p className="tabular-nums">Max: <b className="text-red-500">{fmtNum(d.maxPrice)} ct</b> | Min: <b className="text-blue-500">{fmtNum(d.minPrice)} ct</b></p>
-                          </div>
-                        )
-                      }} />
-                      <Scatter data={chartData.filter(d => d.gasShare != null)} shape="circle">
-                        {chartData.filter(d => d.gasShare != null).map((d, i) => (
-                          <Cell key={i} fill={d.date >= marStart ? COLORS.after : COLORS.before} fillOpacity={d.date >= marStart ? 0.6 : 0.3} />
-                        ))}
-                      </Scatter>
-                    </ScatterChart>
-                  </ResponsiveContainer>
-                </div>
-                {(() => {
-                  const pts = chartData.filter(d => d.gasShare != null)
-                  const r = pearsonR(pts.map(d => d.gasShare!), pts.map(d => d.spread))
-                  return <p className="text-[10px] text-gray-400 text-center mt-1">Pearson r = <b className="text-[#313131]">{fmtNum(r)}</b> (higher gas share &rarr; wider spread)</p>
-                })()}
-              </div>
-              {/* Right: RES share vs max price */}
-              <div>
-                <p className="text-[10px] font-bold text-gray-400 mb-2">RES Share vs. Daily Max Price</p>
-                <div className="h-[220px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ScatterChart margin={{ top: 8, right: 12, bottom: 16, left: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                      <XAxis type="number" dataKey="resShare" name="RES Share" tick={{ fontSize: 9, fill: '#9CA3AF' }}
-                        label={{ value: 'RES share of load (%)', position: 'insideBottom', offset: -8, style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                      <YAxis type="number" dataKey="maxPrice" name="Max Price" tick={{ fontSize: 9, fill: '#9CA3AF' }}
-                        label={{ value: 'Daily max price (ct/kWh)', angle: -90, position: 'insideLeft', style: { fontSize: 9, fill: '#9CA3AF' } }} />
-                      <Tooltip content={({ active, payload }) => {
-                        if (!active || !payload?.length) return null
-                        const d = payload[0].payload
-                        return (
-                          <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                            <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
-                            <p className="tabular-nums">RES: <b className="text-emerald-600">{fmtNum(d.resShare ?? 0, 1)}%</b> | Max: <b className="text-red-500">{fmtNum(d.maxPrice)} ct</b></p>
-                            <p className="tabular-nums">Gas: <b className="text-teal-600">{fmtNum(d.gasShare ?? 0, 1)}%</b> | Min: <b className="text-blue-500">{fmtNum(d.minPrice)} ct</b></p>
-                          </div>
-                        )
-                      }} />
-                      <Scatter data={chartData.filter(d => d.resShare != null)} shape="circle">
-                        {chartData.filter(d => d.resShare != null).map((d, i) => (
-                          <Cell key={i} fill={d.date >= marStart ? COLORS.after : COLORS.before} fillOpacity={d.date >= marStart ? 0.6 : 0.3} />
-                        ))}
-                      </Scatter>
-                    </ScatterChart>
-                  </ResponsiveContainer>
-                </div>
-                {(() => {
-                  const pts = chartData.filter(d => d.resShare != null)
-                  const r = pearsonR(pts.map(d => d.resShare!), pts.map(d => d.maxPrice))
-                  return <p className="text-[10px] text-gray-400 text-center mt-1">Pearson r = <b className="text-[#313131]">{fmtNum(r)}</b> (higher RES share &rarr; lower peak prices)</p>
-                })()}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* ─── 7: Feb vs. Mar Comparison Table ─── */}
-        <div className="grid grid-cols-2 gap-4">
-          <Card className="shadow-sm border-gray-200/80">
-            <CardHeader className="pb-2 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">7a</span>
-                <CardTitle className="text-sm font-bold text-[#313131]">Price Metrics — Feb vs. Mar</CardTitle>
-              </div>
-              <p className="text-[10px] text-gray-400">
-                {profile}-weighted, {consumption.toLocaleString()} kWh/yr. <span className="text-blue-600 font-semibold">Feb</span> ({febStats.days}d) vs. <span className="text-red-600 font-semibold">Mar</span> ({marStats.days}d)
-              </p>
-            </CardHeader>
-            <CardContent className="pt-3">
-              <StatRow label="Avg DA spot (simple)" before={febStats.avgSpot} after={marStats.avgSpot} unit="ct" />
-              <StatRow label={`Avg end-price (${profile}-weighted, gross)`} before={febStats.avgWeightedPrice} after={marStats.avgWeightedPrice} unit="ct" bold />
-              <StatRow label="Avg daily DA spread (max-min)" before={febStats.avgSpread} after={marStats.avgSpread} unit="ct" />
-              {(() => {
-                const bg = gasForDate('2026-02-15')
-                const ag = gasForDate('2026-03-15')
-                if (bg == null || ag == null) return null
-                return <StatRow label="TTF front-month (mid-month)" before={bg} after={ag} unit="EUR" bold />
-              })()}
-              {!genLoading && gasGenDaily.length > 0 && (() => {
-                const febGen = gasGenDaily.filter(g => g.date >= febStart && g.date < febEnd)
-                const marGen = gasGenDaily.filter(g => g.date >= marStart && g.date < marEnd)
-                const avgFebGas = febGen.length > 0 ? febGen.reduce((s, g) => s + g.avgGasShare, 0) / febGen.length : 0
-                const avgMarGas = marGen.length > 0 ? marGen.reduce((s, g) => s + g.avgGasShare, 0) / marGen.length : 0
-                const avgFebRes = febGen.length > 0 ? febGen.reduce((s, g) => s + g.avgResShare, 0) / febGen.length : 0
-                const avgMarRes = marGen.length > 0 ? marGen.reduce((s, g) => s + g.avgResShare, 0) / marGen.length : 0
-                return <>
-                  <StatRow label="Avg gas share of load" before={avgFebGas} after={avgMarGas} unit="%" />
-                  <StatRow label="Avg RES share of load" before={avgFebRes} after={avgMarRes} unit="%" inverted />
-                </>
-              })()}
-            </CardContent>
-          </Card>
-
-          <Card className="shadow-sm border-gray-200/80">
-            <CardHeader className="pb-2 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">7b</span>
-                <CardTitle className="text-sm font-bold text-[#313131]">Consumer Impact — Feb vs. Mar</CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-3">
-              <StatRow label="Peak avg DA spot (WT 8-20h)" before={febStats.avgPeakSpot} after={marStats.avgPeakSpot} unit="ct" />
-              <StatRow label="Off-peak avg DA spot" before={febStats.avgOffPeakSpot} after={marStats.avgOffPeakSpot} unit="ct" />
-              <StatRow label="Peak-offpeak delta" before={febStats.peakOffPeakDelta} after={marStats.peakOffPeakDelta} unit="ct" bold />
-              <StatRow label="Avg daily savings vs. fixed" before={febStats.avgSavingsEur} after={marStats.avgSavingsEur} unit="EUR" inverted />
-              <div className="flex items-center justify-between py-1.5 border-b border-gray-50">
-                <span className="text-[11px] text-gray-600">Days where dynamic is cheaper</span>
-                <span className="text-[11px] tabular-nums font-bold text-gray-500">
-                  {febStats.days > 0 ? ((febStats.greenDays / febStats.days) * 100).toFixed(0) : 0}% &rarr; {marStats.days > 0 ? ((marStats.greenDays / marStats.days) * 100).toFixed(0) : 0}%
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-1.5">
-                <span className="text-[11px] text-gray-600">Period savings total</span>
-                <span className={`text-[11px] tabular-nums font-bold ${marStats.totalSavingsEur >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {fmtNum(febStats.totalSavingsEur)} &rarr; {fmtNum(marStats.totalSavingsEur)} EUR
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* ─── 8: Dynamic Tariff Savings vs Fixed ─── */}
-        <Card className="shadow-sm border-gray-200/80">
-          <CardHeader className="pb-2 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 rounded px-1.5 py-0.5">8</span>
-              <CardTitle className="text-base font-bold text-[#313131]">Dynamic vs. Fixed Tariff — Annualized Savings</CardTitle>
-            </div>
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              {profile}-weighted, {consumption.toLocaleString()} kWh/yr vs. {fixedPrice} ct/kWh fixed. Positive = dynamic is cheaper. The key question: does the gas-driven price increase erode the dynamic tariff advantage?
-            </p>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="h-[200px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} {...chartCommon}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-                  <XAxis {...xAxisProps} />
-                  <YAxis {...yAxisProps} label={{ value: 'EUR/yr', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
-                  <Tooltip content={({ active, payload }) => {
-                    if (!active || !payload?.length) return null
-                    const d = payload[0].payload
-                    return (
-                      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-2.5 text-[11px]">
-                        <p className="font-semibold text-gray-700 mb-1">{d.date}</p>
-                        <p className="tabular-nums">Annualized: <b className={d.savings >= 0 ? 'text-emerald-600' : 'text-red-600'}>{fmtNum(d.savings, 0)} EUR/yr</b> | 14d trend: <b>{fmtNum(d.savR14 ?? 0, 0)}</b></p>
-                      </div>
-                    )
-                  }} />
-                  {eventIdx >= 0 && <ReferenceLine x={eventIdx} stroke="#EA1C0A" strokeDasharray="6 3" strokeWidth={2} />}
-                  <ReferenceLine y={0} stroke="#9CA3AF" strokeWidth={1} />
-                  <Bar dataKey="savings" maxBarSize={3} fillOpacity={0.15} radius={[1, 1, 0, 0]}>
-                    {chartData.map((d, i) => (
-                      <Cell key={i} fill={d.savings >= 0 ? '#059669' : '#EA1C0A'} />
-                    ))}
-                  </Bar>
-                  <Line dataKey="savR14" type="monotone" stroke={COLORS.green} strokeWidth={2.5} dot={false} connectNulls />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        {/* End of detailed charts */}
 
         {/* ─── Sources ─── */}
         <Card className="shadow-sm border-gray-200/80">
