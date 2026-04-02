@@ -1272,21 +1272,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const activeMonthlySavingsData = showFleet ? fleetMonthlySavingsData : monthlySavingsData
 
   // ── Quarterly rollup for Outcome Box ──
-  const quarterlyData = useMemo(() => {
+  const quarterlyData = useMemo((): QuarterlyEntry[] => {
     if (activeMonthlySavingsData.length === 0) return []
-    const qMap = new Map<string, { savings: number; label: string }>()
+    const qMap = new Map<string, QuarterlyEntry>()
     for (const m of activeMonthlySavingsData) {
-      const yr = m.month.slice(0, 4)
+      const yr = parseInt(m.month.slice(0, 4))
       const mo = parseInt(m.month.slice(5, 7))
       const q = Math.ceil(mo / 3)
       const key = `${yr}-Q${q}`
-      const label = `Q${q} '${yr.slice(2)}`
+      const label = `Q${q} '${String(yr).slice(2)}`
       const ex = qMap.get(key)
-      qMap.set(key, { savings: (ex?.savings ?? 0) + m.savings, label })
+      qMap.set(key, { savings: (ex?.savings ?? 0) + m.savings, label, year: yr, quarter: q })
     }
     return [...qMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-5) // 5 quarters = covers full trailing 365 days when current Q is partial
       .map(([, v]) => v)
   }, [activeMonthlySavingsData])
 
