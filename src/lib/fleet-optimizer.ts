@@ -7,66 +7,49 @@
  */
 import type {
   FleetConfig, FlexBandSlot, FleetScheduleSlot, FleetOptimizationResult,
-  HourlyPrice, DistributionEntry,
+  HourlyPrice,
 } from '@/lib/v2-config'
-import { BATTERY_KWH_BY_CLASS } from '@/lib/v2-config'
 
 /* ── Cohort model ── */
 
 interface Cohort {
   arrivalHour: number
   departureHour: number   // next day
-  batteryKwh: number
+  chargeNeedKwh: number   // kWh needed per session
   chargePowerKw: number
-  arrivalSocPct: number   // 0–100
   weight: number          // fraction of fleet (0–1), sum of all cohorts ≈ 1
 }
 
+const FLEET_CHARGE_POWER_KW = 7
+
 /**
  * Expand fleet config into weighted cohorts.
- * Each cohort = arrival × departure × battery × power × SoC.
- * SoC is sampled at 3 points across the socMin–socMax range.
+ * Each cohort = arrival × departure × charge need.
+ * Charge need is sampled at 3 points across the socMin–socMax kWh range.
  */
 function buildCohorts(config: FleetConfig): Cohort[] {
   const cohorts: Cohort[] = []
-  const batteryTypes: { key: 'compact' | 'mid' | 'suv'; kwhVal: number }[] = [
-    { key: 'compact', kwhVal: BATTERY_KWH_BY_CLASS.compact },
-    { key: 'mid', kwhVal: BATTERY_KWH_BY_CLASS.mid },
-    { key: 'suv', kwhVal: BATTERY_KWH_BY_CLASS.suv },
-  ]
-  const powerTypes = [
-    { kw: 7, pct: config.chargePowerMix.kw7 },
-    { kw: 11, pct: config.chargePowerMix.kw11 },
-  ]
-  // Sample SoC at 3 points (low, mid, high) across the range
-  const socRange = config.socMax - config.socMin
-  const socSamples = socRange > 0
-    ? [config.socMin, config.socMin + socRange / 2, config.socMax]
+  // socMin/socMax now represent kWh/session charge need range
+  const needRange = config.socMax - config.socMin
+  const needSamples = needRange > 0
+    ? [config.socMin, config.socMin + needRange / 2, config.socMax]
     : [config.socMin]
-  const socWeight = 1 / socSamples.length
+  const needWeight = 1 / needSamples.length
 
   for (const arr of config.arrivalDist) {
     if (arr.pct <= 0) continue
     for (const dep of config.departureDist) {
       if (dep.pct <= 0) continue
-      for (const bat of batteryTypes) {
-        const batPct = config.batteryMix[bat.key]
-        if (batPct <= 0) continue
-        for (const pow of powerTypes) {
-          if (pow.pct <= 0) continue
-          for (const soc of socSamples) {
-            const weight = (arr.pct / 100) * (dep.pct / 100) * (batPct / 100) * (pow.pct / 100) * socWeight
-            if (weight < 1e-8) continue
-            cohorts.push({
-              arrivalHour: arr.hour,
-              departureHour: dep.hour,
-              batteryKwh: bat.kwhVal,
-              chargePowerKw: pow.kw,
-              arrivalSocPct: soc,
-              weight,
-            })
-          }
-        }
+      for (const need of needSamples) {
+        const weight = (arr.pct / 100) * (dep.pct / 100) * needWeight
+        if (weight < 1e-8) continue
+        cohorts.push({
+          arrivalHour: arr.hour,
+          departureHour: dep.hour,
+          chargeNeedKwh: need,
+          chargePowerKw: FLEET_CHARGE_POWER_KW,
+          weight,
+        })
       }
     }
   }
@@ -108,7 +91,7 @@ export function computeFlexBand(
   const lazyKw = new Float64Array(slots.length)
 
   for (const cohort of cohorts) {
-    const energyNeededKwh = cohort.batteryKwh * (100 - cohort.arrivalSocPct) / 100
+    const energyNeededKwh = cohort.chargeNeedKwh
     const kwhPerSlot = cohort.chargePowerKw * slotDurationH
     const slotsNeeded = Math.ceil(energyNeededKwh / kwhPerSlot)
     if (slotsNeeded <= 0) continue
@@ -182,7 +165,7 @@ export function computeFleetEnergyKwh(config: FleetConfig): number {
   const cohorts = buildCohorts(config)
   let totalKwh = 0
   for (const c of cohorts) {
-    totalKwh += c.batteryKwh * (100 - c.arrivalSocPct) / 100 * c.weight * config.fleetSize
+    totalKwh += c.chargeNeedKwh * c.weight * config.fleetSize
   }
   return Math.round(totalKwh * 10) / 10
 }

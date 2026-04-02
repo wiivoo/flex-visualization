@@ -115,13 +115,13 @@ export interface DistributionEntry {
 }
 
 export interface FleetConfig {
-  fleetSize: number                // 10–1,000
+  fleetSize: number                // fixed at 1000
   arrivalDist: DistributionEntry[] // hours 14–23, sums to 100
   departureDist: DistributionEntry[] // hours 5–9, sums to 100
-  batteryMix: { compact: number; mid: number; suv: number } // percentages, sum to 100
-  chargePowerMix: { kw7: number; kw11: number } // percentages, sum to 100
-  socMin: number  // 10–60 (arrival SoC lower bound %)
-  socMax: number  // 10–60 (arrival SoC upper bound %, ≥ socMin)
+  batteryMix: { compact: number; mid: number; suv: number } // legacy, kept for type compat
+  chargePowerMix: { kw7: number; kw11: number } // legacy, kept for type compat
+  socMin: number  // 5–50 (charge need lower bound, kWh/session)
+  socMax: number  // 5–50 (charge need upper bound, kWh/session, ≥ socMin)
 }
 
 export const DEFAULT_ARRIVAL_DIST: DistributionEntry[] = [
@@ -146,13 +146,13 @@ export const DEFAULT_DEPARTURE_DIST: DistributionEntry[] = [
 ]
 
 export const DEFAULT_FLEET_CONFIG: FleetConfig = {
-  fleetSize: 100,
+  fleetSize: 1000,
   arrivalDist: DEFAULT_ARRIVAL_DIST,
   departureDist: DEFAULT_DEPARTURE_DIST,
   batteryMix: { compact: 30, mid: 50, suv: 20 },
-  chargePowerMix: { kw7: 80, kw11: 20 },
-  socMin: 15,
-  socMax: 55,
+  chargePowerMix: { kw7: 100, kw11: 0 },
+  socMin: 8,
+  socMax: 22,
 }
 
 /** Battery capacity lookup by vehicle class */

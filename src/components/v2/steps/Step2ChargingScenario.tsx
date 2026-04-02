@@ -19,7 +19,7 @@ import { DEFAULT_FLEET_CONFIG, type FleetConfig, type FleetOptimizationResult } 
 import { computeFlexBand, optimizeFleetSchedule, computeFleetEnergyKwh } from '@/lib/fleet-optimizer'
 import { FleetConfigPanel } from '@/components/v2/FleetConfigPanel'
 import {
-  ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
+  ComposedChart, Line, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
 } from 'recharts'
 
@@ -248,7 +248,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; fleetChargeBar?: number | null }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
@@ -503,12 +503,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         optimized: opt?.optimizedKw ?? 0,
       })
     }
+    // Compute max optimized kW for normalizing bar heights
+    const maxOptKw = Math.max(...fleetOptResult.schedule.map(s => s.optimizedKw), 1)
     return chartData.map(d => {
       const key = `${d.date}-${d.hour}-${d.minute}`
       const band = bandMap.get(key)
-      return band
-        ? { ...d, greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized }
-        : { ...d, greedyKw: null, lazyKw: null, optimizedKw: null }
+      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null, fleetChargeBar: null }
+      // fleetChargeBar: scale optimized kW to price Y-axis range for bar rendering
+      // Bar height proportional to charge intensity, anchored to bottom of price range
+      const chargeIntensity = band.optimized / maxOptKw // 0–1
+      return { ...d, greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized, fleetChargeBar: band.optimized > 0 ? chargeIntensity * d.priceVal : null }
     })
   }, [chartData, isFleetActive, flexBand, fleetOptResult])
 
@@ -1239,27 +1243,58 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         <CardHeader className="pb-2 bg-gray-50/80 border-b border-gray-100">
           <div className="flex items-center justify-between">
             <CardTitle className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">Customer Profile</CardTitle>
-            {ENABLE_V2G && (
-            <div className="flex items-center gap-0.5 bg-gray-200/60 rounded-full p-0.5">
-              <button
-                onClick={() => setScenario({ ...scenario, gridMode: 'v1g' })}
-                title="V1G: Smart charging — shift your charge to the cheapest hours"
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
-                  scenario.gridMode === 'v1g' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >V1G</button>
-              <button
-                onClick={() => setScenario({ ...scenario, gridMode: 'v2g' })}
-                title="V2G: Bidirectional — load shifting + sell energy back at peak prices"
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
-                  scenario.gridMode === 'v2g' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                }`}
-              >V2G</button>
+            <div className="flex items-center gap-1.5">
+              {/* 1 Car / Fleet toggle */}
+              <div className="flex items-center gap-0.5 bg-gray-200/60 rounded-full p-0.5">
+                <button
+                  onClick={() => setShowFleet(false)}
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                    !showFleet ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >1 Car</button>
+                <button
+                  onClick={() => { setShowFleet(true); setFleetView('fleet') }}
+                  title={isFullDay ? 'Fleet view available in overnight mode' : 'Configure fleet parameters'}
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                    showFleet ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >Fleet</button>
+              </div>
+              {ENABLE_V2G && !showFleet && (
+              <div className="flex items-center gap-0.5 bg-gray-200/60 rounded-full p-0.5">
+                <button
+                  onClick={() => setScenario({ ...scenario, gridMode: 'v1g' })}
+                  title="V1G: Smart charging — shift your charge to the cheapest hours"
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                    scenario.gridMode === 'v1g' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >V1G</button>
+                <button
+                  onClick={() => setScenario({ ...scenario, gridMode: 'v2g' })}
+                  title="V2G: Bidirectional — load shifting + sell energy back at peak prices"
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                    scenario.gridMode === 'v2g' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >V2G</button>
+              </div>
+              )}
             </div>
-            )}
           </div>
         </CardHeader>
         <CardContent className="pt-4 pb-4">
+          {/* Fleet config — replaces single-car controls */}
+          {showFleet ? (
+            <div>
+              {isFullDay && (
+                <p className="text-[10px] text-amber-600 mb-3">Fleet view available in overnight mode</p>
+              )}
+              <FleetConfigPanel
+                config={fleetConfig}
+                onChange={setFleetConfig}
+                optimizationResult={isFleetActive ? fleetOptResult : null}
+              />
+            </div>
+          ) : (
           <div className="space-y-4">
             {/* V1G-only settings: Mileage, Weekly Plug-ins */}
             {!isV2G && (
@@ -1552,6 +1587,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               </div>
             )}
           </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1758,25 +1794,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </button>
                   </div>
                 )}
-                {/* Fleet flex band toggle (PROJ-35) */}
-                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-                  <button
-                    onClick={() => setShowFleet(v => !v)}
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showFleet && !isFullDay ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'} ${isFullDay ? 'opacity-40 cursor-not-allowed' : ''}`}
-                    title={isFullDay ? 'Fleet view available in overnight mode' : 'Toggle fleet flex band overlay'}
-                    disabled={isFullDay}
-                  >
-                    Fleet
-                  </button>
-                </div>
-                {/* Fleet sub-toggle: Single EV / Fleet */}
+                {/* Fleet chart view toggle — shown when fleet mode is active in sidebar */}
                 {showFleet && !isFullDay && (
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                     <button
                       onClick={() => setFleetView('single')}
                       className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${fleetView === 'single' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                     >
-                      Single EV
+                      1 Car
                     </button>
                     <button
                       onClick={() => setFleetView('fleet')}
@@ -1970,6 +1995,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Fleet flex band overlay (PROJ-36) — rendered behind price curve */}
                   {isFleetActive && (
                     <>
+                      {/* Charge intensity bars on price axis — shows WHERE fleet charges */}
+                      <Bar dataKey="fleetChargeBar" yAxisId="left"
+                        fill="#3B82F6" fillOpacity={0.15} stroke="none"
+                        isAnimationActive={false} radius={[2, 2, 0, 0]} />
+                      {/* Flex band area (subtle gray) */}
                       <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
                         fill="url(#fleetBandGrad)" stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
@@ -1977,13 +2007,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         fill="#FFFFFF" stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
                       <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        stroke="#EF4444" strokeWidth={1.5} strokeDasharray="6 3" strokeOpacity={0.6}
+                        stroke="#9CA3AF" strokeWidth={1} strokeDasharray="4 3" strokeOpacity={0.4}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                       <Line type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
-                        stroke="#8B5CF6" strokeWidth={1.5} strokeDasharray="6 3" strokeOpacity={0.6}
+                        stroke="#9CA3AF" strokeWidth={1} strokeDasharray="4 3" strokeOpacity={0.4}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                       <Line type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
-                        stroke="#10B981" strokeWidth={2.5}
+                        stroke="#6B7280" strokeWidth={1.5} strokeOpacity={0.5}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                     </>
                   )}
@@ -2495,16 +2525,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
 
-          {/* Fleet config panel (PROJ-35) — shown below chart when fleet mode active */}
-          {showFleet && !isFullDay && (
-            <div className="px-4 pb-3">
-              <FleetConfigPanel
-                config={fleetConfig}
-                onChange={setFleetConfig}
-                optimizationResult={isFleetActive ? fleetOptResult : null}
-              />
-            </div>
-          )}
+          {/* Fleet config is in the sidebar (Customer Profile card) */}
           </CardContent>
         </Card>
 
