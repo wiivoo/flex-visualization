@@ -139,18 +139,48 @@ export function FleetConfigPanel({ config, onChange }: Props) {
         onMaxChange={(v) => onChange({ ...config, departureMax: v })}
       />
 
-      {/* Charge Need */}
-      <RangeSlider
-        label="Charging Need" unit="kWh"
-        avg={config.chargeNeedAvg} min={config.chargeNeedMin} max={config.chargeNeedMax}
-        sliderMin={3} sliderMax={45}
-        onAvgChange={(v) => {
-          const spread = Math.round(v * 0.4)
-          onChange({ ...config, chargeNeedAvg: v, chargeNeedMin: Math.max(3, v - spread), chargeNeedMax: Math.min(45, v + spread) })
-        }}
-        onMinChange={(v) => onChange({ ...config, chargeNeedMin: v })}
-        onMaxChange={(v) => onChange({ ...config, chargeNeedMax: v })}
-      />
+      {/* Yearly Mileage */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between h-8">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Yearly Mileage</span>
+          <span className="text-2xl font-bold text-[#313131] tabular-nums">
+            {(config.yearlyMileageKm ?? 12000).toLocaleString('en-US')}<span className="text-xs font-normal text-gray-400 ml-1">km</span>
+          </span>
+        </div>
+        <div>
+          <input type="range" min={5000} max={40000} step={1000}
+            value={config.yearlyMileageKm ?? 12000}
+            onChange={(e) => onChange({ ...config, yearlyMileageKm: Number(e.target.value) })}
+            className={SLIDER_CLASS} />
+          <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+            <span>5,000 km</span>
+            <span>40,000 km</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Weekly Plug-ins */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between h-8">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Weekly Plug-ins</span>
+          <span className="text-2xl font-bold text-[#313131] tabular-nums">
+            {config.plugInsPerWeek ?? 3}<span className="text-xs font-normal text-gray-400 ml-1">x / wk</span>
+          </span>
+        </div>
+        <div>
+          <input type="range" min={1} max={7} step={1}
+            value={config.plugInsPerWeek ?? 3}
+            onChange={(e) => onChange({ ...config, plugInsPerWeek: Number(e.target.value) })}
+            className={SLIDER_CLASS} />
+          <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+            <span>1x</span>
+            <span>7x</span>
+          </div>
+        </div>
+        <p className="text-[10px] text-gray-400 text-center">
+          {Math.round((config.yearlyMileageKm ?? 12000) / ((config.plugInsPerWeek ?? 3) * 52) / 100 * 19 * 10) / 10} kWh/session · {(config.plugInsPerWeek ?? 3) * 52} sessions/yr
+        </p>
+      </div>
 
       {/* Spread */}
       <div className="flex items-center justify-between">

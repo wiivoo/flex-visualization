@@ -50,12 +50,19 @@ export function generateDistribution(
 export function deriveFleetDistributions(config: FleetConfig): FleetConfig {
   const arrivalHours = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
   const departureHours = [5, 6, 7, 8, 9]
+  // Derive charge need per session from mileage + frequency (same formula as single-car)
+  const sessionsPerYear = Math.max(1, (config.plugInsPerWeek ?? 3)) * 52
+  const kmPerSession = (config.yearlyMileageKm ?? 12000) / sessionsPerYear
+  const avgChargeKwh = Math.round((kmPerSession / 100) * 19 * 10) / 10 // 19 kWh/100km
+  // Spread: ±40% for normal, ±20% for narrow, ±60% for wide, 0 for off
+  const spreadFactor = config.spreadMode === 'off' ? 0 : config.spreadMode === 'narrow' ? 0.2 : config.spreadMode === 'wide' ? 0.6 : 0.4
+  const chargeSpread = Math.round(avgChargeKwh * spreadFactor)
   return {
     ...config,
     arrivalDist: generateDistribution(config.arrivalMin, config.arrivalMax, config.arrivalAvg, config.spreadMode, arrivalHours),
     departureDist: generateDistribution(config.departureMin, config.departureMax, config.departureAvg, config.spreadMode, departureHours),
-    socMin: config.chargeNeedMin,
-    socMax: config.chargeNeedMax,
+    socMin: Math.max(3, avgChargeKwh - chargeSpread),
+    socMax: Math.min(50, avgChargeKwh + chargeSpread),
   }
 }
 
@@ -124,7 +131,9 @@ export function computeFlexBand(
 
   const cohorts = buildCohorts(config)
   const slotDurationH = isQH ? 0.25 : 1
-  const fleetSize = config.fleetSize
+  // On any given night, only a fraction of fleet is connected
+  const plugInFraction = Math.min(1, (config.plugInsPerWeek ?? 3) / 7)
+  const fleetSize = config.fleetSize * plugInFraction
 
   // Build slot index: sequential position for each slot
   const slots = windowSlots.map((s, idx) => ({
@@ -258,9 +267,11 @@ function findDepartureIndex(slots: { hour: number; minute: number; date: string 
  */
 export function computeFleetEnergyKwh(config: FleetConfig): number {
   const cohorts = buildCohorts(config)
+  const plugInFraction = Math.min(1, (config.plugInsPerWeek ?? 3) / 7)
+  const effectiveFleet = config.fleetSize * plugInFraction
   let totalKwh = 0
   for (const c of cohorts) {
-    totalKwh += c.chargeNeedKwh * c.weight * config.fleetSize
+    totalKwh += c.chargeNeedKwh * c.weight * effectiveFleet
   }
   return Math.round(totalKwh * 10) / 10
 }

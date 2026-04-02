@@ -124,9 +124,8 @@ export interface FleetConfig {
   departureAvg: number             // 5–9 (average departure hour)
   departureMin: number             // 5–9 (earliest departure)
   departureMax: number             // 5–9 (latest departure)
-  chargeNeedAvg: number            // 5–40 kWh (average charge per session)
-  chargeNeedMin: number            // 3–50 kWh (min charge)
-  chargeNeedMax: number            // 3–50 kWh (max charge)
+  yearlyMileageKm: number           // 5000–40000 (avg yearly mileage per EV)
+  plugInsPerWeek: number             // 1–7 (avg charging sessions per EV per week)
   chargePowerKw: number              // 7 or 11
   spreadMode: SpreadMode           // distribution shape
   // Legacy fields kept for type compat (used internally by optimizer)
@@ -167,9 +166,8 @@ export const DEFAULT_FLEET_CONFIG: FleetConfig = {
   departureAvg: 7,
   departureMin: 6,
   departureMax: 9,
-  chargeNeedAvg: 15,
-  chargeNeedMin: 8,
-  chargeNeedMax: 22,
+  yearlyMileageKm: 12000,
+  plugInsPerWeek: 3,
   chargePowerKw: 7,
   spreadMode: 'normal',
   // Legacy / computed fields

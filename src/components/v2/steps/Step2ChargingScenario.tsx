@@ -791,8 +791,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const avgDaily4w = (wdD4w + weD4w) > 0 ? (wdS4w + weS4w) / (wdD4w + weD4w) : 0
 
     return {
-      fleetRollingSavings: Math.round(avgDaily * 365 * 100) / 100,
-      fleetMonthlySavings: Math.round(avgDaily * 30.44 * 100) / 100,
+      fleetRollingSavings: Math.round(avgDaily * 365 * 100) / 100,  // fleet total annual
+      fleetMonthlySavings: Math.round(avgDaily * 30.44 * 100) / 100,  // fleet total monthly
       fleetDailySavingsMap: perDay,
       fleetPerModeSavings: {
         ctKwh4w: totalEnergy > 0 ? Math.round(Math.abs(avgDaily4w) * 100 / totalEnergy * 100) / 100 : 0,
@@ -3360,10 +3360,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 : activeDailySavingsMap}
               selectedDate={prices.selectedDate}
               onSelect={prices.setSelectedDate}
-              energyPerSession={showFleet ? computeFleetEnergyKwh(deriveFleetDistributions(fleetConfig)) / 1000 : energyPerSession}
+              energyPerSession={showFleet ? deriveEnergyPerSession(fleetConfig.yearlyMileageKm ?? 12000, fleetConfig.plugInsPerWeek ?? 3) : energyPerSession}
               chargingMode={scenario.chargingMode}
               rollingAvgSavings={showFleet ? activeRollingSavings / 1000 : activeRollingSavings}
-              sessionsPerYear={showFleet ? 365 : sessionsPerYear}
+              sessionsPerYear={showFleet ? (fleetConfig.plugInsPerWeek ?? 3) * 52 : sessionsPerYear}
               selectedDayCost={showFleet && fleetOptResult
                 ? { baselineAvgCt: fleetOptResult.baselineAvgCtKwh, optimizedAvgCt: fleetOptResult.optimizedAvgCtKwh, savingsEur: Math.abs(fleetOptResult.savingsEur) / 1000 }
                 : sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
@@ -3376,9 +3376,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 monthlySavingsData={showFleet
                   ? activeMonthlySavingsData.map(m => ({ ...m, savings: m.savings / 1000 }))
                   : activeMonthlySavingsData}
-                weeklyPlugIns={showFleet ? 7 : weeklyPlugIns}
-                energyPerSession={showFleet ? computeFleetEnergyKwh(deriveFleetDistributions(fleetConfig)) / 1000 : energyPerSession}
-                sessionsPerYear={showFleet ? 365 : sessionsPerYear}
+                weeklyPlugIns={showFleet ? (fleetConfig.plugInsPerWeek ?? 3) : weeklyPlugIns}
+                energyPerSession={showFleet ? deriveEnergyPerSession(fleetConfig.yearlyMileageKm ?? 12000, fleetConfig.plugInsPerWeek ?? 3) : energyPerSession}
+                sessionsPerYear={showFleet ? (fleetConfig.plugInsPerWeek ?? 3) * 52 : sessionsPerYear}
                 rollingAvgSavings={showFleet ? activeRollingSavings / 1000 : activeRollingSavings}
                 monthlySavings={showFleet ? activeMonthlySavings / 1000 : activeMonthlySavings}
                 avgDailyEur={showFleet ? activeRollingSavings / 1000 / 365 : (sessionsPerYear > 0 ? activeRollingSavings / sessionsPerYear : 0)}
