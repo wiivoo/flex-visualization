@@ -13,7 +13,7 @@ import { SessionCostCard } from '@/components/v2/SessionCostCard'
 import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
 import { DailySavingsHeatmap } from '@/components/v2/DailySavingsHeatmap'
 // Disabled for performance: SavingsHeatmap, FleetPortfolioCard, SpreadIndicatorsCard, FlexibilityDemoChart
-import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
+import { YearlySavingsCard, type YearlySavingsEntry, type QuarterlyEntry } from '@/components/v2/YearlySavingsCard'
 import { type EnrichedWindow } from '@/lib/excel-export'
 import { DEFAULT_FLEET_CONFIG, type FleetConfig, type FleetOptimizationResult } from '@/lib/v2-config'
 import { computeFlexBand, optimizeFleetSchedule, computeFleetEnergyKwh, deriveFleetDistributions } from '@/lib/fleet-optimizer'
@@ -3511,11 +3511,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {activeYearlySavingsData.length > 0 && (
                 <YearlySavingsCard
                   yearlySavingsData={activeYearlySavingsData}
-                  weeklyPlugIns={weeklyPlugIns}
-                  energyPerSession={energyPerSession}
+                  weeklyPlugIns={showFleet ? (fleetConfig.plugInsPerWeek ?? 2) : weeklyPlugIns}
+                  energyPerSession={showFleet ? fleetEnergyPerSession : energyPerSession}
                   chargingMode={scenario.chargingMode}
                   isV2G={isV2G}
                   isFleet={showFleet}
+                  quarterlyData={quarterlyData as QuarterlyEntry[]}
+                  avgWindowSpreadCt={(() => {
+                    const months = activeMonthlySavingsData.filter(m => m.avgWindowSpreadCt != null)
+                    return months.length > 0 ? months.reduce((s, m) => s + (m.avgWindowSpreadCt ?? 0), 0) / months.length : undefined
+                  })()}
+                  avgSavingsCtKwh={(() => {
+                    const months = activeMonthlySavingsData.filter(m => m.avgSavingsCtKwh != null)
+                    return months.length > 0 ? months.reduce((s, m) => s + (m.avgSavingsCtKwh ?? 0), 0) / months.length : undefined
+                  })()}
                 />
               )}
             </div>
