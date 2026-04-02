@@ -107,62 +107,56 @@ export function FleetConfigPanel({ config, onChange, optimizationResult }: Props
   const res = optimizationResult
 
   return (
-    <div className="space-y-3">
-      {/* Row 1: Arrival + Departure distributions — same color */}
-      <div className="flex gap-4">
-        <DistHistogram
-          label="Arrival (14–23h)"
-          entries={config.arrivalDist}
-          onChange={(arrivalDist) => onChange({ ...config, arrivalDist })}
-          color="#6B7280"
-          defaults={DEFAULT_ARRIVAL_DIST}
-        />
-        <DistHistogram
-          label="Departure (5–9h)"
-          entries={config.departureDist}
-          onChange={(departureDist) => onChange({ ...config, departureDist })}
-          color="#6B7280"
-          defaults={DEFAULT_DEPARTURE_DIST}
-        />
-      </div>
+    <div className="space-y-4">
+      {/* Arrival distribution */}
+      <DistHistogram
+        label="Arrival (14–23h)"
+        entries={config.arrivalDist}
+        onChange={(arrivalDist) => onChange({ ...config, arrivalDist })}
+        color="#6B7280"
+        defaults={DEFAULT_ARRIVAL_DIST}
+      />
 
-      {/* Row 2: Charge need per session — how much each car needs */}
+      {/* Departure distribution */}
+      <DistHistogram
+        label="Departure (5–9h)"
+        entries={config.departureDist}
+        onChange={(departureDist) => onChange({ ...config, departureDist })}
+        color="#6B7280"
+        defaults={DEFAULT_DEPARTURE_DIST}
+      />
+
+      {/* Avg charge need — single slider, spread is auto normal distribution */}
       <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between">
-          <span className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold">Charge need</span>
-          <span className="text-[13px] font-bold text-[#313131] tabular-nums">
-            {config.socMin}–{config.socMax}
-            <span className="text-[9px] font-normal text-gray-400 ml-0.5">kWh/session</span>
+        <div className="flex items-baseline justify-between h-8">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Avg Charge Need</span>
+          <span className="text-2xl font-bold text-[#313131] tabular-nums">
+            {Math.round((config.socMin + config.socMax) / 2)}
+            <span className="text-xs font-normal text-gray-400 ml-1">kWh</span>
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[9px] text-gray-400 tabular-nums w-6">{config.socMin}</span>
+        <div>
           <input
             type="range"
             min={5}
-            max={50}
-            value={config.socMin}
+            max={40}
+            step={1}
+            value={Math.round((config.socMin + config.socMax) / 2)}
             onChange={(e) => {
-              const v = parseInt(e.target.value)
-              onChange({ ...config, socMin: Math.min(v, config.socMax) })
+              const avg = parseInt(e.target.value)
+              // Normal distribution: spread = ±40% of average
+              const spread = Math.round(avg * 0.4)
+              onChange({ ...config, socMin: Math.max(3, avg - spread), socMax: Math.min(50, avg + spread) })
             }}
-            className="flex-1 h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
+            className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
           />
-          <input
-            type="range"
-            min={5}
-            max={50}
-            value={config.socMax}
-            onChange={(e) => {
-              const v = parseInt(e.target.value)
-              onChange({ ...config, socMax: Math.max(v, config.socMin) })
-            }}
-            className="flex-1 h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
-          />
-          <span className="text-[9px] text-gray-400 tabular-nums w-6 text-right">{config.socMax}</span>
+          <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+            <span>5 kWh</span>
+            <span>40 kWh</span>
+          </div>
         </div>
-        <p className="text-[9px] text-gray-400 text-center">
-          Spread of kWh each car needs per overnight session
+        <p className="text-[10px] text-gray-400 text-center">
+          Fleet spread: {config.socMin}–{config.socMax} kWh (normal distribution)
         </p>
       </div>
 

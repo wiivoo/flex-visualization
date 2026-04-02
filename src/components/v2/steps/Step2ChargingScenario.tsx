@@ -248,7 +248,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; fleetChargeBar?: number | null }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; fleetChargeBar?: number | null; fleetBaselineBar?: number | null }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
@@ -503,16 +503,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         optimized: opt?.optimizedKw ?? 0,
       })
     }
-    // Compute max optimized kW for normalizing bar heights
-    const maxOptKw = Math.max(...fleetOptResult.schedule.map(s => s.optimizedKw), 1)
+    // Compute max kW for normalizing bar heights
+    const maxKw = Math.max(...fleetOptResult.schedule.map(s => s.optimizedKw), ...flexBand.map(s => s.greedyKw), 1)
     return chartData.map(d => {
       const key = `${d.date}-${d.hour}-${d.minute}`
       const band = bandMap.get(key)
-      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null, fleetChargeBar: null }
-      // fleetChargeBar: scale optimized kW to price Y-axis range for bar rendering
-      // Bar height proportional to charge intensity, anchored to bottom of price range
-      const chargeIntensity = band.optimized / maxOptKw // 0–1
-      return { ...d, greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized, fleetChargeBar: band.optimized > 0 ? chargeIntensity * d.priceVal : null }
+      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null, fleetChargeBar: null, fleetBaselineBar: null }
+      // Bars proportional to charge intensity, scaled to price value for visual alignment
+      const optIntensity = band.optimized / maxKw
+      const greedyIntensity = band.greedy / maxKw
+      return {
+        ...d,
+        greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized,
+        fleetChargeBar: band.optimized > 0 ? optIntensity * d.priceVal : null,
+        fleetBaselineBar: band.greedy > 0 ? greedyIntensity * d.priceVal : null,
+      }
     })
   }, [chartData, isFleetActive, flexBand, fleetOptResult])
 
@@ -729,6 +734,77 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     return { overnight: toResult(overnight), fullday: toResult(fullday), threeday: toResult(threeday) }
   }, [prices.hourly, prices.hourlyQH, isQH, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+
+  // ── Fleet rolling savings (PROJ-37): runs fleet optimizer per-day over 365 days ──
+  const { fleetRollingSavings, fleetMonthlySavings, fleetDailySavingsMap, fleetPerModeSavings } = useMemo(() => {
+    const empty = { fleetRollingSavings: 0, fleetMonthlySavings: 0, fleetDailySavingsMap: new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>(), fleetPerModeSavings: { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 } }
+    if (!showFleet || !date1 || prices.hourly.length === 0) return empty
+
+    const endDate = date1
+    const start52 = new Date(new Date(endDate + 'T12:00:00Z').getTime() - 365 * 86400000).toISOString().slice(0, 10)
+    const start4w = new Date(new Date(endDate + 'T12:00:00Z').getTime() - 28 * 86400000).toISOString().slice(0, 10)
+
+    const byDate = new Map<string, HourlyPrice[]>()
+    for (const p of prices.hourly) {
+      if (p.date >= start52 && p.date <= endDate) {
+        const arr = byDate.get(p.date) || []
+        arr.push(p)
+        byDate.set(p.date, arr)
+      }
+    }
+
+    const totalEnergy = computeFleetEnergyKwh(fleetConfig)
+    let wdS = 0, wdD = 0, weS = 0, weD = 0
+    let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
+    const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
+
+    for (const [dDate, dPrices] of byDate) {
+      const nd = nextDayStr(dDate)
+      const nPrices = byDate.get(nd)
+      if (!nPrices || nPrices.length === 0) continue
+      // Build overnight window: 14:00 → 09:00 (full chart range for fleet)
+      const win = [
+        ...dPrices.filter(p => p.hour >= 14),
+        ...nPrices.filter(p => p.hour < 10),
+      ]
+      if (win.length < 4) continue
+
+      const band = computeFlexBand(fleetConfig, win, false)
+      if (band.length === 0) continue
+      const opt = optimizeFleetSchedule(band, win, totalEnergy, false)
+      const savEur = opt.savingsEur
+
+      let spreadMin = Infinity, spreadMax = -Infinity
+      for (const p of win) { if (p.priceCtKwh < spreadMin) spreadMin = p.priceCtKwh; if (p.priceCtKwh > spreadMax) spreadMax = p.priceCtKwh }
+      perDay.set(dDate, { savingsEur: Math.round(savEur * 100) / 100, bAvg: Math.round(opt.baselineAvgCtKwh * 100) / 100, oAvg: Math.round(opt.optimizedAvgCtKwh * 100) / 100, spreadCt: Math.round((spreadMax - spreadMin) * 100) / 100, windowHours: win.length })
+
+      const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
+      const isWe = dow === 0 || dow === 6
+      if (isWe) { weS += savEur; weD++; if (dDate >= start4w) { weS4w += savEur; weD4w++ } }
+      else { wdS += savEur; wdD++; if (dDate >= start4w) { wdS4w += savEur; wdD4w++ } }
+    }
+
+    // Fleet charges every day (7x/week), not based on single-EV plug-in frequency
+    const avgDaily = (wdD + weD) > 0 ? (wdS + weS) / (wdD + weD) : 0
+    const avgDaily4w = (wdD4w + weD4w) > 0 ? (wdS4w + weS4w) / (wdD4w + weD4w) : 0
+
+    return {
+      fleetRollingSavings: Math.round(avgDaily * 365 * 100) / 100,
+      fleetMonthlySavings: Math.round(avgDaily * 30.44 * 100) / 100,
+      fleetDailySavingsMap: perDay,
+      fleetPerModeSavings: {
+        ctKwh4w: totalEnergy > 0 ? Math.round(avgDaily4w * 100 / totalEnergy * 100) / 100 : 0,
+        eur4w: Math.round(avgDaily4w * 28 * 100) / 100,
+        ctKwh52w: totalEnergy > 0 ? Math.round(avgDaily * 100 / totalEnergy * 100) / 100 : 0,
+        eur52w: Math.round(avgDaily * 365),
+      },
+    }
+  }, [showFleet, date1, prices.hourly, fleetConfig])
+
+  // ── Active savings values (fleet or single-EV) ──
+  const activeRollingSavings = showFleet ? fleetRollingSavings : rollingAvgSavings
+  const activeMonthlySavings = showFleet ? fleetMonthlySavings : monthlySavings
+  const activeDailySavingsMap = showFleet ? fleetDailySavingsMap : dailySavingsMap
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -1995,9 +2071,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Fleet flex band overlay (PROJ-36) — rendered behind price curve */}
                   {isFleetActive && (
                     <>
-                      {/* Charge intensity bars on price axis — shows WHERE fleet charges */}
+                      {/* Baseline bars (red) — "charge now" greedy pattern */}
+                      <Bar dataKey="fleetBaselineBar" yAxisId="left"
+                        fill="#EF4444" fillOpacity={0.12} stroke="none"
+                        isAnimationActive={false} radius={[2, 2, 0, 0]} />
+                      {/* Optimized bars (blue) — price-optimal charging */}
                       <Bar dataKey="fleetChargeBar" yAxisId="left"
-                        fill="#3B82F6" fillOpacity={0.15} stroke="none"
+                        fill="#3B82F6" fillOpacity={0.18} stroke="none"
                         isAnimationActive={false} radius={[2, 2, 0, 0]} />
                       {/* Flex band area (subtle gray) */}
                       <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
@@ -2307,6 +2387,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 const dYAdj = pos('discharge')
                 return (
                   <>
+                    {/* Single-EV pill labels — hidden when fleet view active */}
+                    {!isFleetActive && <>
                     {/* Baseline (Charge now) — shown when there's net charge to shift */}
                     {(!isV2G || v2gHasNetCharge) && (
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
@@ -2427,12 +2509,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         </div>
                       </div>
                     )}
+                  </>}
                   </>
                 )
               })()}
 
-              {/* ── Drag handles — invisible touch targets + label pills ── */}
-              {N > 1 && (
+              {/* ── Drag handles — invisible touch targets + label pills (hidden in fleet mode) ── */}
+              {N > 1 && !isFleetActive && (
                 <>
                   {/* ARRIVAL HANDLE */}
                   <div className="absolute transition-[left] duration-100 z-20" style={{
@@ -2597,7 +2680,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)}`,
           })
         }
-        if (fullDaySp) {
+        if (fullDaySp && !showFleet) {
           rows.push({
             key: 'fullday',
             label: '24h',
@@ -2607,7 +2690,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)}`,
           })
         }
-        if (threeDaySp) {
+        if (threeDaySp && !showFleet) {
           rows.push({
             key: '3day',
             label: '72h',
@@ -2631,7 +2714,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           <div id="tour-scenario-cards" className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {rows.map(row => {
               const isActive = row.key === activeMode
-              const ms = perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }
+              const ms = showFleet && row.key === 'overnight' ? fleetPerModeSavings : (perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 })
               return (
                 <div key={row.key}
                   onClick={() => {
@@ -2676,8 +2759,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       {row.spreadRange}
                     </p>
                   </div>
-                  {/* Selected day — V2G: total benefit, V1G: savings */}
-                  {isV2G && row.v2gProfit ? (
+                  {/* Selected day — Fleet / V2G / V1G savings */}
+                  {showFleet && row.key === 'overnight' && fleetOptResult ? (
+                    <div className="mb-2">
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Fleet savings on selected day</p>
+                      <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
+                        {fleetOptResult.savingsEur.toFixed(2)}
+                      </span>
+                      <span className="text-[10px] text-gray-400 ml-1">EUR</span>
+                      <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
+                        {fleetOptResult.savingsPct.toFixed(1)}% cheaper · {fleetOptResult.totalEnergyKwh.toFixed(0)} kWh · 1,000 EVs
+                      </p>
+                      <div className="flex gap-3 mt-1.5 text-[9px]">
+                        <span className="text-red-500">ASAP: {fleetOptResult.baselineAvgCtKwh.toFixed(1)} ct/kWh</span>
+                        <span className="text-blue-500">Opt: {fleetOptResult.optimizedAvgCtKwh.toFixed(1)} ct/kWh</span>
+                      </div>
+                    </div>
+                  ) : isV2G && row.v2gProfit ? (
                     <div className="mb-2">
                       <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">
                         {v2gHasNetCharge ? 'V2G benefit' : 'Arbitrage'} on selected day
@@ -3039,16 +3137,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       </div>{/* end main two-column grid */}
 
       {/* ── Savings Overview: Heatmap + Monthly + Yearly ── */}
-      {(monthlySavingsData.length > 0 || dailySavingsMap.size > 0) && (
+      {(monthlySavingsData.length > 0 || activeDailySavingsMap.size > 0) && (
         <div className="space-y-6">
-          {dailySavingsMap.size > 0 && (
+          {activeDailySavingsMap.size > 0 && (
             <DailySavingsHeatmap
-              dailySavingsMap={dailySavingsMap}
+              dailySavingsMap={activeDailySavingsMap}
               selectedDate={prices.selectedDate}
               onSelect={prices.setSelectedDate}
               energyPerSession={energyPerSession}
               chargingMode={scenario.chargingMode}
-              rollingAvgSavings={rollingAvgSavings}
+              rollingAvgSavings={activeRollingSavings}
               sessionsPerYear={sessionsPerYear}
               selectedDayCost={sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
             />
@@ -3060,9 +3158,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 weeklyPlugIns={weeklyPlugIns}
                 energyPerSession={energyPerSession}
                 sessionsPerYear={sessionsPerYear}
-                rollingAvgSavings={rollingAvgSavings}
-                monthlySavings={monthlySavings}
-                avgDailyEur={sessionsPerYear > 0 ? rollingAvgSavings / sessionsPerYear : 0}
+                rollingAvgSavings={activeRollingSavings}
+                monthlySavings={activeMonthlySavings}
+                avgDailyEur={sessionsPerYear > 0 ? activeRollingSavings / sessionsPerYear : 0}
                 selectedDate={date1}
                 chargingMode={scenario.chargingMode}
                 isV2G={isV2G}
