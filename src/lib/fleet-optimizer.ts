@@ -379,7 +379,7 @@ export function optimizeFleetSchedule(
     optimizedCostEur: Math.round(optimizedCostEur * 100) / 100,
     savingsEur: Math.round(savingsEur * 100) / 100,
     savingsPct: baselineCostEur > 0 ? Math.round(savingsEur / baselineCostEur * 1000) / 10 : 0,
-    baselineAvgCtKwh: totalEnergyKwh > 0 ? Math.round(baselineCostEur * 100 / totalEnergyKwh * 100) / 100 : 0,
+    baselineAvgCtKwh: baselineEnergyKwh > 0 ? Math.round(baselineCostEur * 100 / baselineEnergyKwh * 100) / 100 : 0,
     optimizedAvgCtKwh: optimizedEnergyKwh > 0 ? Math.round(optimizedCostEur * 100 / optimizedEnergyKwh * 100) / 100 : 0,
     schedule,
     shortfallKwh: Math.round(Math.max(0, totalEnergyKwh - optimizedEnergyKwh) * 10) / 10,
