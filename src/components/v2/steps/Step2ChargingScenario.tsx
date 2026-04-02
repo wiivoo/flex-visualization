@@ -1130,11 +1130,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const minSlots = Math.ceil(deferredEnergyPerSession / chargePowerKw)
     const weekdayScale = deferredWeekdayPlugIns / 5
     const weekendScale = deferredWeekendPlugIns / 2
-    const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; wdLS: number; weLS: number; wdArb: number; weArb: number }>()
+    // Build per-date lookup for full-day spread (all 24h)
+    const byDateH = new Map<string, HourlyPrice[]>()
+    for (const p of prices.hourly) {
+      const arr = byDateH.get(p.date) || []
+      arr.push(p)
+      byDateH.set(p.date, arr)
+    }
+
+    const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; wdLS: number; weLS: number; wdArb: number; weArb: number; totalDailySpread: number; totalWindowSpread: number; totalSavingsCtKwh: number; spreadDays: number }>()
     for (const w of overnightWindows) {
       if (w.prices.length < minSlots) continue
-      if (w.isProjected) continue  // exclude forecast data from monthly trend
-      const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, wdLS: 0, weLS: 0, wdArb: 0, weArb: 0 }
+      if (w.isProjected) continue
+      const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, wdLS: 0, weLS: 0, wdArb: 0, weArb: 0, totalDailySpread: 0, totalWindowSpread: 0, totalSavingsCtKwh: 0, spreadDays: 0 }
       if (w.isWeekend) {
         entry.weSavings += w.savingsEur; entry.weDays++
         entry.weLS += w.v2gLS ?? 0; entry.weArb += w.v2gArb ?? 0
@@ -1142,6 +1150,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         entry.wdSavings += w.savingsEur; entry.wdDays++
         entry.wdLS += w.v2gLS ?? 0; entry.wdArb += w.v2gArb ?? 0
       }
+      // Window spread (max-min within charging window)
+      if (w.sorted.length >= 2) {
+        entry.totalWindowSpread += w.sorted[w.sorted.length - 1].priceCtKwh - w.sorted[0].priceCtKwh
+      }
+      // Full 24h spread for the arrival date
+      const dayPrices = byDateH.get(w.date)
+      if (dayPrices && dayPrices.length >= 2) {
+        const prices24 = dayPrices.map(p => p.priceCtKwh)
+        entry.totalDailySpread += Math.max(...prices24) - Math.min(...prices24)
+      }
+      // Savings ct/kWh from baseline vs optimized avg
+      const savCt = w.savingsEur > 0 && deferredEnergyPerSession > 0
+        ? (w.savingsEur / deferredEnergyPerSession) * 100 : 0
+      entry.totalSavingsCtKwh += savCt
+      entry.spreadDays++
       monthMap.set(w.month, entry)
     }
     return [...monthMap.entries()]
@@ -1166,19 +1189,37 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         return {
           month, label, savings: monthlySav, season, year: y,
           ...(isV2G ? { loadShiftingEur: lsMonthly, arbitrageEur: arbMonthly } : {}),
+          avgDailySpreadCt: data.spreadDays > 0 ? Math.round(data.totalDailySpread / data.spreadDays * 10) / 10 : undefined,
+          avgWindowSpreadCt: data.spreadDays > 0 ? Math.round(data.totalWindowSpread / data.spreadDays * 10) / 10 : undefined,
+          avgSavingsCtKwh: data.spreadDays > 0 ? Math.round(data.totalSavingsCtKwh / data.spreadDays * 100) / 100 : undefined,
         }
       })
-  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, isV2G])
+  }, [overnightWindows, prices.hourly, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, isV2G])
 
   // ── Fleet monthly savings — derived from fleetDailySavingsMap ──
   const fleetMonthlySavingsData = useMemo(() => {
     if (!showFleet || fleetDailySavingsMap.size === 0) return []
     // Fleet charges every day, so no weekday/weekend scaling — just aggregate by month
-    const monthMap = new Map<string, { totalSav: number; days: number }>()
+    // Build per-date lookup for full-day spread
+    const byDateH = new Map<string, HourlyPrice[]>()
+    for (const p of prices.hourly) {
+      const arr = byDateH.get(p.date) || []
+      arr.push(p)
+      byDateH.set(p.date, arr)
+    }
+    const monthMap = new Map<string, { totalSav: number; days: number; totalDailySpread: number; totalWindowSpread: number; totalSavingsCtKwh: number }>()
     for (const [dDate, entry] of fleetDailySavingsMap) {
       const month = dDate.slice(0, 7)
-      const m = monthMap.get(month) || { totalSav: 0, days: 0 }
+      const m = monthMap.get(month) || { totalSav: 0, days: 0, totalDailySpread: 0, totalWindowSpread: 0, totalSavingsCtKwh: 0 }
       m.totalSav += Math.abs(entry.savingsEur)
+      m.totalWindowSpread += entry.spreadCt
+      m.totalSavingsCtKwh += Math.abs(entry.bAvg - entry.oAvg)
+      // Full 24h spread
+      const dayPrices = byDateH.get(dDate)
+      if (dayPrices && dayPrices.length >= 2) {
+        const p24 = dayPrices.map(p => p.priceCtKwh)
+        m.totalDailySpread += Math.max(...p24) - Math.min(...p24)
+      }
       m.days++
       monthMap.set(month, m)
     }
@@ -1192,9 +1233,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const mNum = m
         const season: 'winter' | 'spring' | 'summer' | 'autumn' =
           mNum <= 2 || mNum === 12 ? 'winter' : mNum <= 5 ? 'spring' : mNum <= 8 ? 'summer' : 'autumn'
-        return { month, label, savings: monthlySav, season, year: y }
+        return {
+          month, label, savings: monthlySav, season, year: y,
+          avgDailySpreadCt: data.days > 0 ? Math.round(data.totalDailySpread / data.days * 10) / 10 : undefined,
+          avgWindowSpreadCt: data.days > 0 ? Math.round(data.totalWindowSpread / data.days * 10) / 10 : undefined,
+          avgSavingsCtKwh: data.days > 0 ? Math.round(data.totalSavingsCtKwh / data.days * 100) / 100 : undefined,
+        }
       })
-  }, [showFleet, fleetDailySavingsMap])
+  }, [showFleet, fleetDailySavingsMap, prices.hourly])
 
   // ── Fleet yearly savings — derived from fleetDailySavingsMap ──
   const fleetYearlySavingsData = useMemo((): YearlySavingsEntry[] => {

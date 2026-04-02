@@ -17,6 +17,9 @@ export interface MonthlySavingsEntry {
   isProjected?: boolean
   loadShiftingEur?: number  // V2G: load shifting portion
   arbitrageEur?: number     // V2G: arbitrage portion
+  avgDailySpreadCt?: number    // avg daily max-min spread (full 24h)
+  avgWindowSpreadCt?: number   // avg daily spread within charging window
+  avgSavingsCtKwh?: number     // avg monetizable savings (ct/kWh)
 }
 
 interface Props {
@@ -146,6 +149,35 @@ export function MonthlySavingsCard({
             ∑ {totalSum.toFixed(0)} EUR ≈ {rollingAvgSavings.toFixed(0)} EUR/yr
           </span>
         </div>
+
+        {/* Spread & savings breakdown table */}
+        {last12.some(d => d.avgDailySpreadCt != null) && (
+          <div className="border-t border-gray-100 pt-3 mt-1">
+            <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Spread &amp; Savings Breakdown</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-[10px] tabular-nums">
+                <thead>
+                  <tr className="text-gray-400 text-left">
+                    <th className="font-semibold pb-1 pr-2">Month</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">24h Spread</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">Window Spread</th>
+                    <th className="font-semibold pb-1 text-right">Savings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {last12.map(d => (
+                    <tr key={d.month} className={`border-t border-gray-50 ${d.month === selectedMonth ? 'bg-emerald-50/30' : ''}`}>
+                      <td className="py-0.5 pr-2 text-gray-500">{d.displayLabel}</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgDailySpreadCt?.toFixed(1) ?? '–'} ct</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgWindowSpreadCt?.toFixed(1) ?? '–'} ct</td>
+                      <td className="py-0.5 text-right font-semibold text-emerald-600">{d.avgSavingsCtKwh?.toFixed(2) ?? '–'} ct/kWh</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
       </CardContent>
     </Card>
