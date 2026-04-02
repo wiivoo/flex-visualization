@@ -31,6 +31,8 @@ interface Props {
   quarterlyData?: QuarterlyEntry[]
   avgWindowSpreadCt?: number
   avgSavingsCtKwh?: number
+  bestMonth?: { label: string; savings: number }
+  worstMonth?: { label: string; savings: number }
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -43,6 +45,7 @@ export function YearlySavingsCard({
   yearlySavingsData, weeklyPlugIns, energyPerSession,
   chargingMode = 'overnight', isV2G = false, isFleet = false,
   quarterlyData, avgWindowSpreadCt, avgSavingsCtKwh,
+  bestMonth, worstMonth,
 }: Props) {
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
 
@@ -69,12 +72,6 @@ export function YearlySavingsCard({
     ? Math.min(100, Math.round(avgSavingsCtKwh / avgWindowSpreadCt * 100))
     : null
 
-  const sessionsPerYear = weeklyPlugIns * 52
-  const annualKwh = sessionsPerYear * energyPerSession
-  const latestSavings = currentYearEntry?.savings ?? filtered[filtered.length - 1]?.savings ?? 0
-  const tariffDiscount = annualKwh > 0
-    ? Math.round(latestSavings / annualKwh * 10000) / 100
-    : null
 
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
@@ -157,29 +154,42 @@ export function YearlySavingsCard({
           </div>
         )}
 
-        {/* Efficiency + Equivalent discount */}
-        {(efficiency !== null || tariffDiscount !== null) && (
-          <div className="border-t border-gray-100 pt-3 grid grid-cols-2 gap-3">
+        {/* Flexibility utilization + Best/Worst month */}
+        {(efficiency !== null || bestMonth || worstMonth) && (
+          <div className="border-t border-gray-100 pt-3 space-y-2.5">
             {efficiency !== null && (
               <div>
-                <p className="text-[8px] text-gray-400 uppercase tracking-wide">Capture Efficiency</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
-                    <div className="h-full rounded-full bg-emerald-500"
-                      style={{ width: `${efficiency}%`, opacity: 0.7 }} />
-                  </div>
-                  <span className="text-[12px] font-bold tabular-nums text-emerald-700">{efficiency}%</span>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-[8px] text-gray-400 uppercase tracking-wide">Flexibility Utilization</p>
+                  <span className="text-[11px] font-bold tabular-nums text-emerald-700">{efficiency}%</span>
                 </div>
-                <p className="text-[8px] text-gray-400 mt-0.5">of window spread captured</p>
+                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-emerald-500 transition-all"
+                    style={{ width: `${efficiency}%`, opacity: 0.7 }} />
+                </div>
+                <p className="text-[8px] text-gray-400 mt-0.5">of available price spread monetized</p>
               </div>
             )}
-            {tariffDiscount !== null && tariffDiscount > 0 && (
-              <div>
-                <p className="text-[8px] text-gray-400 uppercase tracking-wide">Equivalent Discount</p>
-                <p className="text-[16px] font-bold tabular-nums text-emerald-700 mt-0.5">
-                  {tariffDiscount.toFixed(1)}<span className="text-[10px] font-normal text-gray-400 ml-0.5">ct/kWh</span>
-                </p>
-                <p className="text-[8px] text-gray-400 mt-0.5">effective tariff reduction</p>
+            {(bestMonth || worstMonth) && (
+              <div className="flex gap-3">
+                {bestMonth && (
+                  <div className="flex-1">
+                    <p className="text-[8px] text-gray-400 uppercase tracking-wide">Best Month</p>
+                    <p className="text-[12px] font-bold tabular-nums text-emerald-700 mt-0.5">
+                      {bestMonth.label}
+                      <span className="text-[9px] font-normal text-emerald-500 ml-1">{bestMonth.savings.toFixed(1)} EUR</span>
+                    </p>
+                  </div>
+                )}
+                {worstMonth && (
+                  <div className="flex-1">
+                    <p className="text-[8px] text-gray-400 uppercase tracking-wide">Worst Month</p>
+                    <p className="text-[12px] font-bold tabular-nums text-gray-500 mt-0.5">
+                      {worstMonth.label}
+                      <span className="text-[9px] font-normal text-gray-400 ml-1">{worstMonth.savings.toFixed(1)} EUR</span>
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>

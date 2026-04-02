@@ -3524,6 +3524,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     const months = activeMonthlySavingsData.filter(m => m.avgSavingsCtKwh != null)
                     return months.length > 0 ? months.reduce((s, m) => s + (m.avgSavingsCtKwh ?? 0), 0) / months.length : undefined
                   })()}
+                  bestMonth={(() => {
+                    const last12 = activeMonthlySavingsData.slice(-12)
+                    if (last12.length === 0) return undefined
+                    const best = last12.reduce((b, m) => m.savings > b.savings ? m : b, last12[0])
+                    return { label: best.label, savings: best.savings }
+                  })()}
+                  worstMonth={(() => {
+                    const last12 = activeMonthlySavingsData.slice(-12)
+                    if (last12.length === 0) return undefined
+                    const worst = last12.reduce((w, m) => m.savings < w.savings ? m : w, last12[0])
+                    return { label: worst.label, savings: worst.savings }
+                  })()}
                 />
               )}
             </div>
