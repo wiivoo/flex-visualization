@@ -248,7 +248,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; fleetChargePrice?: number | null; fleetBaselinePrice?: number | null; fleetChargeIntensity?: number }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
@@ -504,11 +504,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         optimized: opt?.optimizedKw ?? 0,
       })
     }
+    const maxOptKw = Math.max(...fleetOptResult.schedule.map(s => s.optimizedKw), 1)
     return chartData.map(d => {
       const key = `${d.date}-${d.hour}-${d.minute}`
       const band = bandMap.get(key)
-      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null }
-      return { ...d, greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized }
+      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null, fleetChargePrice: null, fleetBaselinePrice: null, fleetChargeIntensity: 0 }
+      return {
+        ...d,
+        greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized,
+        // Price curve overlay: show price at slots where fleet charges
+        fleetChargePrice: band.optimized > 0.1 ? d.priceVal : null,
+        fleetBaselinePrice: band.greedy > 0.1 ? d.priceVal : null,
+        fleetChargeIntensity: band.optimized / maxOptKw, // 0–1 for dot sizing
+      }
     })
   }, [chartData, isFleetActive, flexBand, fleetOptResult])
 
@@ -2140,6 +2148,29 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                             ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 }
                             : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }} />
                       )}
+                    </>
+                  )}
+                  {/* Fleet price curve overlay — dots on price line where fleet charges */}
+                  {isFleetActive && (
+                    <>
+                      {/* Baseline (greedy) dots on price — red, subtle */}
+                      <Line type="monotone" dataKey="fleetBaselinePrice" yAxisId="left"
+                        stroke="#EF4444" strokeWidth={isQH ? 1.5 : 2.5} strokeOpacity={0.35}
+                        dot={isQH
+                          ? { r: 1.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 0.5 }
+                          : { r: 2.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 1 }}
+                        connectNulls={false} isAnimationActive={false} />
+                      {/* Optimized dots on price — blue, prominent, size = charge intensity */}
+                      <Line type="monotone" dataKey="fleetChargePrice" yAxisId="left"
+                        stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
+                        dot={(props: { cx?: number; cy?: number; payload?: Record<string, unknown>; index?: number }) => {
+                          const { cx, cy, payload } = props
+                          if (cx == null || cy == null || !payload) return <circle key={props.index} r={0} />
+                          const intensity = (payload.fleetChargeIntensity as number) ?? 0
+                          const r = isQH ? 1.5 + intensity * 2 : 2.5 + intensity * 3
+                          return <circle key={props.index} cx={cx} cy={cy} r={r} fill="#3B82F6" stroke="#fff" strokeWidth={1} />
+                        }}
+                        connectNulls={false} isAnimationActive={false} />
                     </>
                   )}
                   {/* DA sold positions — faded blue dots with red outline (positions being exited) */}
