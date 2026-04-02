@@ -529,6 +529,36 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     return Math.ceil(max * 1.1 / 10) * 10 // round up to nearest 10, +10% headroom
   }, [isFleetActive, flexBand])
 
+  // Fleet result for the active mode — used by chart pills (must match card values exactly)
+  const fleetActiveResult = useMemo(() => {
+    if (!showFleet || !date1) return null
+    const useQH = isQH && prices.hourlyQH.length > 0
+    const sp = useQH ? prices.hourlyQH : prices.hourly
+    const mode = scenario.chargingMode
+    const overnightDep = mode === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
+    const fullDayDep = mode === 'fullday' ? scenario.departureTime : scenario.plugInTime
+    const threeDayDep = mode === 'threeday' ? scenario.departureTime : scenario.plugInTime
+    let win: HourlyPrice[]
+    if (mode === 'threeday') {
+      win = buildMultiDayWindow(sp, date1, date4, scenario.plugInTime, threeDayDep)
+    } else if (mode === 'fullday') {
+      win = buildMultiDayWindow(sp, date1, date2, scenario.plugInTime, fullDayDep)
+    } else {
+      win = buildMultiDayWindow(sp, date1, date2, scenario.plugInTime, overnightDep)
+    }
+    if (win.length < 4) return null
+    const derived = deriveFleetDistributions(fleetConfig, mode)
+    const band = computeFlexBand(derived, win, useQH, mode)
+    const totalE = computeFleetEnergyKwh(derived)
+    const opt = optimizeFleetSchedule(band, win, totalE, useQH)
+    return {
+      savingsCtKwh: Math.round(Math.abs(opt.baselineAvgCtKwh - opt.optimizedAvgCtKwh) * 100) / 100,
+      savingsEur: Math.abs(opt.savingsEur) / 1000,
+      baselineAvgCt: opt.baselineAvgCtKwh,
+      optimizedAvgCt: opt.optimizedAvgCtKwh,
+    }
+  }, [showFleet, date1, date2, date4, scenario.chargingMode, scenario.plugInTime, scenario.departureTime, fleetConfig, isQH, prices.hourly, prices.hourlyQH])
+
   // Auto-disable ID overlay when coverage is insufficient (e.g., mode change to 3-day without data)
   useEffect(() => {
     if (showIntraday && !hasIntraday) setShowIntraday(false)
@@ -2621,7 +2651,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               })()}
 
               {/* ── Fleet floating pills — same style as single-car ── */}
-              {isFleetActive && fleetOptResult && plotArea && (() => {
+              {isFleetActive && fleetActiveResult && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const fleetArrIdx = chartData.findIndex(d => d.date === date1 && d.hour === fleetConfig.arrivalAvg)
                 const fleetDepIdx = chartData.findIndex(d => d.date === (isThreeDay ? date4 : date2) && d.hour === fleetConfig.departureAvg)
@@ -2634,10 +2664,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       style={{ left: '50%', top: plotArea.top + 4, transform: 'translateX(-50%)' }}>
                       <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
                         <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                          ▼ {Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
+                          ▼ {fleetActiveResult.savingsCtKwh.toFixed(1)} ct/kWh
                         </span>
                         <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                          {(Math.abs(fleetOptResult.savingsEur) / 1000).toFixed(2)} €/EV saved
+                          {fleetActiveResult.savingsEur.toFixed(2)} €/EV saved
                         </span>
                       </div>
                     </div>
@@ -2649,7 +2679,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {fleetOptResult.baselineAvgCtKwh.toFixed(1)} ct/kWh
+                            {fleetActiveResult.baselineAvgCt.toFixed(1)} ct/kWh
                           </span>
                         </div>
                       </div>
@@ -2662,7 +2692,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
                           <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {fleetOptResult.optimizedAvgCtKwh.toFixed(1)} ct/kWh
+                            {fleetActiveResult.optimizedAvgCt.toFixed(1)} ct/kWh
                           </span>
                         </div>
                       </div>
