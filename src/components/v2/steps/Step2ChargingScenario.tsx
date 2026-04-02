@@ -2627,7 +2627,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           ▼ {Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
                         </span>
                         <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                          {Math.abs(fleetOptResult.savingsEur).toFixed(0)} € saved
+                          {(Math.abs(fleetOptResult.savingsEur) / 1000).toFixed(2)} €/EV saved
                         </span>
                       </div>
                     </div>
@@ -2974,7 +2974,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {showFleet && row.key === 'overnight' && fleetOptResult ? (() => {
                     const fleetSavingsCtKwh = Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh)
                     const fleetSavingsEur = Math.abs(fleetOptResult.savingsEur)
-                    const fleetTotalKwh = fleetOptResult.totalEnergyKwh
+                    const perEvSavingsEur = fleetSavingsEur / 1000
+                    const perEvKwh = fleetOptResult.totalEnergyKwh / 1000
                     return (
                     <div className="mb-2">
                       <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
@@ -2983,7 +2984,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       </span>
                       <span className="text-[10px] text-gray-400 ml-1">ct/kWh cheaper</span>
                       <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        = {fleetSavingsEur.toFixed(2)} EUR saved on {fleetTotalKwh.toFixed(0)} kWh · 1,000 EVs
+                        = {(perEvSavingsEur * 100).toFixed(1)} ct saved per EV on {perEvKwh.toFixed(1)} kWh session
+                      </p>
+                      <p className="text-[8px] text-gray-400 mt-0.5">
+                        Fleet total: {fleetSavingsEur.toFixed(2)} EUR · 1,000 EVs
                       </p>
                     </div>
                     )
@@ -3021,14 +3025,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR' : 'ct/kWh'}</span>
                       </p>
-                      <p className="text-[8px] text-gray-400">{ms.eur4w.toFixed(2)} EUR total</p>
+                      <p className="text-[8px] text-gray-400">
+                        {showFleet ? `${(ms.eur4w / 1000).toFixed(2)} EUR/EV · ${ms.eur4w.toFixed(0)} EUR fleet` : `${ms.eur4w.toFixed(2)} EUR total`}
+                      </p>
                     </div>
                     <div>
                       <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 52 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR/yr' : 'ct/kWh'}</span>
                       </p>
-                      <p className="text-[8px] text-gray-400">{ms.eur52w.toFixed(0)} EUR/yr</p>
+                      <p className="text-[8px] text-gray-400">
+                        {showFleet ? `${(ms.eur52w / 1000).toFixed(0)} EUR/EV/yr · ${ms.eur52w.toFixed(0)} EUR fleet` : `${ms.eur52w.toFixed(0)} EUR/yr`}
+                      </p>
                     </div>
                   </div>
                   {/* Market range = min↔max price in window */}
