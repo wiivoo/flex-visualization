@@ -1985,8 +1985,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       )
                     }} />
 
-                  {/* ── Overnight spread corridor — very subtle background band ── */}
-                  {(() => {
+                  {/* ── Overnight spread corridor — hidden in fleet mode ── */}
+                  {!isFleetActive && (() => {
                     if (arrivalIdx < 0) return null
                     const windowPts = chartData.filter(d => d.isInWindow)
                     if (windowPts.length === 0) return null
