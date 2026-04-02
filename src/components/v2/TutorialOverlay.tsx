@@ -54,13 +54,26 @@ const CONCEPT_STEPS: TutorialStep[] = [
     position: 'center',
     icon: '📐',
   },
+  {
+    targetId: '',
+    title: 'Fleet Mode',
+    description: 'Switch from "Single" to "Fleet" in the EV Charging Profile to model 1,000 EVs with distributed arrival times, departure times, and charging needs. The orange flex band shows the aggregate flexibility envelope — red fill is the "charge ASAP" baseline, blue fill is the price-optimized schedule. All savings are shown per EV.',
+    position: 'center',
+    icon: '🏢',
+  },
 ]
 
 const TOUR_STEPS: TutorialStep[] = [
   {
     targetId: 'tour-customer-profile',
-    title: 'Set Your Charging Profile',
-    description: 'Adjust yearly mileage, plug-in frequency, arrival time, and wallbox power. Every chart updates instantly as you change these.',
+    title: 'EV Charging Profile',
+    description: 'Toggle between Single (one car) and Fleet (1,000 EVs) mode.',
+    bullets: [
+      'Single: set mileage, plug-in frequency, arrival/departure time',
+      'Fleet: set per-EV mileage & frequency, plus arrival/departure distributions with min/max range markers',
+      'Fleet Spread: off (identical cars), narrow, normal, or wide distribution',
+      'All charts update instantly as you adjust parameters',
+    ],
     position: 'bottom',
   },
   {
@@ -71,31 +84,39 @@ const TOUR_STEPS: TutorialStep[] = [
   },
   {
     targetId: 'tour-price-chart',
-    title: 'Find the Cheapest Hours',
+    title: 'Price Curve & Charging Overlay',
     description: 'Real EPEX Spot day-ahead prices (via SMARD/ENTSO-E).',
     bullets: [
-      'Red dots = immediate charging cost',
-      'Green dots = cheapest hours (smart charging)',
-      'The gap between red and green is your savings',
-      'Drag the red/blue lines to adjust arrival & departure',
+      'Single: red dots = charge now, blue dots = smart charging',
+      'Fleet: orange band = flexibility envelope, red fill = charge ASAP, blue fill = optimized',
+      'Blue dots on price curve show where fleet charges (size = intensity)',
+      'Drag arrival/departure pills to shift the window',
+      'Savings pill at top shows ct/kWh difference',
     ],
     position: 'bottom',
   },
   {
     targetId: 'tour-scenario-cards',
     title: 'Compare Charging Windows',
-    description: 'See how 12h, 24h, and 72h windows affect your savings.',
+    description: 'See how 12h, 24h, and 72h windows affect your savings — works for both single and fleet.',
     bullets: [
-      'Shows savings in ct/kWh for selected day + averages',
-      '"Market range" = gap between cheapest and costliest hour',
-      'Click a card to switch the chart above',
+      'Each card independently computes savings for its window',
+      'Fleet: savings shown per EV in ct/kWh + EUR',
+      '4-week and 52-week rolling averages for each window',
+      'Click a card to switch the chart view',
     ],
     position: 'top',
   },
   {
     targetId: 'tour-monthly-savings',
     title: 'Track Savings Over Time',
-    description: 'Monthly savings with smart charging. Winter months typically have higher price swings and more savings potential.',
+    description: 'Monthly and yearly savings trends. Fleet mode shows per-EV values.',
+    bullets: [
+      'Monthly chart: savings per month with cumulative trend line',
+      'Yearly card: year-over-year comparison',
+      'Daily heatmap: calendar view with per-day savings',
+      'Winter months typically have higher price swings',
+    ],
     position: 'top',
   },
 ]
