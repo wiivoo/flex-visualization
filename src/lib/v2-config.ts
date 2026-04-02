@@ -188,6 +188,7 @@ export interface FlexBandSlot {
   date: string
   greedyKw: number
   lazyKw: number
+  greedyScheduleKw: number  // actual ASAP charging kW (front-loaded until full)
 }
 
 export interface FleetScheduleSlot extends FlexBandSlot {

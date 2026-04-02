@@ -154,6 +154,7 @@ export function computeFlexBand(
 
   const upperKw = new Float64Array(slots.length)
   const lowerKw = new Float64Array(slots.length)
+  const greedyScheduleKw = new Float64Array(slots.length) // actual ASAP charging
 
   for (const cohort of cohorts) {
     const energyNeededKwh = cohort.chargeNeedKwh
@@ -198,6 +199,12 @@ export function computeFlexBand(
       if (energyNeededKwh > (slotsRemaining - 1) * kwhPerSlot) {
         lowerKw[t] += contribution
       }
+
+      // GREEDY SCHEDULE: charge ASAP from arrival until energy is met
+      const greedyChargedSoFar = slotsElapsed * kwhPerSlot
+      if (greedyChargedSoFar < energyNeededKwh) {
+        greedyScheduleKw[t] += contribution
+      }
     }
   }
 
@@ -206,6 +213,7 @@ export function computeFlexBand(
     minute: s.minute,
     date: s.date,
     greedyKw: Math.round(upperKw[i] * 10) / 10,
+    greedyScheduleKw: Math.round(greedyScheduleKw[i] * 10) / 10,
     lazyKw: Math.round(Math.min(lowerKw[i], upperKw[i]) * 10) / 10,
   }))
 }

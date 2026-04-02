@@ -494,7 +494,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
     if (!isFleetActive || !flexBand || !fleetOptResult) return chartData
-    const bandMap = new Map<string, { greedy: number; lazy: number; optimized: number }>()
+    const bandMap = new Map<string, { greedy: number; lazy: number; optimized: number; greedySchedule: number }>()
     for (let i = 0; i < flexBand.length; i++) {
       const s = flexBand[i]
       const opt = fleetOptResult.schedule[i]
@@ -502,6 +502,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         greedy: s.greedyKw,
         lazy: s.lazyKw,
         optimized: opt?.optimizedKw ?? 0,
+        greedySchedule: s.greedyScheduleKw,
       })
     }
     const maxOptKw = Math.max(...fleetOptResult.schedule.map(s => s.optimizedKw), 1)
@@ -514,7 +515,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized,
         // Price curve overlay: show price at slots where fleet charges
         fleetChargePrice: band.optimized > 0.1 ? d.priceVal : null,
-        fleetBaselinePrice: band.greedy > 0.1 ? d.priceVal : null,
+        fleetBaselinePrice: band.greedySchedule > 0.1 ? d.priceVal : null,
         fleetChargeIntensity: band.optimized / maxOptKw, // 0–1 for dot sizing
       }
     })
@@ -2153,12 +2154,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Fleet price curve overlay — dots on price line where fleet charges */}
                   {isFleetActive && (
                     <>
-                      {/* Baseline (greedy) dots on price — red, subtle */}
+                      {/* Baseline (greedy) dots on price — red, visible */}
                       <Line type="monotone" dataKey="fleetBaselinePrice" yAxisId="left"
-                        stroke="#EF4444" strokeWidth={isQH ? 1.5 : 2.5} strokeOpacity={0.35}
+                        stroke="#EF4444" strokeWidth={isQH ? 2 : 3} strokeOpacity={0.7}
                         dot={isQH
-                          ? { r: 1.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 0.5 }
-                          : { r: 2.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 1 }}
+                          ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 }
+                          : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 }}
                         connectNulls={false} isAnimationActive={false} />
                       {/* Optimized dots on price — blue, prominent, size = charge intensity */}
                       <Line type="monotone" dataKey="fleetChargePrice" yAxisId="left"
@@ -2530,6 +2531,44 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </>
                 )
               })()}
+
+              {/* ── Fleet floating pills — baseline + optimized avg ct/kWh ── */}
+              {isFleetActive && fleetOptResult && plotArea && (
+                <div className="absolute pointer-events-none z-10"
+                  style={{ left: plotArea.left, top: plotArea.top, width: plotArea.width, height: plotArea.height }}>
+                  {/* Savings pill — top center */}
+                  <div className="absolute" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
+                    <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
+                      <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
+                        ▼ {(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
+                      </span>
+                      <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
+                        {fleetOptResult.savingsEur.toFixed(0)} € saved
+                      </span>
+                    </div>
+                  </div>
+                  {/* Baseline pill — left side */}
+                  <div className="absolute" style={{ left: 8, top: 28 }}>
+                    <div className="bg-red-50/60 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
+                      <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                        {fleetOptResult.baselineAvgCtKwh.toFixed(1)} ct/kWh
+                      </span>
+                      <span className="text-red-400 text-[9px] whitespace-nowrap">ASAP</span>
+                    </div>
+                  </div>
+                  {/* Optimized pill — right of baseline */}
+                  <div className="absolute" style={{ right: 8, top: 28 }}>
+                    <div className="bg-blue-50/60 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
+                      <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                        {fleetOptResult.optimizedAvgCtKwh.toFixed(1)} ct/kWh
+                      </span>
+                      <span className="text-blue-400 text-[9px] whitespace-nowrap">Optimized</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* ── Drag handles — invisible touch targets + label pills (hidden in fleet mode) ── */}
               {N > 1 && !isFleetActive && (
