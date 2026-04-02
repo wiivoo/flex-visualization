@@ -52,9 +52,17 @@ export function deriveFleetDistributions(config: FleetConfig, mode: 'overnight' 
   // 24h mode: cars depart ~same time next day (use arrival hours as departure hours)
   // overnight/72h: cars depart in the morning
   const departureHours = mode === 'fullday' ? arrivalHours : [5, 6, 7, 8, 9]
-  const depAvg = mode === 'fullday' ? config.arrivalAvg : config.departureAvg
-  const depMin = mode === 'fullday' ? config.arrivalMin : config.departureMin
-  const depMax = mode === 'fullday' ? config.arrivalMax : config.departureMax
+  // In fullday mode, departure slider uses 14-23 range — use those values directly
+  // Clamp to valid range for the mode
+  const depAvg = mode === 'fullday'
+    ? Math.max(14, Math.min(23, config.departureAvg))
+    : config.departureAvg
+  const depMin = mode === 'fullday'
+    ? Math.max(14, Math.min(23, config.departureMin))
+    : config.departureMin
+  const depMax = mode === 'fullday'
+    ? Math.max(14, Math.min(23, config.departureMax))
+    : config.departureMax
   // Derive charge need per session from mileage + frequency (same formula as single-car)
   const sessionsPerYear = Math.max(1, (config.plugInsPerWeek ?? 3)) * 52
   const kmPerSession = (config.yearlyMileageKm ?? 12000) / sessionsPerYear
@@ -177,7 +185,9 @@ export function computeFlexBand(
   const greedyScheduleKw = new Float64Array(slots.length) // actual ASAP charging
 
   // QH granularity: split each hourly cohort into 4 sub-arrivals at :00/:15/:30/:45
-  const subMinutes = qhGranularity ? [0, 15, 30, 45] : [0]
+  // Only apply if the price data actually has sub-hourly slots
+  const hasQHData = slots.some(s => s.minute !== 0)
+  const subMinutes = (qhGranularity && hasQHData) ? [0, 15, 30, 45] : [0]
   const subWeight = 1 / subMinutes.length
 
   for (const cohort of cohorts) {
