@@ -14,17 +14,15 @@ interface TutorialStep {
 const SINGLE_STEPS: TutorialStep[] = [
   {
     targetId: '',
-    title: 'Welcome to FlexMon',
-    description: 'This guide shows how smart EV charging creates real value using actual market data.',
+    title: 'Smart EV Charging',
+    description: 'This guide shows how load shifting creates real value using actual day-ahead electricity market data.',
     position: 'center',
-    icon: '⚡',
   },
   {
     targetId: '',
     title: 'Day-Ahead Optimization',
-    description: 'Every day at noon, hourly prices for the next day are published on EPEX Spot. Smart charging shifts your load to the cheapest hours. (Data via SMARD/ENTSO-E.)',
+    description: 'Every day at noon, hourly prices for the next day are published on EPEX Spot. Smart charging shifts your load to the cheapest hours within your availability window.',
     position: 'center',
-    icon: '📈',
   },
   {
     targetId: 'tour-customer-profile',
@@ -75,14 +73,12 @@ const FLEET_STEPS: TutorialStep[] = [
     title: 'Fleet Charging Optimization',
     description: 'Fleet mode models 1,000 EVs with distributed arrival/departure times and charging needs. All savings are shown per EV.',
     position: 'center',
-    icon: '🏢',
   },
   {
     targetId: '',
     title: 'The Flex Band',
     description: 'The orange envelope on the chart shows the fleet\'s aggregate flexibility. Between "charge ASAP" and "defer to latest" lies the optimization playground — a wider band means more value.',
     position: 'center',
-    icon: '📐',
   },
   {
     targetId: 'tour-customer-profile',
@@ -319,11 +315,6 @@ export function TutorialOverlay({ active, onClose }: Props) {
           <span className="text-[11px] text-gray-500 ml-auto">{step + 1}/{steps.length}</span>
         </div>
 
-        {/* Icon for concept steps */}
-        {currentStep.icon && (
-          <div className="text-3xl mb-2">{currentStep.icon}</div>
-        )}
-
         <h3 className="font-bold text-[#313131] mb-1.5 text-base">{currentStep.title}</h3>
         <p className="text-gray-600 leading-relaxed text-[13px]">{currentStep.description}</p>
         {currentStep.bullets && (
@@ -336,28 +327,28 @@ export function TutorialOverlay({ active, onClose }: Props) {
             ))}
           </ul>
         )}
-      </div>
 
-      {/* Fixed bottom navigation — always visible */}
-      <div className="fixed bottom-0 left-0 right-0 z-[102] bg-white/95 backdrop-blur-sm border-t border-gray-200 px-6 py-3 flex items-center justify-between">
-        <button onClick={handleClose} className="text-xs text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-50">
-          Exit
-        </button>
-        <div className="flex items-center gap-2">
-          {step > 0 && (
-            <button onClick={() => setStep(s => s - 1)} className="text-xs font-medium text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50">
-              Back
-            </button>
-          )}
-          <button
-            onClick={() => {
-              if (step < steps.length - 1) setStep(s => s + 1)
-              else handleClose()
-            }}
-            className="text-xs font-semibold text-white px-5 py-2 rounded-lg bg-[#313131] hover:bg-[#1a1a1a]"
-          >
-            {step < steps.length - 1 ? 'Next' : 'Finish'}
+        {/* Navigation — on the card itself */}
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-gray-100">
+          <button onClick={handleClose} className="text-xs text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-50">
+            Exit
           </button>
+          <div className="flex items-center gap-2">
+            {step > 0 && (
+              <button onClick={() => setStep(s => s - 1)} className="text-xs font-medium text-gray-500 hover:text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-50">
+                Back
+              </button>
+            )}
+            <button
+              onClick={() => {
+                if (step < steps.length - 1) setStep(s => s + 1)
+                else handleClose()
+              }}
+              className="text-xs font-semibold text-white px-5 py-2 rounded-lg bg-[#313131] hover:bg-[#1a1a1a]"
+            >
+              {step < steps.length - 1 ? 'Next' : 'Finish'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
