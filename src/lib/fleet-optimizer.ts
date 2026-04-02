@@ -132,6 +132,8 @@ export function computeFlexBand(
   windowSlots: HourlyPrice[],
   isQH: boolean = false,
   mode: 'overnight' | 'fullday' | 'threeday' = 'overnight',
+  /** When true, arrival/departure cohorts are split into 4 sub-slots per hour for QH granularity */
+  qhGranularity: boolean = isQH,
 ): FlexBandSlot[] {
   if (windowSlots.length === 0) return []
 
@@ -174,18 +176,24 @@ export function computeFlexBand(
   const lowerKw = new Float64Array(slots.length)
   const greedyScheduleKw = new Float64Array(slots.length) // actual ASAP charging
 
+  // QH granularity: split each hourly cohort into 4 sub-arrivals at :00/:15/:30/:45
+  const subMinutes = qhGranularity ? [0, 15, 30, 45] : [0]
+  const subWeight = 1 / subMinutes.length
+
   for (const cohort of cohorts) {
     const energyNeededKwh = cohort.chargeNeedKwh
     const kwhPerSlot = cohort.chargePowerKw * slotDurationH
     if (energyNeededKwh <= 0) continue
 
-    const arrIdx = findSlotIndex(slots, cohort.arrivalHour, 0)
+    for (const arrMinute of subMinutes) {
+    const arrIdx = findSlotIndex(slots, cohort.arrivalHour, arrMinute)
+    // For departure, use :00 of the departure hour (cars depart at the start of the hour)
     const depIdx = findDepartureIndex(slots, cohort.departureHour, departureDay)
     if (arrIdx < 0 || depIdx < 0 || depIdx <= arrIdx) continue
 
     const slotsInWindow = depIdx - arrIdx
     const slotsNeeded = Math.min(Math.ceil(energyNeededKwh / kwhPerSlot), slotsInWindow)
-    const contribution = cohort.chargePowerKw * cohort.weight * fleetSize
+    const contribution = cohort.chargePowerKw * cohort.weight * fleetSize * subWeight
 
     for (let t = arrIdx; t < depIdx && t < slots.length; t++) {
       const slotsElapsed = t - arrIdx         // slots since arrival
@@ -228,6 +236,7 @@ export function computeFlexBand(
         greedyScheduleKw[t] += contribution * slotFraction
       }
     }
+    } // end subMinutes loop
   }
 
   return slots.map((s, i) => ({
