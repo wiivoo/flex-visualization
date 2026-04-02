@@ -114,14 +114,27 @@ export interface DistributionEntry {
   pct: number  // percentage, all entries sum to 100
 }
 
+export type SpreadMode = 'normal' | 'wide' | 'narrow' | 'off'
+
 export interface FleetConfig {
   fleetSize: number                // fixed at 1000
-  arrivalDist: DistributionEntry[] // hours 14–23, sums to 100
-  departureDist: DistributionEntry[] // hours 5–9, sums to 100
-  batteryMix: { compact: number; mid: number; suv: number } // legacy, kept for type compat
-  chargePowerMix: { kw7: number; kw11: number } // legacy, kept for type compat
-  socMin: number  // 5–50 (charge need lower bound, kWh/session)
-  socMax: number  // 5–50 (charge need upper bound, kWh/session, ≥ socMin)
+  arrivalAvg: number               // 14–22 (average arrival hour)
+  arrivalMin: number               // 14–22 (earliest arrival)
+  arrivalMax: number               // 14–23 (latest arrival)
+  departureAvg: number             // 5–9 (average departure hour)
+  departureMin: number             // 5–9 (earliest departure)
+  departureMax: number             // 5–9 (latest departure)
+  chargeNeedAvg: number            // 5–40 kWh (average charge per session)
+  chargeNeedMin: number            // 3–50 kWh (min charge)
+  chargeNeedMax: number            // 3–50 kWh (max charge)
+  spreadMode: SpreadMode           // distribution shape
+  // Legacy fields kept for type compat (used internally by optimizer)
+  arrivalDist: DistributionEntry[]
+  departureDist: DistributionEntry[]
+  batteryMix: { compact: number; mid: number; suv: number }
+  chargePowerMix: { kw7: number; kw11: number }
+  socMin: number
+  socMax: number
 }
 
 export const DEFAULT_ARRIVAL_DIST: DistributionEntry[] = [
@@ -147,6 +160,17 @@ export const DEFAULT_DEPARTURE_DIST: DistributionEntry[] = [
 
 export const DEFAULT_FLEET_CONFIG: FleetConfig = {
   fleetSize: 1000,
+  arrivalAvg: 18,
+  arrivalMin: 15,
+  arrivalMax: 22,
+  departureAvg: 7,
+  departureMin: 6,
+  departureMax: 9,
+  chargeNeedAvg: 15,
+  chargeNeedMin: 8,
+  chargeNeedMax: 22,
+  spreadMode: 'normal',
+  // Legacy / computed fields
   arrivalDist: DEFAULT_ARRIVAL_DIST,
   departureDist: DEFAULT_DEPARTURE_DIST,
   batteryMix: { compact: 30, mid: 50, suv: 20 },

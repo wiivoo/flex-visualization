@@ -7,8 +7,57 @@
  */
 import type {
   FleetConfig, FlexBandSlot, FleetScheduleSlot, FleetOptimizationResult,
-  HourlyPrice,
+  HourlyPrice, DistributionEntry, SpreadMode,
 } from '@/lib/v2-config'
+
+/* ── Distribution generation from avg/min/max + spread mode ── */
+
+/** Generate a bell-curve distribution over integer hours [min..max] centered on avg */
+export function generateDistribution(
+  min: number, max: number, avg: number, mode: SpreadMode, allHours: number[],
+): DistributionEntry[] {
+  if (mode === 'off') {
+    // All weight on avg hour
+    return allHours.map(h => ({ hour: h, pct: h === avg ? 100 : 0 }))
+  }
+  const sigma = mode === 'narrow' ? 0.8 : mode === 'wide' ? 2.5 : 1.5 // normal
+  const entries: DistributionEntry[] = []
+  let total = 0
+  for (const h of allHours) {
+    if (h < min || h > max) {
+      entries.push({ hour: h, pct: 0 })
+    } else {
+      const w = Math.exp(-0.5 * ((h - avg) / sigma) ** 2)
+      entries.push({ hour: h, pct: w })
+      total += w
+    }
+  }
+  // Normalize to 100
+  if (total > 0) {
+    let sum = 0
+    for (const e of entries) {
+      e.pct = Math.round(e.pct / total * 100)
+      sum += e.pct
+    }
+    // Fix rounding
+    const peak = entries.reduce((best, e) => e.pct > best.pct ? e : best, entries[0])
+    peak.pct += 100 - sum
+  }
+  return entries
+}
+
+/** Derive full FleetConfig distributions from the simplified avg/min/max params */
+export function deriveFleetDistributions(config: FleetConfig): FleetConfig {
+  const arrivalHours = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+  const departureHours = [5, 6, 7, 8, 9]
+  return {
+    ...config,
+    arrivalDist: generateDistribution(config.arrivalMin, config.arrivalMax, config.arrivalAvg, config.spreadMode, arrivalHours),
+    departureDist: generateDistribution(config.departureMin, config.departureMax, config.departureAvg, config.spreadMode, departureHours),
+    socMin: config.chargeNeedMin,
+    socMax: config.chargeNeedMax,
+  }
+}
 
 /* ── Cohort model ── */
 

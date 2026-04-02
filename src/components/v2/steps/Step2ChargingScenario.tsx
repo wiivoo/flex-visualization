@@ -16,7 +16,7 @@ import { DailySavingsHeatmap } from '@/components/v2/DailySavingsHeatmap'
 import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
 import { generateAndDownloadExcel, type EnrichedWindow } from '@/lib/excel-export'
 import { DEFAULT_FLEET_CONFIG, type FleetConfig, type FleetOptimizationResult } from '@/lib/v2-config'
-import { computeFlexBand, optimizeFleetSchedule, computeFleetEnergyKwh } from '@/lib/fleet-optimizer'
+import { computeFlexBand, optimizeFleetSchedule, computeFleetEnergyKwh, deriveFleetDistributions } from '@/lib/fleet-optimizer'
 import { FleetConfigPanel } from '@/components/v2/FleetConfigPanel'
 import {
   ComposedChart, Line, Area, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -484,8 +484,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }))
     if (windowPrices.length === 0) return { flexBand: null, fleetOptResult: null }
 
-    const band = computeFlexBand(fleetConfig, windowPrices, isQH)
-    const totalEnergy = computeFleetEnergyKwh(fleetConfig)
+    const derived = deriveFleetDistributions(fleetConfig)
+    const band = computeFlexBand(derived, windowPrices, isQH)
+    const totalEnergy = computeFleetEnergyKwh(derived)
     const optResult = optimizeFleetSchedule(band, windowPrices, totalEnergy, isQH)
     return { flexBand: band, fleetOptResult: optResult }
   }, [isFleetActive, chartData, fleetConfig, isQH])
@@ -753,7 +754,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
-    const totalEnergy = computeFleetEnergyKwh(fleetConfig)
+    const derivedRoll = deriveFleetDistributions(fleetConfig)
+    const totalEnergy = computeFleetEnergyKwh(derivedRoll)
     let wdS = 0, wdD = 0, weS = 0, weD = 0
     let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
     const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
@@ -769,7 +771,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       ]
       if (win.length < 4) continue
 
-      const band = computeFlexBand(fleetConfig, win, false)
+      const band = computeFlexBand(derivedRoll, win, false)
       if (band.length === 0) continue
       const opt = optimizeFleetSchedule(band, win, totalEnergy, false)
       const savEur = opt.savingsEur
@@ -1367,7 +1369,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               <FleetConfigPanel
                 config={fleetConfig}
                 onChange={setFleetConfig}
-                optimizationResult={isFleetActive ? fleetOptResult : null}
               />
             </div>
           ) : (

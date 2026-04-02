@@ -1,101 +1,61 @@
 'use client'
 
-import { useCallback, useRef } from 'react'
-import type { FleetConfig, DistributionEntry } from '@/lib/v2-config'
-import type { FleetOptimizationResult } from '@/lib/v2-config'
-import { DEFAULT_ARRIVAL_DIST, DEFAULT_DEPARTURE_DIST } from '@/lib/v2-config'
+import type { FleetConfig, SpreadMode } from '@/lib/v2-config'
 
 interface Props {
   config: FleetConfig
   onChange: (config: FleetConfig) => void
-  optimizationResult?: FleetOptimizationResult | null
 }
 
-/* ── Distribution Histogram ── */
+const SLIDER_CLASS = "w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
+const HOOK_CLASS = "w-full h-1 bg-transparent rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-300 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-200"
 
-function DistHistogram({
-  label,
-  entries,
-  onChange,
-  color,
-  defaults,
+/* ── Range slider with subtle min/max hooks ── */
+function RangeSlider({
+  label, unit, avg, min, max, sliderMin, sliderMax, step,
+  onAvgChange, onMinChange, onMaxChange,
 }: {
-  label: string
-  entries: DistributionEntry[]
-  onChange: (entries: DistributionEntry[]) => void
-  color: string
-  defaults: DistributionEntry[]
+  label: string; unit: string
+  avg: number; min: number; max: number
+  sliderMin: number; sliderMax: number; step?: number
+  onAvgChange: (v: number) => void
+  onMinChange: (v: number) => void
+  onMaxChange: (v: number) => void
 }) {
-  const maxPct = Math.max(...entries.map(e => e.pct), 1)
-  const draggingRef = useRef<number | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  const handlePointerDown = useCallback((idx: number, e: React.PointerEvent) => {
-    e.preventDefault()
-    draggingRef.current = idx
-    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
-  }, [])
-
-  const handlePointerMove = useCallback((e: React.PointerEvent) => {
-    if (draggingRef.current === null || !containerRef.current) return
-    const idx = draggingRef.current
-    const rect = containerRef.current.getBoundingClientRect()
-    const barAreaHeight = rect.height - 20
-    const relY = e.clientY - rect.top
-    const rawPct = Math.max(0, Math.min(100, (1 - relY / barAreaHeight) * 100))
-    const newPct = Math.round(rawPct)
-
-    const updated = entries.map((en, i) => i === idx ? { ...en, pct: newPct } : { ...en })
-    const total = updated.reduce((s, en) => s + en.pct, 0)
-    if (total > 0) {
-      const normalized = updated.map(en => ({ ...en, pct: Math.round(en.pct / total * 100) }))
-      const normTotal = normalized.reduce((s, en) => s + en.pct, 0)
-      if (normTotal !== 100 && normalized.length > 0) {
-        normalized[idx].pct += 100 - normTotal
-      }
-      onChange(normalized)
-    }
-  }, [entries, onChange])
-
-  const handlePointerUp = useCallback(() => {
-    draggingRef.current = null
-  }, [])
+  const pctMin = ((min - sliderMin) / (sliderMax - sliderMin)) * 100
+  const pctMax = ((max - sliderMin) / (sliderMax - sliderMin)) * 100
 
   return (
-    <div className="flex-1 min-w-0">
-      <div className="flex items-center justify-between mb-1.5">
-        <p className="text-[9px] text-gray-400 uppercase tracking-wider font-semibold">{label}</p>
-        <button
-          onClick={() => onChange(defaults)}
-          className="text-[8px] text-gray-300 hover:text-gray-500 transition-colors"
-          title="Reset to defaults"
-        >
-          reset
-        </button>
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline justify-between h-8">
+        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
+        <span className="text-2xl font-bold text-[#313131] tabular-nums">
+          {avg}<span className="text-xs font-normal text-gray-400 ml-1">{unit}</span>
+        </span>
       </div>
-      <div
-        ref={containerRef}
-        className="flex items-end gap-px h-[60px] touch-none"
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerUp}
-      >
-        {entries.map((entry, i) => {
-          const h = Math.max(2, (entry.pct / maxPct) * 100)
-          return (
-            <div key={entry.hour} className="flex-1 flex flex-col items-center gap-0.5 min-w-0">
-              <div className="w-full relative flex items-end" style={{ height: 44 }}>
-                <div
-                  className="w-full rounded-t-sm cursor-ns-resize transition-[height] duration-75"
-                  style={{ height: `${h}%`, backgroundColor: color, opacity: 0.7, minHeight: 2 }}
-                  onPointerDown={(e) => handlePointerDown(i, e)}
-                  title={`${entry.hour}:00 — ${entry.pct}%`}
-                />
-              </div>
-              <span className="text-[8px] text-gray-400 font-mono tabular-nums leading-none">{entry.hour}</span>
-            </div>
-          )
-        })}
+      <div className="relative">
+        {/* Range highlight bar */}
+        <div className="absolute top-[5px] h-1 bg-gray-300/40 rounded-full pointer-events-none"
+          style={{ left: `${pctMin}%`, width: `${pctMax - pctMin}%` }} />
+        {/* Main avg slider */}
+        <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
+          value={avg} onChange={(e) => onAvgChange(Number(e.target.value))}
+          className={SLIDER_CLASS} />
+        {/* Min hook — subtle, overlaid */}
+        <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
+          value={min} onChange={(e) => onMinChange(Math.min(Number(e.target.value), avg))}
+          className={`${HOOK_CLASS} absolute top-[3px] left-0`} />
+        {/* Max hook — subtle, overlaid */}
+        <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
+          value={max} onChange={(e) => onMaxChange(Math.max(Number(e.target.value), avg))}
+          className={`${HOOK_CLASS} absolute top-[3px] left-0`} />
+      </div>
+      <div className="flex justify-between text-[10px] text-gray-400 -mt-1">
+        <span>{sliderMin}{unit === ':00' ? ':00' : ` ${unit}`}</span>
+        {min !== max && (
+          <span className="text-gray-300 tabular-nums">{min}–{max} {unit === ':00' ? '' : unit}</span>
+        )}
+        <span>{sliderMax}{unit === ':00' ? ':00' : ` ${unit}`}</span>
       </div>
     </div>
   )
@@ -103,96 +63,60 @@ function DistHistogram({
 
 /* ── Main Panel ── */
 
-export function FleetConfigPanel({ config, onChange, optimizationResult }: Props) {
-  const res = optimizationResult
+export function FleetConfigPanel({ config, onChange }: Props) {
+  const spread = config.spreadMode
 
   return (
     <div className="space-y-4">
-      {/* Arrival distribution */}
-      <DistHistogram
-        label="Arrival (14–23h)"
-        entries={config.arrivalDist}
-        onChange={(arrivalDist) => onChange({ ...config, arrivalDist })}
-        color="#6B7280"
-        defaults={DEFAULT_ARRIVAL_DIST}
+      {/* Arrival */}
+      <RangeSlider
+        label="Avg Arrival" unit=":00"
+        avg={config.arrivalAvg} min={config.arrivalMin} max={config.arrivalMax}
+        sliderMin={14} sliderMax={23}
+        onAvgChange={(v) => onChange({ ...config, arrivalAvg: v, arrivalMin: Math.min(config.arrivalMin, v), arrivalMax: Math.max(config.arrivalMax, v) })}
+        onMinChange={(v) => onChange({ ...config, arrivalMin: v })}
+        onMaxChange={(v) => onChange({ ...config, arrivalMax: v })}
       />
 
-      {/* Departure distribution */}
-      <DistHistogram
-        label="Departure (5–9h)"
-        entries={config.departureDist}
-        onChange={(departureDist) => onChange({ ...config, departureDist })}
-        color="#6B7280"
-        defaults={DEFAULT_DEPARTURE_DIST}
+      {/* Departure */}
+      <RangeSlider
+        label="Avg Departure" unit=":00"
+        avg={config.departureAvg} min={config.departureMin} max={config.departureMax}
+        sliderMin={5} sliderMax={9}
+        onAvgChange={(v) => onChange({ ...config, departureAvg: v, departureMin: Math.min(config.departureMin, v), departureMax: Math.max(config.departureMax, v) })}
+        onMinChange={(v) => onChange({ ...config, departureMin: v })}
+        onMaxChange={(v) => onChange({ ...config, departureMax: v })}
       />
 
-      {/* Avg charge need — single slider, spread is auto normal distribution */}
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between h-8">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Avg Charge Need</span>
-          <span className="text-2xl font-bold text-[#313131] tabular-nums">
-            {Math.round((config.socMin + config.socMax) / 2)}
-            <span className="text-xs font-normal text-gray-400 ml-1">kWh</span>
-          </span>
+      {/* Charge Need */}
+      <RangeSlider
+        label="Avg Charge Need" unit="kWh"
+        avg={config.chargeNeedAvg} min={config.chargeNeedMin} max={config.chargeNeedMax}
+        sliderMin={3} sliderMax={45}
+        onAvgChange={(v) => {
+          const spread = Math.round(v * 0.4)
+          onChange({ ...config, chargeNeedAvg: v, chargeNeedMin: Math.max(3, v - spread), chargeNeedMax: Math.min(45, v + spread) })
+        }}
+        onMinChange={(v) => onChange({ ...config, chargeNeedMin: v })}
+        onMaxChange={(v) => onChange({ ...config, chargeNeedMax: v })}
+      />
+
+      {/* Spread mode toggle */}
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Distribution</span>
+        <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
+          {(['off', 'narrow', 'normal', 'wide'] as SpreadMode[]).map(mode => (
+            <button key={mode}
+              onClick={() => onChange({ ...config, spreadMode: mode })}
+              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors capitalize ${
+                spread === mode ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >{mode}</button>
+          ))}
         </div>
-        <div>
-          <input
-            type="range"
-            min={5}
-            max={40}
-            step={1}
-            value={Math.round((config.socMin + config.socMax) / 2)}
-            onChange={(e) => {
-              const avg = parseInt(e.target.value)
-              // Normal distribution: spread = ±40% of average
-              const spread = Math.round(avg * 0.4)
-              onChange({ ...config, socMin: Math.max(3, avg - spread), socMax: Math.min(50, avg + spread) })
-            }}
-            className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
-          />
-          <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-            <span>5 kWh</span>
-            <span>40 kWh</span>
-          </div>
-        </div>
-        <p className="text-[10px] text-gray-400 text-center">
-          Fleet spread: {config.socMin}–{config.socMax} kWh (normal distribution)
-        </p>
       </div>
 
-      {/* KPI Row — shown when optimization result is available */}
-      {res && (
-        <div className="border-t border-gray-100 pt-2.5 mt-1">
-          {res.shortfallKwh > 0 && (
-            <p className="text-[10px] text-amber-600 font-semibold mb-2">
-              Insufficient capacity — {res.shortfallKwh.toFixed(0)} kWh shortfall
-            </p>
-          )}
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
-            <div>
-              <p className="text-[8px] text-gray-400 uppercase tracking-wide">Baseline (charge ASAP)</p>
-              <p className="text-[13px] font-bold text-red-500 tabular-nums">
-                {res.baselineCostEur.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">EUR</span>
-              </p>
-              <p className="text-[8px] text-gray-400 tabular-nums">{res.baselineAvgCtKwh.toFixed(1)} ct/kWh · {res.totalEnergyKwh.toFixed(0)} kWh</p>
-            </div>
-            <div>
-              <p className="text-[8px] text-gray-400 uppercase tracking-wide">Optimized</p>
-              <p className="text-[13px] font-bold text-emerald-600 tabular-nums">
-                {res.optimizedCostEur.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">EUR</span>
-              </p>
-              <p className="text-[8px] text-gray-400 tabular-nums">{res.optimizedAvgCtKwh.toFixed(1)} ct/kWh</p>
-            </div>
-            <div className="col-span-2 flex items-center justify-between pt-1 border-t border-gray-50">
-              <span className="text-[9px] text-gray-400 uppercase tracking-wide">Savings (1,000 EVs)</span>
-              <span className="text-[13px] font-bold text-emerald-600 tabular-nums">
-                {res.savingsEur.toFixed(2)} EUR
-                <span className="text-[9px] font-normal text-emerald-500 ml-1">({res.savingsPct.toFixed(1)}%)</span>
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* KPIs are shown in the 12h scenario card, not here */}
     </div>
   )
 }
