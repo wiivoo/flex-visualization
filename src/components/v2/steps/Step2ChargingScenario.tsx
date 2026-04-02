@@ -469,7 +469,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   }, [chartPrices, date1, date2, date3, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.chargingMode, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh, prices.intradayId3])
 
   // ── Fleet flex band + optimization (PROJ-36/37) ──
-  const isFleetActive = showFleet && fleetView === 'fleet' && !isFullDay
+  const isFleetActive = showFleet && fleetView === 'fleet'
   const { flexBand, fleetOptResult } = useMemo(() => {
     if (!isFleetActive || chartData.length === 0) return { flexBand: null, fleetOptResult: null }
     // Use ALL chart data slots (14:00→09:00) — fleet arrivals may start before the
@@ -760,15 +760,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
     const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
 
+    const fleetMode = scenario.chargingMode
     for (const [dDate, dPrices] of byDate) {
       const nd = nextDayStr(dDate)
       const nPrices = byDate.get(nd)
       if (!nPrices || nPrices.length === 0) continue
-      // Build overnight window: 14:00 → 09:00 (full chart range for fleet)
-      const win = [
-        ...dPrices.filter(p => p.hour >= 14),
-        ...nPrices.filter(p => p.hour < 10),
-      ]
+      // Build window matching current charging mode
+      let win: HourlyPrice[]
+      if (fleetMode === 'threeday') {
+        const d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
+        const p3 = byDate.get(d3), p4 = byDate.get(d4)
+        win = [...dPrices.filter(p => p.hour >= 14), ...nPrices]
+        if (p3) win.push(...p3)
+        if (p4) win.push(...p4.filter(p => p.hour < 10))
+      } else if (fleetMode === 'fullday') {
+        win = [...dPrices.filter(p => p.hour >= 14), ...nPrices]
+      } else {
+        win = [...dPrices.filter(p => p.hour >= 14), ...nPrices.filter(p => p.hour < 10)]
+      }
       if (win.length < 4) continue
 
       const band = computeFlexBand(derivedRoll, win, false)
@@ -806,7 +815,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         eur52w: Math.round(Math.abs(perEvDaily) * 365),
       },
     }
-  }, [showFleet, date1, prices.hourly, deferredFleetConfig])
+  }, [showFleet, date1, prices.hourly, deferredFleetConfig, scenario.chargingMode])
 
   // ── Active savings values (fleet or single-EV) — fleet values are already per-EV ──
   const activeRollingSavings = showFleet ? fleetRollingSavings : rollingAvgSavings
@@ -892,7 +901,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         }))
       }
     } else if (isDragging === 'fleetDeparture') {
-      if (point.date === date2 && point.hour >= 5 && point.hour <= 9) {
+      const fleetDepDate = isThreeDay ? date4 : date2
+      if (point.date === fleetDepDate && point.hour >= 4 && point.hour <= 10) {
         setFleetConfig(c => ({
           ...c,
           departureAvg: point.hour,
@@ -1416,7 +1426,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 >Single</button>
                 <button
                   onClick={() => { setShowFleet(true); setFleetView('fleet') }}
-                  title={isFullDay ? 'Fleet view available in overnight mode' : 'Configure fleet parameters'}
+                  title="Configure fleet parameters"
                   className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
                     showFleet ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'
                   }`}
@@ -1447,9 +1457,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           {/* Fleet config — replaces single-car controls */}
           {showFleet ? (
             <div>
-              {isFullDay && (
-                <p className="text-[10px] text-amber-600 mb-3">Fleet view available in overnight mode</p>
-              )}
               <FleetConfigPanel
                 config={fleetConfig}
                 onChange={setFleetConfig}
@@ -2614,7 +2621,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {isFleetActive && fleetOptResult && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const fleetArrIdx = chartData.findIndex(d => d.date === date1 && d.hour === fleetConfig.arrivalAvg)
-                const fleetDepIdx = chartData.findIndex(d => d.date === date2 && d.hour === fleetConfig.departureAvg)
+                const fleetDepIdx = chartData.findIndex(d => d.date === (isThreeDay ? date4 : date2) && d.hour === fleetConfig.departureAvg)
                 const bCenter = fleetArrIdx >= 0 ? idxToPx(fleetArrIdx) + 40 : plotArea.left + 40
                 const oCenter = fleetDepIdx >= 0 ? idxToPx(fleetDepIdx) - 40 : plotArea.left + plotArea.width - 40
                 return (
@@ -2721,7 +2728,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {/* ── Fleet drag handles — avg arrival + avg departure ── */}
               {N > 1 && isFleetActive && plotArea && (() => {
                 const fleetArrIdx = chartData.findIndex(d => d.date === date1 && d.hour === fleetConfig.arrivalAvg)
-                const fleetDepIdx = chartData.findIndex(d => d.date === date2 && d.hour === fleetConfig.departureAvg)
+                const fleetDepIdx = chartData.findIndex(d => d.date === (isThreeDay ? date4 : date2) && d.hour === fleetConfig.departureAvg)
                 const fleetArrLabel = `${String(fleetConfig.arrivalAvg).padStart(2, '0')}:00`
                 const fleetDepLabel = `${String(fleetConfig.departureAvg).padStart(2, '0')}:00`
                 return (
@@ -2891,7 +2898,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(overnightDep)}`,
           })
         }
-        if (fullDaySp && !showFleet) {
+        if (fullDaySp) {
           rows.push({
             key: 'fullday',
             label: '24h',
@@ -2901,7 +2908,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             savingsRange: `${fmtHour(scenario.plugInTime)} → ${fmtHour(fullDayDep)}`,
           })
         }
-        if (threeDaySp && !showFleet) {
+        if (threeDaySp) {
           rows.push({
             key: '3day',
             label: '72h',
@@ -2925,7 +2932,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           <div id="tour-scenario-cards" className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {rows.map(row => {
               const isActive = row.key === activeMode
-              const ms = showFleet && row.key === 'overnight' ? fleetPerModeSavings : (perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 })
+              const ms = showFleet && row.key === activeMode ? fleetPerModeSavings : (perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 })
               return (
                 <div key={row.key}
                   onClick={() => {
@@ -2971,7 +2978,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </p>
                   </div>
                   {/* Selected day — Fleet / V2G / V1G savings */}
-                  {showFleet && row.key === 'overnight' && fleetOptResult ? (() => {
+                  {showFleet && row.key === activeMode && fleetOptResult ? (() => {
                     const fleetSavingsCtKwh = Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh)
                     const fleetSavingsEur = Math.abs(fleetOptResult.savingsEur)
                     const perEvSavingsEur = fleetSavingsEur / 1000
