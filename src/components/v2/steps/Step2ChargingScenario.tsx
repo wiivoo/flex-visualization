@@ -109,6 +109,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const [showFleet, setShowFleet] = useState(false)
   const [fleetView, setFleetView] = useState<'single' | 'fleet'>('fleet')
   const [fleetConfig, setFleetConfig] = useState<FleetConfig>(DEFAULT_FLEET_CONFIG)
+  const deferredFleetConfig = useDeferredValue(fleetConfig)
 
   // ── Edge-scroll: navigate days by pressing/holding chart edges ──
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -753,7 +754,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
-    const derivedRoll = deriveFleetDistributions(fleetConfig)
+    const derivedRoll = deriveFleetDistributions(deferredFleetConfig)
     const totalEnergy = computeFleetEnergyKwh(derivedRoll)
     let wdS = 0, wdD = 0, weS = 0, weD = 0
     let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
@@ -773,7 +774,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       const band = computeFlexBand(derivedRoll, win, false)
       if (band.length === 0) continue
       const opt = optimizeFleetSchedule(band, win, totalEnergy, false)
-      const savEur = opt.savingsEur
+      const savEur = Math.abs(opt.savingsEur)
 
       let spreadMin = Infinity, spreadMax = -Infinity
       for (const p of win) { if (p.priceCtKwh < spreadMin) spreadMin = p.priceCtKwh; if (p.priceCtKwh > spreadMax) spreadMax = p.priceCtKwh }
@@ -800,7 +801,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         eur52w: Math.round(Math.abs(avgDaily) * 365),
       },
     }
-  }, [showFleet, date1, prices.hourly, fleetConfig])
+  }, [showFleet, date1, prices.hourly, deferredFleetConfig])
 
   // ── Active savings values (fleet or single-EV) ──
   const activeRollingSavings = showFleet ? fleetRollingSavings : rollingAvgSavings
