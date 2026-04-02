@@ -7,6 +7,9 @@ import { runOptimization, type OptimizeResult } from '@/lib/optimizer'
 import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, type ChargingScenario } from '@/lib/v2-config'
 import { Step2ChargingScenario } from '@/components/v2/steps/Step2ChargingScenario'
 import { TutorialOverlay } from '@/components/v2/TutorialOverlay'
+import { ExportDialog } from '@/components/v2/ExportDialog'
+import type { FleetConfig } from '@/lib/v2-config'
+import type { EnrichedWindow } from '@/lib/excel-export'
 
 // Parse scenario from URL search params, falling back to defaults
 function parseScenario(params: URLSearchParams): ChargingScenario {
@@ -69,7 +72,13 @@ function V2Inner() {
   const [scenario, setScenario] = useState<ChargingScenario>(() => parseScenario(searchParams))
   const [copied, setCopied] = useState(false)
   const [showTutorial, setShowTutorial] = useState(false)
-  const [exportFn, setExportFn] = useState<(() => void) | null>(null)
+  const [exportDialogOpen, setExportDialogOpen] = useState(false)
+  const [exportData, setExportData] = useState<{
+    overnightWindows: EnrichedWindow[]
+    showFleet: boolean
+    fleetConfig: FleetConfig
+    resolution: 'hour' | 'quarterhour'
+  } | null>(null)
   const [country, setCountry] = useState<'DE' | 'NL'>('DE')
   const prevCountryRef = useRef(country)
 
@@ -195,9 +204,9 @@ function V2Inner() {
                 </>
               )}
             </button>
-            {exportFn && (
+            {exportData && (
               <button
-                onClick={exportFn}
+                onClick={() => setExportDialogOpen(true)}
                 className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                 Export
@@ -216,9 +225,25 @@ function V2Inner() {
           optimization={optimization}
           country={country}
           setCountry={setCountry}
-          onExportReady={useCallback((fn: (() => void) | null) => setExportFn(() => fn), [])}
+          onExportReady={useCallback((data: { overnightWindows: EnrichedWindow[]; showFleet: boolean; fleetConfig: FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => setExportData(data), [])}
         />
       </main>
+
+      {/* Export dialog */}
+      {exportData && (
+        <ExportDialog
+          open={exportDialogOpen}
+          onOpenChange={setExportDialogOpen}
+          scenario={scenario}
+          overnightWindows={exportData.overnightWindows}
+          hourlyPrices={prices.hourly}
+          hourlyQH={prices.hourlyQH}
+          country={country}
+          currentResolution={exportData.resolution}
+          showFleet={exportData.showFleet}
+          fleetConfig={exportData.fleetConfig}
+        />
+      )}
 
       {/* Tutorial overlay */}
       <TutorialOverlay active={showTutorial} onClose={() => setShowTutorial(false)} />

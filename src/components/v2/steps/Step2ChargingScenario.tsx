@@ -14,7 +14,7 @@ import { MonthlySavingsCard } from '@/components/v2/MonthlySavingsCard'
 import { DailySavingsHeatmap } from '@/components/v2/DailySavingsHeatmap'
 // Disabled for performance: SavingsHeatmap, FleetPortfolioCard, SpreadIndicatorsCard, FlexibilityDemoChart
 import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
-import { generateAndDownloadExcel, type EnrichedWindow } from '@/lib/excel-export'
+import { type EnrichedWindow } from '@/lib/excel-export'
 import { DEFAULT_FLEET_CONFIG, type FleetConfig, type FleetOptimizationResult } from '@/lib/v2-config'
 import { computeFlexBand, optimizeFleetSchedule, computeFleetEnergyKwh, deriveFleetDistributions } from '@/lib/fleet-optimizer'
 import { FleetConfigPanel } from '@/components/v2/FleetConfigPanel'
@@ -64,7 +64,7 @@ interface Props {
   optimization: OptimizeResult | null
   country?: 'DE' | 'NL'
   setCountry?: (c: 'DE' | 'NL') => void
-  onExportReady?: (fn: (() => void) | null) => void
+  onExportReady?: (data: { overnightWindows: import('@/lib/excel-export').EnrichedWindow[]; showFleet: boolean; fleetConfig: import('@/lib/v2-config').FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => void
 }
 
 /* ────── Main Component ────── */
@@ -1113,15 +1113,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     })
   }, [prices.hourly, deferredPlugInTime, deferredDepartureTime, scenario.chargingMode, deferredEnergyPerSession, chargePowerKw, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
 
-  // ── Expose Excel export handler to parent ──
+  // ── Expose export data to parent (for ExportDialog) ──
   useEffect(() => {
     if (!onExportReady) return
     if (overnightWindows.length === 0) { onExportReady(null); return }
-    onExportReady(() => {
-      generateAndDownloadExcel({ scenario, overnightWindows, country })
-    })
+    onExportReady({ overnightWindows, showFleet, fleetConfig, resolution })
     return () => onExportReady(null)
-  }, [onExportReady, overnightWindows, scenario, country])
+  }, [onExportReady, overnightWindows, showFleet, fleetConfig, resolution])
 
   // ── Monthly savings breakdown for yearly chart ──
   // Uses pre-computed savings from enriched overnightWindows (no redundant computation)
