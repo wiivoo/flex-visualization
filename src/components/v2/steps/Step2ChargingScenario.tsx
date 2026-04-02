@@ -2564,10 +2564,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       style={{ left: '50%', top: plotArea.top + 4, transform: 'translateX(-50%)' }}>
                       <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
                         <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                          ▼ {(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
+                          ▼ {Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
                         </span>
                         <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                          {fleetOptResult.savingsEur.toFixed(0)} € saved
+                          {Math.abs(fleetOptResult.savingsEur).toFixed(0)} € saved
                         </span>
                       </div>
                     </div>
