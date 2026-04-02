@@ -3374,13 +3374,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           {activeMonthlySavingsData.length > 0 && (
             <div id="tour-monthly-savings" className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6">
               <MonthlySavingsCard
-                monthlySavingsData={activeMonthlySavingsData}
-                weeklyPlugIns={weeklyPlugIns}
-                energyPerSession={energyPerSession}
-                sessionsPerYear={sessionsPerYear}
-                rollingAvgSavings={activeRollingSavings}
-                monthlySavings={activeMonthlySavings}
-                avgDailyEur={sessionsPerYear > 0 ? activeRollingSavings / sessionsPerYear : 0}
+                monthlySavingsData={showFleet
+                  ? activeMonthlySavingsData.map(m => ({ ...m, savings: m.savings / 1000 }))
+                  : activeMonthlySavingsData}
+                weeklyPlugIns={showFleet ? 7 : weeklyPlugIns}
+                energyPerSession={showFleet ? computeFleetEnergyKwh(deriveFleetDistributions(fleetConfig)) / 1000 : energyPerSession}
+                sessionsPerYear={showFleet ? 365 : sessionsPerYear}
+                rollingAvgSavings={showFleet ? activeRollingSavings / 1000 : activeRollingSavings}
+                monthlySavings={showFleet ? activeMonthlySavings / 1000 : activeMonthlySavings}
+                avgDailyEur={showFleet ? activeRollingSavings / 1000 / 365 : (sessionsPerYear > 0 ? activeRollingSavings / sessionsPerYear : 0)}
                 selectedDate={date1}
                 chargingMode={scenario.chargingMode}
                 isV2G={isV2G}
@@ -3393,6 +3395,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   energyPerSession={energyPerSession}
                   chargingMode={scenario.chargingMode}
                   isV2G={isV2G}
+                  isFleet={showFleet}
                 />
               )}
             </div>

@@ -19,6 +19,7 @@ interface Props {
   energyPerSession: number
   chargingMode?: 'overnight' | 'fullday' | 'threeday'
   isV2G?: boolean
+  isFleet?: boolean
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -27,7 +28,8 @@ const MODE_LABELS: Record<string, string> = {
   threeday: '3-day',
 }
 
-export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession, chargingMode = 'overnight', isV2G = false }: Props) {
+export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession, chargingMode = 'overnight', isV2G = false, isFleet = false }: Props) {
+  const perEvDivisor = isFleet ? 1000 : 1
   if (!yearlySavingsData || yearlySavingsData.length === 0) return null
 
   const currentYear = new Date().getFullYear()
@@ -59,7 +61,7 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
       <CardHeader className="pb-3 border-b border-gray-100">
         <CardTitle className="text-base font-bold text-[#313131]">Yearly Savings</CardTitle>
         <p className="text-[11px] text-gray-500 mt-1">
-          {weeklyPlugIns}x/week · {energyPerSession} kWh · {MODE_LABELS[chargingMode] || 'overnight'}
+          {isFleet ? '1,000 EVs · daily · ' : `${weeklyPlugIns}x/week · ${energyPerSession} kWh · `}{MODE_LABELS[chargingMode] || 'overnight'}
         </p>
       </CardHeader>
       <CardContent className="pt-4 flex-1 flex flex-col justify-center space-y-3">
@@ -79,7 +81,7 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
                   {d.year}{d.isPartial ? ' YTD' : ''}
                 </span>
                 <span className={`text-[12px] tabular-nums font-bold ${isCurrent ? 'text-emerald-700' : 'text-gray-500'}`}>
-                  {'\u20AC'}{Math.round(d.savings)}
+                  {'\u20AC'}{Math.round(d.savings / perEvDivisor)}{isFleet ? '/EV' : ''}
                 </span>
               </div>
               <div className="relative w-full h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -110,7 +112,7 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
                 )}
               </div>
               <div className="flex items-center justify-between text-[9px] text-gray-400 mt-0.5 tabular-nums">
-                <span>{d.sessionsCount} sessions · {partial}</span>
+                <span>{isFleet ? `${partial} · fleet €${Math.round(d.savings)}` : `${d.sessionsCount} sessions · ${partial}`}</span>
                 {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined ? (
                   <span>
                     <span className="text-emerald-500">{'\u20AC'}{Math.round(d.loadShiftingEur)} shift</span>

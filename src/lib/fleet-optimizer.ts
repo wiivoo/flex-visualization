@@ -201,9 +201,12 @@ export function computeFlexBand(
       }
 
       // GREEDY SCHEDULE: charge ASAP from arrival until energy is met
+      // Track partial last slot: if remaining energy < full slot, only partial kW
       const greedyChargedSoFar = slotsElapsed * kwhPerSlot
-      if (greedyChargedSoFar < energyNeededKwh) {
-        greedyScheduleKw[t] += contribution
+      const greedyRemaining = energyNeededKwh - greedyChargedSoFar
+      if (greedyRemaining > 0) {
+        const slotFraction = Math.min(1, greedyRemaining / kwhPerSlot)
+        greedyScheduleKw[t] += contribution * slotFraction
       }
     }
   }
