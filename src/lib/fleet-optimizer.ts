@@ -288,48 +288,43 @@ export function optimizeFleetSchedule(
     priceMap.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p.priceCtKwh)
   }
 
-  // Optimization: place totalEnergyKwh into slots, respecting lazyKw ≤ kw ≤ greedyKw.
+  // Optimization: place totalEnergyKwh into cheapest slots within the band.
   //
-  // Step 1: Start every slot at its lazy minimum (mandatory floor)
-  // Step 2: Compute remaining energy after mandatory allocation
-  // Step 3: Fill remaining into cheapest flexible capacity (lazyKw → greedyKw)
+  // The greedyKw (upper bound) at each slot = max kW the fleet CAN draw.
+  // The lazyKw (lower bound) is for visualization only — NOT used as a constraint
+  // here because it sums to exactly totalEnergy and would leave zero flexibility.
   //
-  // This ensures lazy constraints are always met AND remaining energy goes to cheapest slots.
+  // Strategy: sort all slots by price, fill cheapest to greedyKw capacity first.
+  // The result is the cost-minimum schedule that respects physical constraints
+  // (cable capacity, battery limits, connection times).
 
   const slotPrices: number[] = band.map(s =>
     priceMap.get(`${s.date}-${s.hour}-${s.minute}`) ?? 0
   )
 
-  // Step 1: allocate lazy minimum at every slot
-  let mandatoryKwh = 0
-  const schedule: FleetScheduleSlot[] = band.map((s, i) => {
-    const lazyEnergy = s.lazyKw * slotDurationH
-    mandatoryKwh += lazyEnergy
-    return {
-      ...s,
-      optimizedKw: s.lazyKw,
-      mandatoryKw: s.lazyKw,
-      flexibleKw: Math.max(0, s.greedyKw - s.lazyKw),
-      slotCostEur: lazyEnergy * slotPrices[i] / 100,
-    }
-  })
+  const schedule: FleetScheduleSlot[] = band.map((s, i) => ({
+    ...s,
+    optimizedKw: 0,
+    mandatoryKw: s.lazyKw,
+    flexibleKw: Math.max(0, s.greedyKw - s.lazyKw),
+    slotCostEur: 0,
+  }))
 
-  // Step 2: remaining energy to place in flexible capacity
-  let remainingKwh = Math.max(0, totalEnergyKwh - mandatoryKwh)
-
-  // Step 3: sort flexible capacity by price, fill cheapest first
-  const flexSlots = schedule
-    .map((s, i) => ({ i, flexKw: s.flexibleKw, price: slotPrices[i] }))
-    .filter(x => x.flexKw > 0)
+  // Sort slots by price ascending — fill cheapest first up to greedyKw
+  const sortedSlots = band
+    .map((s, i) => ({ i, price: slotPrices[i], capacity: s.greedyKw }))
+    .filter(x => x.capacity > 0)
     .sort((a, b) => a.price - b.price)
 
-  for (const { i, flexKw, price } of flexSlots) {
+  let remainingKwh = totalEnergyKwh
+  for (const { i, price, capacity } of sortedSlots) {
     if (remainingKwh <= 0) break
-    const addKwh = Math.min(flexKw * slotDurationH, remainingKwh)
-    const addKw = addKwh / slotDurationH
-    schedule[i].optimizedKw += addKw
-    schedule[i].slotCostEur += addKw * slotDurationH * price / 100
-    remainingKwh -= addKwh
+    const maxKwh = capacity * slotDurationH
+    const useKwh = Math.min(maxKwh, remainingKwh)
+    const useKw = useKwh / slotDurationH
+    schedule[i].optimizedKw = useKw
+    schedule[i].slotCostEur = useKwh * price / 100
+    remainingKwh -= useKwh
   }
 
   // Round values
