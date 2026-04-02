@@ -50,7 +50,7 @@ function TriangleMarker({
     <div
       ref={containerRef}
       className="absolute touch-none cursor-ew-resize"
-      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: 0, width: 10, height: 8, zIndex: 1 }}
+      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: 4, width: 10, height: 8, zIndex: 1 }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -87,14 +87,14 @@ function RangeSlider({
           {avg}<span className="text-xs font-normal text-gray-400 ml-1">{unit}</span>
         </span>
       </div>
-      <div className="relative pt-[10px]">
+      <div className="relative pt-[12px]">
         {/* Triangle markers just above the slider */}
         <TriangleMarker value={min} sliderMin={sliderMin} sliderMax={sliderMax}
           onChange={(v) => onMinChange(Math.min(v, avg))} side="min" />
         <TriangleMarker value={max} sliderMin={sliderMin} sliderMax={sliderMax}
           onChange={(v) => onMaxChange(Math.max(v, avg))} side="max" />
         {/* Range highlight bar between min and max */}
-        <div className="absolute top-[14px] h-1.5 bg-gray-300/30 rounded-full pointer-events-none"
+        <div className="absolute top-[16px] h-1.5 bg-gray-300/30 rounded-full pointer-events-none"
           style={{ left: `calc(8px + ${fracMin} * (100% - 16px))`, width: `calc(${fracMax - fracMin} * (100% - 16px))` }} />
         {/* Main avg slider — z-10 so thumb is above triangles */}
         <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
@@ -121,7 +121,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
     <div className="space-y-4">
       {/* Arrival */}
       <RangeSlider
-        label="Avg Arrival" unit=":00"
+        label="Plug-in Time" unit=":00"
         avg={config.arrivalAvg} min={config.arrivalMin} max={config.arrivalMax}
         sliderMin={14} sliderMax={23}
         onAvgChange={(v) => onChange({ ...config, arrivalAvg: v, arrivalMin: Math.min(config.arrivalMin, v), arrivalMax: Math.max(config.arrivalMax, v) })}
@@ -131,7 +131,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
 
       {/* Departure */}
       <RangeSlider
-        label="Avg Departure" unit=":00"
+        label="Departure Time" unit=":00"
         avg={config.departureAvg} min={config.departureMin} max={config.departureMax}
         sliderMin={5} sliderMax={9}
         onAvgChange={(v) => onChange({ ...config, departureAvg: v, departureMin: Math.min(config.departureMin, v), departureMax: Math.max(config.departureMax, v) })}
@@ -141,7 +141,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
 
       {/* Charge Need */}
       <RangeSlider
-        label="Avg Charge Need" unit="kWh"
+        label="Charge per Session" unit="kWh"
         avg={config.chargeNeedAvg} min={config.chargeNeedMin} max={config.chargeNeedMax}
         sliderMin={3} sliderMax={45}
         onAvgChange={(v) => {
@@ -154,7 +154,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
 
       {/* Spread mode toggle */}
       <div className="flex items-center justify-between">
-        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Distribution</span>
+        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Fleet Spread</span>
         <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
           {(['off', 'narrow', 'normal', 'wide'] as SpreadMode[]).map(mode => (
             <button key={mode}
