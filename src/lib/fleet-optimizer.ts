@@ -324,18 +324,16 @@ export function optimizeFleetSchedule(
     s.slotCostEur = Math.round(s.slotCostEur * 100) / 100
   }
 
-  // Compute baseline cost: simulate greedy charging (ASAP) capped at totalEnergyKwh.
-  // Process slots chronologically, charging at greedy kW until total energy is met.
+  // Compute baseline cost from greedyScheduleKw — the actual ASAP charging pattern.
+  // This is the front-loaded schedule where each cohort charges immediately upon arrival.
   let baselineCostEur = 0
   let baselineEnergyKwh = 0
   for (const s of band) {
-    if (baselineEnergyKwh >= totalEnergyKwh) break
+    if (s.greedyScheduleKw <= 0) continue
     const priceCt = priceMap.get(`${s.date}-${s.hour}-${s.minute}`) ?? 0
-    const slotEnergyKwh = s.greedyKw * slotDurationH
-    const remainingKwhNeeded = totalEnergyKwh - baselineEnergyKwh
-    const actualKwh = Math.min(slotEnergyKwh, remainingKwhNeeded)
-    baselineCostEur += actualKwh * priceCt / 100
-    baselineEnergyKwh += actualKwh
+    const slotKwh = s.greedyScheduleKw * slotDurationH
+    baselineCostEur += slotKwh * priceCt / 100
+    baselineEnergyKwh += slotKwh
   }
 
   const optimizedCostEur = schedule.reduce((s, x) => s + x.slotCostEur, 0)

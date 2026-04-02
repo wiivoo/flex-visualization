@@ -1119,11 +1119,68 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       })
   }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, isV2G])
 
+  // ── Fleet monthly savings — derived from fleetDailySavingsMap ──
+  const fleetMonthlySavingsData = useMemo(() => {
+    if (!showFleet || fleetDailySavingsMap.size === 0) return []
+    // Fleet charges every day, so no weekday/weekend scaling — just aggregate by month
+    const monthMap = new Map<string, { totalSav: number; days: number }>()
+    for (const [dDate, entry] of fleetDailySavingsMap) {
+      const month = dDate.slice(0, 7)
+      const m = monthMap.get(month) || { totalSav: 0, days: 0 }
+      m.totalSav += Math.abs(entry.savingsEur)
+      m.days++
+      monthMap.set(month, m)
+    }
+    return [...monthMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, data]) => {
+        const avgDaily = data.days > 0 ? data.totalSav / data.days : 0
+        const monthlySav = Math.round(avgDaily * 30.44 * 100) / 100
+        const [y, m] = month.split('-').map(Number)
+        const label = new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'short' })
+        const mNum = m
+        const season: 'winter' | 'spring' | 'summer' | 'autumn' =
+          mNum <= 2 || mNum === 12 ? 'winter' : mNum <= 5 ? 'spring' : mNum <= 8 ? 'summer' : 'autumn'
+        return { month, label, savings: monthlySav, season, year: y }
+      })
+  }, [showFleet, fleetDailySavingsMap])
+
+  // ── Fleet yearly savings — derived from fleetDailySavingsMap ──
+  const fleetYearlySavingsData = useMemo((): YearlySavingsEntry[] => {
+    if (!showFleet || fleetDailySavingsMap.size === 0) return []
+    const yearMap = new Map<number, { totalSav: number; days: number; months: Set<string> }>()
+    for (const [dDate, entry] of fleetDailySavingsMap) {
+      const yr = parseInt(dDate.slice(0, 4))
+      const m = yearMap.get(yr) || { totalSav: 0, days: 0, months: new Set<string>() }
+      m.totalSav += Math.abs(entry.savingsEur)
+      m.days++
+      m.months.add(dDate.slice(0, 7))
+      yearMap.set(yr, m)
+    }
+    return [...yearMap.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([year, data]) => {
+        const avgDaily = data.days > 0 ? data.totalSav / data.days : 0
+        const yearlySav = Math.round(avgDaily * 365 * 100) / 100
+        return {
+          year,
+          savings: yearlySav,
+          sessionsCount: data.days,
+          isProjected: false,
+          isPartial: data.months.size < 12,
+          monthsCovered: data.months.size,
+        }
+      })
+  }, [showFleet, fleetDailySavingsMap])
+
+  // ── Active monthly data (fleet or single-EV) ──
+  const activeMonthlySavingsData = showFleet ? fleetMonthlySavingsData : monthlySavingsData
+
   // ── Quarterly rollup for Outcome Box ──
   const quarterlyData = useMemo(() => {
-    if (monthlySavingsData.length === 0) return []
+    if (activeMonthlySavingsData.length === 0) return []
     const qMap = new Map<string, { savings: number; label: string }>()
-    for (const m of monthlySavingsData) {
+    for (const m of activeMonthlySavingsData) {
       const yr = m.month.slice(0, 4)
       const mo = parseInt(m.month.slice(5, 7))
       const q = Math.ceil(mo / 3)
@@ -1136,7 +1193,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       .sort(([a], [b]) => a.localeCompare(b))
       .slice(-5) // 5 quarters = covers full trailing 365 days when current Q is partial
       .map(([, v]) => v)
-  }, [monthlySavingsData])
+  }, [activeMonthlySavingsData])
 
   // ── Heatmap data: savings for different mileage × plug-in combinations ──
   // Uses prefix sums from enriched windows for O(1) lookups per cell
@@ -1232,6 +1289,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         }
       })
   }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, deferredWeeklyPlugIns, chargePowerKw, isV2G])
+
+  // ── Active yearly data (fleet or single-EV) ──
+  const activeYearlySavingsData = showFleet ? fleetYearlySavingsData : yearlySavingsData
 
   const priceRange = useMemo(() => {
     if (chartData.length === 0) return { min: 0, max: 10 }
@@ -2927,8 +2987,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       </p>
                     </div>
                     )
-                  })()
-                  ) : isV2G && row.v2gProfit ? (
+                  })() : isV2G && row.v2gProfit ? (
                     <div className="mb-2">
                       <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">
                         {v2gHasNetCharge ? 'V2G benefit' : 'Arbitrage'} on selected day
@@ -3290,7 +3349,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       </div>{/* end main two-column grid */}
 
       {/* ── Savings Overview: Heatmap + Monthly + Yearly ── */}
-      {(monthlySavingsData.length > 0 || activeDailySavingsMap.size > 0) && (
+      {(activeMonthlySavingsData.length > 0 || activeDailySavingsMap.size > 0) && (
         <div className="space-y-6">
           {activeDailySavingsMap.size > 0 && (
             <DailySavingsHeatmap
@@ -3304,10 +3363,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               selectedDayCost={sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
             />
           )}
-          {monthlySavingsData.length > 0 && (
+          {activeMonthlySavingsData.length > 0 && (
             <div id="tour-monthly-savings" className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6">
               <MonthlySavingsCard
-                monthlySavingsData={monthlySavingsData}
+                monthlySavingsData={activeMonthlySavingsData}
                 weeklyPlugIns={weeklyPlugIns}
                 energyPerSession={energyPerSession}
                 sessionsPerYear={sessionsPerYear}
@@ -3319,9 +3378,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 isV2G={isV2G}
                 v2gHasNetCharge={v2gHasNetCharge}
               />
-              {yearlySavingsData.length > 0 && (
+              {activeYearlySavingsData.length > 0 && (
                 <YearlySavingsCard
-                  yearlySavingsData={yearlySavingsData}
+                  yearlySavingsData={activeYearlySavingsData}
                   weeklyPlugIns={weeklyPlugIns}
                   energyPerSession={energyPerSession}
                   chargingMode={scenario.chargingMode}
@@ -3334,7 +3393,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       )}
 
       {/* loading state when sessionCost not yet ready */}
-      {!sessionCost && monthlySavingsData.length === 0 && (
+      {!sessionCost && activeMonthlySavingsData.length === 0 && (
         <Card className="shadow-sm border-gray-200/80">
           <CardContent className="py-10 text-center">
             <div className="w-8 h-8 border-[3px] border-[#EA1C0A] border-t-transparent rounded-full animate-spin mx-auto mb-4" />

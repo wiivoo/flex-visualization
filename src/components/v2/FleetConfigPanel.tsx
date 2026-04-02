@@ -167,7 +167,10 @@ export function FleetConfigPanel({ config, onChange }: Props) {
         </div>
       </div>
 
-      {/* KPIs are shown in the 12h scenario card, not here */}
+      {/* Fleet size note */}
+      <p className="text-[9px] text-gray-400 text-center pt-1 border-t border-gray-100">
+        All values normalized for 1,000 EVs
+      </p>
     </div>
   )
 }
