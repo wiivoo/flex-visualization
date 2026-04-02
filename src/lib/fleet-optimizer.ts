@@ -69,8 +69,6 @@ interface Cohort {
   weight: number          // fraction of fleet (0–1), sum of all cohorts ≈ 1
 }
 
-const FLEET_CHARGE_POWER_KW = 7
-
 /**
  * Expand fleet config into weighted cohorts.
  * Each cohort = arrival × departure × charge need.
@@ -78,6 +76,7 @@ const FLEET_CHARGE_POWER_KW = 7
  */
 function buildCohorts(config: FleetConfig): Cohort[] {
   const cohorts: Cohort[] = []
+  const chargePower = config.chargePowerKw ?? 7
   // socMin/socMax now represent kWh/session charge need range
   const needRange = config.socMax - config.socMin
   const needSamples = needRange > 0
@@ -96,7 +95,7 @@ function buildCohorts(config: FleetConfig): Cohort[] {
           arrivalHour: arr.hour,
           departureHour: dep.hour,
           chargeNeedKwh: need,
-          chargePowerKw: FLEET_CHARGE_POWER_KW,
+          chargePowerKw: chargePower,
           weight,
         })
       }

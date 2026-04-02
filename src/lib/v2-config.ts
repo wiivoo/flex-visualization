@@ -127,6 +127,7 @@ export interface FleetConfig {
   chargeNeedAvg: number            // 5–40 kWh (average charge per session)
   chargeNeedMin: number            // 3–50 kWh (min charge)
   chargeNeedMax: number            // 3–50 kWh (max charge)
+  chargePowerKw: number              // 7 or 11
   spreadMode: SpreadMode           // distribution shape
   // Legacy fields kept for type compat (used internally by optimizer)
   arrivalDist: DistributionEntry[]
@@ -169,6 +170,7 @@ export const DEFAULT_FLEET_CONFIG: FleetConfig = {
   chargeNeedAvg: 15,
   chargeNeedMin: 8,
   chargeNeedMax: 22,
+  chargePowerKw: 7,
   spreadMode: 'normal',
   // Legacy / computed fields
   arrivalDist: DEFAULT_ARRIVAL_DIST,
