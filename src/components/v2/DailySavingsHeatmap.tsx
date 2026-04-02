@@ -22,6 +22,7 @@ interface Props {
   sessionsPerYear?: number
   /** Live-computed cost for selected date (from chart's QH optimization) — overrides rolling scan values */
   selectedDayCost?: { baselineAvgCt: number; optimizedAvgCt: number; savingsEur: number } | null
+  isFleet?: boolean
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -72,7 +73,7 @@ function buildBuckets(savings: number[]): { min: number; max: number; color: str
   })
 }
 
-export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost }: Props) {
+export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost, isFleet = false }: Props) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null)
   // Filter by spread: null = show all, Set = active bucket indices
   const [activeBuckets, setActiveBuckets] = useState<Set<number> | null>(null)
@@ -382,16 +383,16 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
           <div className="w-[280px] flex-shrink-0 border-l border-gray-100 pl-5 flex flex-col gap-2">
             {/* 52-week hero */}
             <div className="rounded-lg bg-emerald-50/70 border border-emerald-100 px-3.5 py-2.5 flex flex-col justify-center">
-              <p className="text-[9px] font-semibold text-emerald-600/60 uppercase tracking-wider">Projected Savings · 52 Weeks</p>
+              <p className="text-[9px] font-semibold text-emerald-600/60 uppercase tracking-wider">Projected Savings · 52 Weeks{isFleet ? ' · per EV' : ''}</p>
               <div className="flex items-baseline gap-1.5 mt-0.5">
                 <span className="text-[28px] font-bold tabular-nums text-emerald-700 leading-none tracking-tight">
                   {annualSavings.toFixed(0)}
                 </span>
-                <span className="text-sm font-semibold text-emerald-600">EUR</span>
+                <span className="text-sm font-semibold text-emerald-600">EUR{isFleet ? '/EV' : ''}</span>
                 <span className="text-[10px] text-emerald-500/80 ml-auto">/year</span>
               </div>
               <div className="flex items-center gap-3 mt-1.5 text-[10px] text-emerald-600/70">
-                <span>{avgPerSession.toFixed(2)} EUR/session</span>
+                <span>{avgPerSession.toFixed(2)} EUR/{isFleet ? 'EV/' : ''}session</span>
                 {sessionsPerYear != null && <span className="text-emerald-500/50">·</span>}
                 {sessionsPerYear != null && <span>{sessionsPerYear} sessions/yr</span>}
               </div>

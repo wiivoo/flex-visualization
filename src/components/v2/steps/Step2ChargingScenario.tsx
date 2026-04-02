@@ -3367,6 +3367,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               selectedDayCost={showFleet && fleetOptResult
                 ? { baselineAvgCt: fleetOptResult.baselineAvgCtKwh, optimizedAvgCt: fleetOptResult.optimizedAvgCtKwh, savingsEur: Math.abs(fleetOptResult.savingsEur) / 1000 }
                 : sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
+              isFleet={showFleet}
             />
           )}
           {activeMonthlySavingsData.length > 0 && (
