@@ -1,5 +1,6 @@
 'use client'
 
+import { useCallback, useRef } from 'react'
 import type { FleetConfig, SpreadMode } from '@/lib/v2-config'
 
 interface Props {
@@ -8,9 +9,55 @@ interface Props {
 }
 
 const SLIDER_CLASS = "w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
-const HOOK_CLASS = "w-full h-1 bg-transparent rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-gray-300 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-gray-200"
 
-/* ── Range slider with subtle min/max hooks ── */
+/* ── Draggable triangle marker ── */
+function TriangleMarker({
+  value, sliderMin, sliderMax, onChange, side,
+}: {
+  value: number; sliderMin: number; sliderMax: number
+  onChange: (v: number) => void; side: 'min' | 'max'
+}) {
+  const pct = ((value - sliderMin) / (sliderMax - sliderMin)) * 100
+  const dragging = useRef(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+  }, [])
+
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current || !containerRef.current) return
+    const parent = containerRef.current.parentElement
+    if (!parent) return
+    const rect = parent.getBoundingClientRect()
+    const relX = (e.clientX - rect.left) / rect.width
+    const raw = Math.round(sliderMin + relX * (sliderMax - sliderMin))
+    onChange(Math.max(sliderMin, Math.min(sliderMax, raw)))
+  }, [sliderMin, sliderMax, onChange])
+
+  const handlePointerUp = useCallback(() => { dragging.current = false }, [])
+
+  return (
+    <div
+      ref={containerRef}
+      className="absolute touch-none cursor-ew-resize"
+      style={{ left: `calc(${pct}% - 5px)`, top: -10, width: 10, height: 10 }}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerLeave={handlePointerUp}
+      title={`${side === 'min' ? 'Min' : 'Max'}: ${value}`}
+    >
+      <svg width="10" height="8" viewBox="0 0 10 8" className="drop-shadow-sm">
+        <polygon points="5,8 0,0 10,0" fill="#9CA3AF" />
+      </svg>
+    </div>
+  )
+}
+
+/* ── Range slider with triangle min/max markers ── */
 function RangeSlider({
   label, unit, avg, min, max, sliderMin, sliderMax, step,
   onAvgChange, onMinChange, onMaxChange,
@@ -33,22 +80,19 @@ function RangeSlider({
           {avg}<span className="text-xs font-normal text-gray-400 ml-1">{unit}</span>
         </span>
       </div>
-      <div className="relative">
-        {/* Range highlight bar */}
-        <div className="absolute top-[5px] h-1 bg-gray-300/40 rounded-full pointer-events-none"
+      <div className="relative pt-3">
+        {/* Triangle markers above the slider */}
+        <TriangleMarker value={min} sliderMin={sliderMin} sliderMax={sliderMax}
+          onChange={(v) => onMinChange(Math.min(v, avg))} side="min" />
+        <TriangleMarker value={max} sliderMin={sliderMin} sliderMax={sliderMax}
+          onChange={(v) => onMaxChange(Math.max(v, avg))} side="max" />
+        {/* Range highlight bar between min and max */}
+        <div className="absolute top-[17px] h-1.5 bg-gray-300/30 rounded-full pointer-events-none"
           style={{ left: `${pctMin}%`, width: `${pctMax - pctMin}%` }} />
         {/* Main avg slider */}
         <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
           value={avg} onChange={(e) => onAvgChange(Number(e.target.value))}
           className={SLIDER_CLASS} />
-        {/* Min hook — subtle, overlaid */}
-        <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
-          value={min} onChange={(e) => onMinChange(Math.min(Number(e.target.value), avg))}
-          className={`${HOOK_CLASS} absolute top-[3px] left-0`} />
-        {/* Max hook — subtle, overlaid */}
-        <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
-          value={max} onChange={(e) => onMaxChange(Math.max(Number(e.target.value), avg))}
-          className={`${HOOK_CLASS} absolute top-[3px] left-0`} />
       </div>
       <div className="flex justify-between text-[10px] text-gray-400 -mt-1">
         <span>{sliderMin}{unit === ':00' ? ':00' : ` ${unit}`}</span>
