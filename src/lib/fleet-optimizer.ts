@@ -175,29 +175,30 @@ export function computeFlexBand(
 
       // UPPER: car can charge if it still has energy need remaining,
       // assuming it has deferred charging as much as possible up to now.
-      // If it deferred, it charged 0 until the point where it must start.
       // The latest it can start = depIdx - slotsNeeded.
-      // So at slot t, if t < latestStart, it hasn't charged yet → full need remains → CAN charge.
-      // If t >= latestStart, it has been charging → remaining = energyNeeded - (t - latestStart) * kwhPerSlot
+      // Track partial last slot to avoid over-stating upper bound.
       const latestStart = depIdx - slotsNeeded
       let remainingForUpper: number
       if (t < latestStart) {
-        remainingForUpper = energyNeededKwh // hasn't started yet, full need available
+        remainingForUpper = energyNeededKwh
       } else {
         remainingForUpper = Math.max(0, energyNeededKwh - (t - latestStart) * kwhPerSlot)
       }
       if (remainingForUpper > 0) {
-        upperKw[t] += contribution
+        const upperFraction = Math.min(1, remainingForUpper / kwhPerSlot)
+        upperKw[t] += contribution * upperFraction
       }
 
       // LOWER: car must charge now if skipping this slot means it can't
-      // finish by departure. Remaining energy if it charged as much as possible
-      // before now = energyNeeded - slotsElapsed * kwhPerSlot (greedy up to now).
-      // But lower bound is about: given optimal deferral, what's mandatory?
-      // Must charge at t if: energyNeeded > (slotsRemaining - 1) * kwhPerSlot
-      // i.e., even using all future slots, we still need this one.
-      if (energyNeededKwh > (slotsRemaining - 1) * kwhPerSlot) {
-        lowerKw[t] += contribution
+      // finish by departure. Must charge at t if:
+      // energyNeeded > (slotsRemaining - 1) * kwhPerSlot
+      // Track partial last slot to avoid overcharging the lazy bound.
+      const canDeliverLater = (slotsRemaining - 1) * kwhPerSlot
+      if (energyNeededKwh > canDeliverLater) {
+        // How much MUST be charged in this slot?
+        const mustChargeKwh = energyNeededKwh - canDeliverLater
+        const slotFraction = Math.min(1, mustChargeKwh / kwhPerSlot)
+        lowerKw[t] += contribution * slotFraction
       }
 
       // GREEDY SCHEDULE: charge ASAP from arrival until energy is met
