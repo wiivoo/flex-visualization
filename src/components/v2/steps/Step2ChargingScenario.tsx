@@ -535,16 +535,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const useQH = isQH && prices.hourlyQH.length > 0
     const sp = useQH ? prices.hourlyQH : prices.hourly
     const mode = scenario.chargingMode
-    const overnightDep = mode === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
-    const fullDayDep = mode === 'fullday' ? scenario.departureTime : scenario.plugInTime
-    const threeDayDep = mode === 'threeday' ? scenario.departureTime : scenario.plugInTime
+    // Fleet windows use the EARLIEST fleet arrival (arrivalMin) and LATEST departure
+    // to capture the full range, not the single-car plugInTime
+    const fleetWindowStart = Math.min(fleetConfig.arrivalMin, fleetConfig.arrivalAvg, 14)
+    const depHours = mode === 'fullday' ? fleetConfig.arrivalMax + 1 : Math.max(fleetConfig.departureMax, fleetConfig.departureAvg + 1, 9)
     let win: HourlyPrice[]
     if (mode === 'threeday') {
-      win = buildMultiDayWindow(sp, date1, date4, scenario.plugInTime, threeDayDep)
+      win = buildMultiDayWindow(sp, date1, date4, fleetWindowStart, Math.min(depHours, 10))
     } else if (mode === 'fullday') {
-      win = buildMultiDayWindow(sp, date1, date2, scenario.plugInTime, fullDayDep)
+      win = buildMultiDayWindow(sp, date1, date2, fleetWindowStart, Math.min(depHours, 24))
     } else {
-      win = buildMultiDayWindow(sp, date1, date2, scenario.plugInTime, overnightDep)
+      win = buildMultiDayWindow(sp, date1, date2, fleetWindowStart, Math.min(depHours, 10))
     }
     if (win.length < 4) return null
     const derived = deriveFleetDistributions(fleetConfig, mode)
@@ -795,18 +796,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       const nd = nextDayStr(dDate)
       const nPrices = byDate.get(nd)
       if (!nPrices || nPrices.length === 0) continue
-      // Build window matching current charging mode
+      // Build window matching current charging mode — start at fleet's earliest arrival
+      const fleetStart = Math.min(deferredFleetConfig.arrivalMin, deferredFleetConfig.arrivalAvg, 14)
       let win: HourlyPrice[]
       if (fleetMode === 'threeday') {
         const d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
         const p3 = byDate.get(d3), p4 = byDate.get(d4)
-        win = [...dPrices.filter(p => p.hour >= 14), ...nPrices]
+        win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices]
         if (p3) win.push(...p3)
         if (p4) win.push(...p4.filter(p => p.hour < 10))
       } else if (fleetMode === 'fullday') {
-        win = [...dPrices.filter(p => p.hour >= 14), ...nPrices]
+        win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices]
       } else {
-        win = [...dPrices.filter(p => p.hour >= 14), ...nPrices.filter(p => p.hour < 10)]
+        win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices.filter(p => p.hour < 10)]
       }
       if (win.length < 4) continue
 
@@ -2915,13 +2917,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const activeMode = scenario.chargingMode === 'threeday' ? '3day' : scenario.chargingMode === 'fullday' ? 'fullday' : 'overnight'
 
         // Fleet optimization per mode — so each card shows its own result
+        // Fleet windows start at arrivalMin (earliest fleet arrival), not single-car plugInTime
         type FleetModeResult = { savingsCtKwh: number; savingsEur: number; baselineAvgCt: number; optimizedAvgCt: number; totalKwh: number } | null
         const fleetPerMode: Record<string, FleetModeResult> = { overnight: null, fullday: null, '3day': null }
         if (showFleet) {
+          const fleetStart = Math.min(fleetConfig.arrivalMin, fleetConfig.arrivalAvg, 14)
+          const fleetDepEnd = Math.max(fleetConfig.departureMax, fleetConfig.departureAvg + 1, 9)
+          const fleetFullDayDepEnd = Math.min(fleetConfig.arrivalMax + 1, 24)
+          const fleetOvernightWin = buildMultiDayWindow(spreadPrices, date1, date2, fleetStart, Math.min(fleetDepEnd, 10))
+          const fleetFullDayWin = buildMultiDayWindow(spreadPrices, date1, date2, fleetStart, fleetFullDayDepEnd)
+          const fleetThreeDayWin = hasDate3Data ? buildMultiDayWindow(spreadPrices, date1, date4, fleetStart, Math.min(fleetDepEnd, 10)) : []
           const modes: { key: string; win: HourlyPrice[]; mode: 'overnight' | 'fullday' | 'threeday' }[] = [
-            { key: 'overnight', win: overnightSpreadWin, mode: 'overnight' },
-            { key: 'fullday', win: fullDaySpreadWin, mode: 'fullday' },
-            ...(threeDaySpreadWin.length > 0 ? [{ key: '3day', win: threeDaySpreadWin, mode: 'threeday' as const }] : []),
+            { key: 'overnight', win: fleetOvernightWin, mode: 'overnight' },
+            { key: 'fullday', win: fleetFullDayWin, mode: 'fullday' },
+            ...(fleetThreeDayWin.length > 0 ? [{ key: '3day', win: fleetThreeDayWin, mode: 'threeday' as const }] : []),
           ]
           for (const { key, win, mode: m } of modes) {
             if (win.length < 4) continue
