@@ -2226,8 +2226,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 ))
               })()}
 
-              {/* ── Grey overlays OUTSIDE charging window ── */}
-              {N > 1 && plotArea && (() => {
+              {/* ── Grey overlays OUTSIDE charging window (hidden in fleet mode) ── */}
+              {N > 1 && plotArea && !isFleetActive && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const aX = arrivalIdx >= 0 ? idxToPx(arrivalIdx) : plotArea.left
                 const dX = departureIdx >= 0 ? idxToPx(departureIdx) : plotArea.left + plotArea.width
@@ -2274,8 +2274,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
-              {/* ── Floating cost labels with type tag — track their lines ── */}
-              {sessionCost && N > 1 && plotArea && (() => {
+              {/* ── Floating cost labels with type tag (hidden in fleet mode) ── */}
+              {sessionCost && N > 1 && plotArea && !isFleetActive && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const bCenter = baselineRanges.length > 0
                   ? baselineRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / baselineRanges.length
