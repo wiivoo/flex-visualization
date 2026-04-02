@@ -248,7 +248,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; fleetChargePrice?: number | null; fleetBaselinePrice?: number | null; fleetChargeIntensity?: number }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; greedyScheduleKw?: number | null; fleetChargePrice?: number | null; fleetBaselinePrice?: number | null; fleetChargeIntensity?: number }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
@@ -509,14 +509,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     return chartData.map(d => {
       const key = `${d.date}-${d.hour}-${d.minute}`
       const band = bandMap.get(key)
-      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null, fleetChargePrice: null, fleetBaselinePrice: null, fleetChargeIntensity: 0 }
+      if (!band) return { ...d, greedyKw: null, lazyKw: null, optimizedKw: null, greedyScheduleKw: null, fleetChargePrice: null, fleetBaselinePrice: null, fleetChargeIntensity: 0 }
       return {
         ...d,
         greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized,
-        // Price curve overlay: show price at slots where fleet charges
+        greedyScheduleKw: band.greedySchedule,
         fleetChargePrice: band.optimized > 0.1 ? d.priceVal : null,
         fleetBaselinePrice: band.greedySchedule > 0.1 ? d.priceVal : null,
-        fleetChargeIntensity: band.optimized / maxOptKw, // 0–1 for dot sizing
+        fleetChargeIntensity: band.optimized / maxOptKw,
       }
     })
   }, [chartData, isFleetActive, flexBand, fleetOptResult])
@@ -1903,8 +1903,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <stop offset="100%" stopColor="#D97706" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="fleetBandGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.10} />
-                      <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.03} />
+                      <stop offset="0%" stopColor="#FDBA74" stopOpacity={0.18} />
+                      <stop offset="100%" stopColor="#FED7AA" stopOpacity={0.06} />
                     </linearGradient>
                   </defs>
 
@@ -2059,15 +2059,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Fleet flex band overlay (PROJ-36) — rendered behind price curve */}
                   {isFleetActive && (
                     <>
-                      {/* 1. Band envelope (orange tint) — full flexibility range */}
+                      {/* 1. Band envelope (very light orange) — full flexibility range */}
                       <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
                         fill="url(#fleetBandGrad)" stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* 2. Greedy baseline (red) — "charge ASAP" pattern */}
-                      <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        fill="#EF4444" fillOpacity={0.14} stroke="none"
+                      {/* 2. Greedy baseline (red fill) — actual ASAP charging schedule */}
+                      <Area type="stepAfter" dataKey="greedyScheduleKw" yAxisId="fleet"
+                        fill="#EF4444" fillOpacity={0.18} stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* 3. Optimized schedule (blue) — price-optimal charging */}
+                      {/* 3. Optimized schedule (blue fill) — price-optimal charging */}
                       <Area type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
                         fill="#3B82F6" fillOpacity={0.22} stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
@@ -2075,18 +2075,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <Area type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
                         fill="#FFFFFF" stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Band boundary lines */}
+                      {/* Band boundary lines (light orange) */}
                       <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        stroke="#D97706" strokeWidth={1} strokeOpacity={0.4}
+                        stroke="#FDBA74" strokeWidth={1} strokeOpacity={0.5}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                       <Line type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
-                        stroke="#D97706" strokeWidth={1} strokeOpacity={0.4}
+                        stroke="#FDBA74" strokeWidth={1} strokeOpacity={0.5}
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Greedy baseline line (red) */}
-                      <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        stroke="#EF4444" strokeWidth={1.5} strokeOpacity={0.5} strokeDasharray="4 3"
+                      {/* Greedy baseline line (red dashed) */}
+                      <Line type="stepAfter" dataKey="greedyScheduleKw" yAxisId="fleet"
+                        stroke="#EF4444" strokeWidth={1.5} strokeOpacity={0.6} strokeDasharray="4 3"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Optimized schedule line (blue, solid) */}
+                      {/* Optimized schedule line (blue solid) */}
                       <Line type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
                         stroke="#3B82F6" strokeWidth={2} strokeOpacity={0.7}
                         connectNulls={false} dot={false} isAnimationActive={false} />
