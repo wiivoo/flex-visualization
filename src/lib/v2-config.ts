@@ -107,6 +107,84 @@ export const COMPETITOR_BENCHMARKS = [
   { name: '1KOMMA5°', value: 2201, type: 'Full system', hardware: 'PV+Battery+WB+HP' },
 ]
 
+/* ── Fleet Flex Band Types (PROJ-35/36/37) ── */
+
+export interface DistributionEntry {
+  hour: number
+  pct: number  // percentage, all entries sum to 100
+}
+
+export interface FleetConfig {
+  fleetSize: number                // 10–1,000
+  arrivalDist: DistributionEntry[] // hours 14–23, sums to 100
+  departureDist: DistributionEntry[] // hours 5–9, sums to 100
+  batteryMix: { compact: number; mid: number; suv: number } // percentages, sum to 100
+  chargePowerMix: { kw7: number; kw11: number } // percentages, sum to 100
+  socMin: number  // 10–60 (arrival SoC lower bound %)
+  socMax: number  // 10–60 (arrival SoC upper bound %, ≥ socMin)
+}
+
+export const DEFAULT_ARRIVAL_DIST: DistributionEntry[] = [
+  { hour: 14, pct: 2 },
+  { hour: 15, pct: 4 },
+  { hour: 16, pct: 9 },
+  { hour: 17, pct: 20 },
+  { hour: 18, pct: 26 },
+  { hour: 19, pct: 17 },
+  { hour: 20, pct: 11 },
+  { hour: 21, pct: 5 },
+  { hour: 22, pct: 3 },
+  { hour: 23, pct: 3 },
+]
+
+export const DEFAULT_DEPARTURE_DIST: DistributionEntry[] = [
+  { hour: 5, pct: 5 },
+  { hour: 6, pct: 20 },
+  { hour: 7, pct: 40 },
+  { hour: 8, pct: 25 },
+  { hour: 9, pct: 10 },
+]
+
+export const DEFAULT_FLEET_CONFIG: FleetConfig = {
+  fleetSize: 100,
+  arrivalDist: DEFAULT_ARRIVAL_DIST,
+  departureDist: DEFAULT_DEPARTURE_DIST,
+  batteryMix: { compact: 30, mid: 50, suv: 20 },
+  chargePowerMix: { kw7: 80, kw11: 20 },
+  socMin: 15,
+  socMax: 55,
+}
+
+/** Battery capacity lookup by vehicle class */
+export const BATTERY_KWH_BY_CLASS = { compact: 40, mid: 60, suv: 100 } as const
+
+export interface FlexBandSlot {
+  hour: number
+  minute: number
+  date: string
+  greedyKw: number
+  lazyKw: number
+}
+
+export interface FleetScheduleSlot extends FlexBandSlot {
+  optimizedKw: number
+  mandatoryKw: number
+  flexibleKw: number
+  slotCostEur: number
+}
+
+export interface FleetOptimizationResult {
+  totalEnergyKwh: number
+  baselineCostEur: number
+  optimizedCostEur: number
+  savingsEur: number
+  savingsPct: number
+  baselineAvgCtKwh: number
+  optimizedAvgCtKwh: number
+  schedule: FleetScheduleSlot[]
+  shortfallKwh: number // > 0 when band capacity is insufficient
+}
+
 /** Hourly price data point */
 export interface HourlyPrice {
   timestamp: number  // Unix ms

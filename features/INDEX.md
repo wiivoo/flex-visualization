@@ -32,6 +32,9 @@
 | PROJ-32 | Daily Savings Heatmap | Deployed | [spec](PROJ-32-daily-savings-heatmap.md) | `components/v2/DailySavingsHeatmap.tsx` |
 | PROJ-33 | Intraday ID3 Price Overlay | Deployed | [spec](PROJ-33-intraday-id3.md) | `lib/use-prices.ts`, `api/prices/batch/` |
 | PROJ-34 | Excel Session Export | Deployed | [spec](PROJ-34-excel-export.md) | `lib/excel-export.ts`, `app/v2/page.tsx` |
+| PROJ-35 | Fleet Designer | In Review | [spec](PROJ-35-fleet-designer.md) | `lib/v2-config.ts`, `components/v2/FleetConfigPanel.tsx`, `components/v2/steps/Step2ChargingScenario.tsx` |
+| PROJ-36 | Flex Band Overlay | In Review | [spec](PROJ-36-flex-band-overlay.md) | `lib/fleet-optimizer.ts`, `components/v2/steps/Step2ChargingScenario.tsx` |
+| PROJ-37 | Fleet Optimized Schedule | In Review | [spec](PROJ-37-fleet-optimized-schedule.md) | `lib/fleet-optimizer.ts`, `components/v2/FleetConfigPanel.tsx`, `components/v2/steps/Step2ChargingScenario.tsx` |
 
 ## Archived Features (v1 — code in `src/_archive/`)
 
@@ -49,7 +52,7 @@
 | PROJ-14 | Portfolio Scale (unbuilt) | [archived](_archive/PROJ-14-v2-portfolio-scale.md) |
 | PROJ-15 | Market Context (unbuilt) | [archived](_archive/PROJ-15-v2-market-context.md) |
 
-## Next Available ID: PROJ-35
+## Next Available ID: PROJ-38
 
 ## Architecture
 

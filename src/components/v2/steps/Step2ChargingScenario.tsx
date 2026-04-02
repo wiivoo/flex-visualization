@@ -15,6 +15,9 @@ import { DailySavingsHeatmap } from '@/components/v2/DailySavingsHeatmap'
 // Disabled for performance: SavingsHeatmap, FleetPortfolioCard, SpreadIndicatorsCard, FlexibilityDemoChart
 import { YearlySavingsCard, type YearlySavingsEntry } from '@/components/v2/YearlySavingsCard'
 import { generateAndDownloadExcel, type EnrichedWindow } from '@/lib/excel-export'
+import { DEFAULT_FLEET_CONFIG, type FleetConfig, type FleetOptimizationResult } from '@/lib/v2-config'
+import { computeFlexBand, optimizeFleetSchedule, computeFleetEnergyKwh } from '@/lib/fleet-optimizer'
+import { FleetConfigPanel } from '@/components/v2/FleetConfigPanel'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
@@ -102,6 +105,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const [showRenewable, setShowRenewable] = useState(false)
   const [showIntraday, setShowIntraday] = useState(false)
   const [renewableData, setRenewableData] = useState<Map<string, number>>(new Map())
+  // Fleet flex band state (PROJ-35/36/37)
+  const [showFleet, setShowFleet] = useState(false)
+  const [fleetView, setFleetView] = useState<'single' | 'fleet'>('fleet')
+  const [fleetConfig, setFleetConfig] = useState<FleetConfig>(DEFAULT_FLEET_CONFIG)
 
   // ── Edge-scroll: navigate days by pressing/holding chart edges ──
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -241,7 +248,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number }
+    type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
     let data: ChartPoint[]
     let cost: CostInfo
@@ -459,6 +466,58 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     return { chartData: data, sessionCost: cost, v2gResult: v2g, hasIntraday: hasIntradayData, intradayUpliftCt: intradayUpliftCtVal, intradayUpliftEur: intradayUpliftEurVal, id3DaScheduleAvgCt: id3DaScheduleAvgCtVal, id3OptScheduleAvgCt: id3OptScheduleAvgCtVal }
   }, [chartPrices, date1, date2, date3, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.chargingMode, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh, prices.intradayId3])
+
+  // ── Fleet flex band + optimization (PROJ-36/37) ──
+  const isFleetActive = showFleet && fleetView === 'fleet' && !isFullDay
+  const { flexBand, fleetOptResult } = useMemo(() => {
+    if (!isFleetActive || chartData.length === 0) return { flexBand: null, fleetOptResult: null }
+    // Use ALL chart data slots (14:00→09:00) — fleet arrivals may start before the
+    // single-EV plugInTime, and departures may extend past single-EV departureTime
+    const windowPrices: HourlyPrice[] = chartData
+      .map(d => ({
+        timestamp: 0,
+        priceEurMwh: d.priceVal * 10,
+        priceCtKwh: d.priceVal,
+        hour: d.hour,
+        minute: d.minute,
+        date: d.date,
+      }))
+    if (windowPrices.length === 0) return { flexBand: null, fleetOptResult: null }
+
+    const band = computeFlexBand(fleetConfig, windowPrices, isQH)
+    const totalEnergy = computeFleetEnergyKwh(fleetConfig)
+    const optResult = optimizeFleetSchedule(band, windowPrices, totalEnergy, isQH)
+    return { flexBand: band, fleetOptResult: optResult }
+  }, [isFleetActive, chartData, fleetConfig, isQH])
+
+  // Merge fleet band + schedule data into chartData for Recharts
+  const enrichedChartData = useMemo(() => {
+    if (!isFleetActive || !flexBand || !fleetOptResult) return chartData
+    const bandMap = new Map<string, { greedy: number; lazy: number; optimized: number }>()
+    for (let i = 0; i < flexBand.length; i++) {
+      const s = flexBand[i]
+      const opt = fleetOptResult.schedule[i]
+      bandMap.set(`${s.date}-${s.hour}-${s.minute}`, {
+        greedy: s.greedyKw,
+        lazy: s.lazyKw,
+        optimized: opt?.optimizedKw ?? 0,
+      })
+    }
+    return chartData.map(d => {
+      const key = `${d.date}-${d.hour}-${d.minute}`
+      const band = bandMap.get(key)
+      return band
+        ? { ...d, greedyKw: band.greedy, lazyKw: band.lazy, optimizedKw: band.optimized }
+        : { ...d, greedyKw: null, lazyKw: null, optimizedKw: null }
+    })
+  }, [chartData, isFleetActive, flexBand, fleetOptResult])
+
+  // Fleet Y-axis max for auto-scaling
+  const fleetYMax = useMemo(() => {
+    if (!isFleetActive || !flexBand) return 100
+    const max = Math.max(...flexBand.map(s => s.greedyKw), 1)
+    return Math.ceil(max * 1.1 / 10) * 10 // round up to nearest 10, +10% headroom
+  }, [isFleetActive, flexBand])
 
   // Auto-disable ID overlay when coverage is insufficient (e.g., mode change to 3-day without data)
   useEffect(() => {
@@ -1699,6 +1758,34 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </button>
                   </div>
                 )}
+                {/* Fleet flex band toggle (PROJ-35) */}
+                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                  <button
+                    onClick={() => setShowFleet(v => !v)}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showFleet && !isFullDay ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'} ${isFullDay ? 'opacity-40 cursor-not-allowed' : ''}`}
+                    title={isFullDay ? 'Fleet view available in overnight mode' : 'Toggle fleet flex band overlay'}
+                    disabled={isFullDay}
+                  >
+                    Fleet
+                  </button>
+                </div>
+                {/* Fleet sub-toggle: Single EV / Fleet */}
+                {showFleet && !isFullDay && (
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                    <button
+                      onClick={() => setFleetView('single')}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${fleetView === 'single' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Single EV
+                    </button>
+                    <button
+                      onClick={() => setFleetView('fleet')}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${fleetView === 'fleet' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                    >
+                      Fleet
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1716,7 +1803,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={CHART_MARGIN}>
+                <ComposedChart data={enrichedChartData} margin={CHART_MARGIN}>
                   <defs>
                     <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#94A3B8" stopOpacity={0.08} />
@@ -1730,11 +1817,15 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <stop offset="0%" stopColor="#D97706" stopOpacity={0.08} />
                       <stop offset="100%" stopColor="#D97706" stopOpacity={0} />
                     </linearGradient>
+                    <linearGradient id="fleetBandGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.15} />
+                      <stop offset="100%" stopColor="#3B82F6" stopOpacity={0.03} />
+                    </linearGradient>
                   </defs>
 
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
 
-                  <XAxis dataKey="idx" type="number" domain={[0, Math.max(chartData.length - 1, 1)]}
+                  <XAxis dataKey="idx" type="number" domain={[0, Math.max(enrichedChartData.length - 1, 1)]}
                     ticks={xTicks} tick={renderXTick as never} tickLine={false}
                     stroke="#9CA3AF" interval={0} height={midnightIdxSet.size > 0 ? 48 : 32}
                     allowDecimals={false} />
@@ -1743,12 +1834,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {showRenewable && (
                     <YAxis yAxisId="right" orientation="right" domain={[0, 100]} hide />
                   )}
+                  {isFleetActive && (
+                    <YAxis yAxisId="fleet" orientation="right" domain={[0, fleetYMax]}
+                      tick={{ fontSize: 10, fill: '#93C5FD' }} stroke="#93C5FD" width={40}
+                      tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}MW` : `${v}kW`}
+                    />
+                  )}
 
                   {/* Custom tooltip — shows price + role of each slot */}
                   <Tooltip isAnimationActive={!isDragging}
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null
-                      const d = chartData[Number(label)]
+                      const d = enrichedChartData[Number(label)]
                       if (!d) return null
                       return (
                         <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px] max-w-[260px]">
@@ -1792,6 +1889,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           )}
                           {showRenewable && d.renewableShare != null && (
                             <p className="text-emerald-500/70 text-xs mt-1">{d.renewableShare.toFixed(1)}% renewable</p>
+                          )}
+                          {isFleetActive && d.greedyKw != null && (
+                            <div className="border-t border-gray-100 mt-1.5 pt-1.5">
+                              <p className="text-blue-600 text-xs tabular-nums">
+                                Fleet: <span className="font-semibold">{d.optimizedKw?.toFixed(0) ?? 0} kW</span>
+                                <span className="text-gray-400 ml-1">({d.lazyKw?.toFixed(0)}–{d.greedyKw?.toFixed(0)} kW)</span>
+                              </p>
+                              <p className="text-[10px] text-gray-400">
+                                {d.optimizedKw != null && d.lazyKw != null && d.greedyKw != null
+                                  ? d.optimizedKw <= d.lazyKw + 0.1 ? (d.lazyKw === 0 ? 'Idle' : 'Mandatory')
+                                    : d.optimizedKw >= d.greedyKw - 0.1 ? 'Max charge'
+                                    : 'Flexible'
+                                  : ''}
+                              </p>
+                            </div>
                           )}
                         </div>
                       )
@@ -1855,6 +1967,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#F59E0B" fillOpacity={0.10} ifOverflow="hidden" />
                   ))}
 
+                  {/* Fleet flex band overlay (PROJ-36) — rendered behind price curve */}
+                  {isFleetActive && (
+                    <>
+                      <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
+                        fill="url(#fleetBandGrad)" stroke="none"
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                      <Area type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
+                        fill="#FFFFFF" stroke="none"
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                      <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
+                        stroke="#EF4444" strokeWidth={1.5} strokeDasharray="6 3" strokeOpacity={0.6}
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                      <Line type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
+                        stroke="#8B5CF6" strokeWidth={1.5} strokeDasharray="6 3" strokeOpacity={0.6}
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                      <Line type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
+                        stroke="#10B981" strokeWidth={2.5}
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                    </>
+                  )}
+
                   {/* Renewable generation share — very subtle background area */}
                   {showRenewable && (
                     <Area type="monotone" dataKey="renewableShare" yAxisId="right"
@@ -1881,32 +2014,37 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </>
                   )}
 
-                  {/* Baseline dots — red (V1G: prominent, V2G: subtle reference, hidden if pure arbitrage) */}
-                  {(!isV2G || v2gHasNetCharge) && (
-                    <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isV2G ? 1 : (isQH ? 2 : 3)}
-                      strokeOpacity={isV2G ? 0.4 : 1}
-                      dot={isV2G
-                        ? { r: isQH ? 1.5 : 2.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 1 }
-                        : (isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 })}
-                      connectNulls={false} isAnimationActive={!isDragging} />
-                  )}
-
-                  {/* V2G: separate net charge (green) and arb charge (blue) dots */}
-                  {isV2G ? (
+                  {/* Baseline + optimized dots — hidden when fleet view is active */}
+                  {!isFleetActive && (
                     <>
-                      <Line type="monotone" dataKey="netChargePrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
-                        dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
-                        connectNulls={false} isAnimationActive={!isDragging} />
-                      <Line type="monotone" dataKey="arbChargePrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
-                        dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
-                        connectNulls={false} isAnimationActive={!isDragging} />
+                      {/* Baseline dots — red (V1G: prominent, V2G: subtle reference, hidden if pure arbitrage) */}
+                      {(!isV2G || v2gHasNetCharge) && (
+                        <Line type="monotone" dataKey="baselinePrice" yAxisId="left" stroke="#EF4444" strokeWidth={isV2G ? 1 : (isQH ? 2 : 3)}
+                          strokeOpacity={isV2G ? 0.4 : 1}
+                          dot={isV2G
+                            ? { r: isQH ? 1.5 : 2.5, fill: '#EF4444', fillOpacity: 0.4, stroke: '#fff', strokeWidth: 1 }
+                            : (isQH ? { r: 2, fill: '#EF4444', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#EF4444', stroke: '#fff', strokeWidth: 1.5 })}
+                          connectNulls={false} isAnimationActive={!isDragging} />
+                      )}
+
+                      {/* V2G: separate net charge (green) and arb charge (blue) dots */}
+                      {isV2G ? (
+                        <>
+                          <Line type="monotone" dataKey="netChargePrice" yAxisId="left" stroke="#10B981" strokeWidth={isQH ? 2 : 3}
+                            dot={isQH ? { r: 2, fill: '#10B981', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }}
+                            connectNulls={false} isAnimationActive={!isDragging} />
+                          <Line type="monotone" dataKey="arbChargePrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
+                            dot={isQH ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 } : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }}
+                            connectNulls={false} isAnimationActive={!isDragging} />
+                        </>
+                      ) : (
+                        <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
+                          connectNulls={false} isAnimationActive={!isDragging}
+                          dot={isQH
+                            ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 }
+                            : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }} />
+                      )}
                     </>
-                  ) : (
-                    <Line type="monotone" dataKey="optimizedPrice" yAxisId="left" stroke="#3B82F6" strokeWidth={isQH ? 2 : 3}
-                      connectNulls={false} isAnimationActive={!isDragging}
-                      dot={isQH
-                        ? { r: 2, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1 }
-                        : { r: 3.5, fill: '#3B82F6', stroke: '#fff', strokeWidth: 1.5 }} />
                   )}
                   {/* DA sold positions — faded blue dots with red outline (positions being exited) */}
                   {showIntraday && hasIntraday && (
@@ -2356,6 +2494,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             </div>
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
+
+          {/* Fleet config panel (PROJ-35) — shown below chart when fleet mode active */}
+          {showFleet && !isFullDay && (
+            <div className="px-4 pb-3">
+              <FleetConfigPanel
+                config={fleetConfig}
+                onChange={setFleetConfig}
+                optimizationResult={isFleetActive ? fleetOptResult : null}
+              />
+            </div>
+          )}
           </CardContent>
         </Card>
 
