@@ -128,11 +128,9 @@ export interface FleetConfig {
   plugInsPerWeek: number             // 1–7 (avg charging sessions per EV per week)
   chargePowerKw: number              // 7 or 11
   spreadMode: SpreadMode           // distribution shape
-  // Legacy fields kept for type compat (used internally by optimizer)
+  // Computed internally by deriveFleetDistributions
   arrivalDist: DistributionEntry[]
   departureDist: DistributionEntry[]
-  batteryMix: { compact: number; mid: number; suv: number }
-  chargePowerMix: { kw7: number; kw11: number }
   socMin: number
   socMax: number
 }
@@ -170,11 +168,9 @@ export const DEFAULT_FLEET_CONFIG: FleetConfig = {
   plugInsPerWeek: 3,
   chargePowerKw: 7,
   spreadMode: 'normal',
-  // Legacy / computed fields
+  // Computed by deriveFleetDistributions
   arrivalDist: DEFAULT_ARRIVAL_DIST,
   departureDist: DEFAULT_DEPARTURE_DIST,
-  batteryMix: { compact: 30, mid: 50, suv: 20 },
-  chargePowerMix: { kw7: 100, kw11: 0 },
   socMin: 8,
   socMax: 22,
 }

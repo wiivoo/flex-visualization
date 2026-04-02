@@ -778,7 +778,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
       let spreadMin = Infinity, spreadMax = -Infinity
       for (const p of win) { if (p.priceCtKwh < spreadMin) spreadMin = p.priceCtKwh; if (p.priceCtKwh > spreadMax) spreadMax = p.priceCtKwh }
-      perDay.set(dDate, { savingsEur: Math.round(savEur * 100) / 100, bAvg: Math.round(opt.baselineAvgCtKwh * 100) / 100, oAvg: Math.round(opt.optimizedAvgCtKwh * 100) / 100, spreadCt: Math.round((spreadMax - spreadMin) * 100) / 100, windowHours: win.length })
+      perDay.set(dDate, { savingsEur: Math.round(savEur / 1000 * 100) / 100, bAvg: Math.round(opt.baselineAvgCtKwh * 100) / 100, oAvg: Math.round(opt.optimizedAvgCtKwh * 100) / 100, spreadCt: Math.round((spreadMax - spreadMin) * 100) / 100, windowHours: win.length })
 
       const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
       const isWe = dow === 0 || dow === 6
@@ -790,23 +790,29 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const avgDaily = (wdD + weD) > 0 ? (wdS + weS) / (wdD + weD) : 0
     const avgDaily4w = (wdD4w + weD4w) > 0 ? (wdS4w + weS4w) / (wdD4w + weD4w) : 0
 
+    // All EUR values stored as per-EV (÷1000) so call sites don't need to divide
+    const perEvDaily = avgDaily / 1000
+    const perEvDaily4w = avgDaily4w / 1000
+    const perEvEnergy = totalEnergy / 1000
+
     return {
-      fleetRollingSavings: Math.round(avgDaily * 365 * 100) / 100,  // fleet total annual
-      fleetMonthlySavings: Math.round(avgDaily * 30.44 * 100) / 100,  // fleet total monthly
+      fleetRollingSavings: Math.round(perEvDaily * 365 * 100) / 100,  // per-EV annual
+      fleetMonthlySavings: Math.round(perEvDaily * 30.44 * 100) / 100,  // per-EV monthly
       fleetDailySavingsMap: perDay,
       fleetPerModeSavings: {
-        ctKwh4w: totalEnergy > 0 ? Math.round(Math.abs(avgDaily4w) * 100 / totalEnergy * 100) / 100 : 0,
-        eur4w: Math.round(Math.abs(avgDaily4w) * 28 * 100) / 100,
-        ctKwh52w: totalEnergy > 0 ? Math.round(Math.abs(avgDaily) * 100 / totalEnergy * 100) / 100 : 0,
-        eur52w: Math.round(Math.abs(avgDaily) * 365),
+        ctKwh4w: perEvEnergy > 0 ? Math.round(Math.abs(perEvDaily4w) * 100 / perEvEnergy * 100) / 100 : 0,
+        eur4w: Math.round(Math.abs(perEvDaily4w) * 28 * 100) / 100,
+        ctKwh52w: perEvEnergy > 0 ? Math.round(Math.abs(perEvDaily) * 100 / perEvEnergy * 100) / 100 : 0,
+        eur52w: Math.round(Math.abs(perEvDaily) * 365),
       },
     }
   }, [showFleet, date1, prices.hourly, deferredFleetConfig])
 
-  // ── Active savings values (fleet or single-EV) ──
+  // ── Active savings values (fleet or single-EV) — fleet values are already per-EV ──
   const activeRollingSavings = showFleet ? fleetRollingSavings : rollingAvgSavings
   const activeMonthlySavings = showFleet ? fleetMonthlySavings : monthlySavings
   const activeDailySavingsMap = showFleet ? fleetDailySavingsMap : dailySavingsMap
+  const fleetEnergyPerSession = showFleet ? deriveEnergyPerSession(fleetConfig.yearlyMileageKm ?? 12000, fleetConfig.plugInsPerWeek ?? 3) : energyPerSession
 
   // ── Measure actual plot area from rendered CartesianGrid ──
   useEffect(() => {
@@ -3020,7 +3026,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR' : 'ct/kWh'}</span>
                       </p>
                       <p className="text-[8px] text-gray-400">
-                        {showFleet ? `${(ms.eur4w / 1000).toFixed(2)} EUR/EV · ${ms.eur4w.toFixed(0)} EUR fleet` : `${ms.eur4w.toFixed(2)} EUR total`}
+                        {showFleet ? `${ms.eur4w.toFixed(2)} EUR/EV · ${Math.round(ms.eur4w * 1000)} EUR fleet` : `${ms.eur4w.toFixed(2)} EUR total`}
                       </p>
                     </div>
                     <div>
@@ -3029,7 +3035,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR/yr' : 'ct/kWh'}</span>
                       </p>
                       <p className="text-[8px] text-gray-400">
-                        {showFleet ? `${(ms.eur52w / 1000).toFixed(0)} EUR/EV/yr · ${ms.eur52w.toFixed(0)} EUR fleet` : `${ms.eur52w.toFixed(0)} EUR/yr`}
+                        {showFleet ? `${ms.eur52w.toFixed(0)} EUR/EV/yr · ${Math.round(ms.eur52w * 1000)} EUR fleet` : `${ms.eur52w.toFixed(0)} EUR/yr`}
                       </p>
                     </div>
                   </div>
@@ -3355,14 +3361,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         <div className="space-y-6">
           {activeDailySavingsMap.size > 0 && (
             <DailySavingsHeatmap
-              dailySavingsMap={showFleet
-                ? new Map([...activeDailySavingsMap].map(([k, v]) => [k, { ...v, savingsEur: v.savingsEur / 1000 }]))
-                : activeDailySavingsMap}
+              dailySavingsMap={activeDailySavingsMap}
               selectedDate={prices.selectedDate}
               onSelect={prices.setSelectedDate}
-              energyPerSession={showFleet ? deriveEnergyPerSession(fleetConfig.yearlyMileageKm ?? 12000, fleetConfig.plugInsPerWeek ?? 3) : energyPerSession}
+              energyPerSession={fleetEnergyPerSession}
               chargingMode={scenario.chargingMode}
-              rollingAvgSavings={showFleet ? activeRollingSavings / 1000 : activeRollingSavings}
+              rollingAvgSavings={activeRollingSavings}
               sessionsPerYear={showFleet ? (fleetConfig.plugInsPerWeek ?? 3) * 52 : sessionsPerYear}
               selectedDayCost={showFleet && fleetOptResult
                 ? { baselineAvgCt: fleetOptResult.baselineAvgCtKwh, optimizedAvgCt: fleetOptResult.optimizedAvgCtKwh, savingsEur: Math.abs(fleetOptResult.savingsEur) / 1000 }
@@ -3373,15 +3377,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           {activeMonthlySavingsData.length > 0 && (
             <div id="tour-monthly-savings" className="grid grid-cols-1 lg:grid-cols-[3fr_1fr] gap-6">
               <MonthlySavingsCard
-                monthlySavingsData={showFleet
-                  ? activeMonthlySavingsData.map(m => ({ ...m, savings: m.savings / 1000 }))
-                  : activeMonthlySavingsData}
+                monthlySavingsData={activeMonthlySavingsData}
                 weeklyPlugIns={showFleet ? (fleetConfig.plugInsPerWeek ?? 3) : weeklyPlugIns}
-                energyPerSession={showFleet ? deriveEnergyPerSession(fleetConfig.yearlyMileageKm ?? 12000, fleetConfig.plugInsPerWeek ?? 3) : energyPerSession}
+                energyPerSession={fleetEnergyPerSession}
                 sessionsPerYear={showFleet ? (fleetConfig.plugInsPerWeek ?? 3) * 52 : sessionsPerYear}
-                rollingAvgSavings={showFleet ? activeRollingSavings / 1000 : activeRollingSavings}
-                monthlySavings={showFleet ? activeMonthlySavings / 1000 : activeMonthlySavings}
-                avgDailyEur={showFleet ? activeRollingSavings / 1000 / 365 : (sessionsPerYear > 0 ? activeRollingSavings / sessionsPerYear : 0)}
+                rollingAvgSavings={activeRollingSavings}
+                monthlySavings={activeMonthlySavings}
+                avgDailyEur={showFleet ? activeRollingSavings / 365 : (sessionsPerYear > 0 ? activeRollingSavings / sessionsPerYear : 0)}
                 selectedDate={date1}
                 chargingMode={scenario.chargingMode}
                 isV2G={isV2G}

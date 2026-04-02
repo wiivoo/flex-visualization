@@ -29,7 +29,6 @@ const MODE_LABELS: Record<string, string> = {
 }
 
 export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerSession, chargingMode = 'overnight', isV2G = false, isFleet = false }: Props) {
-  const perEvDivisor = isFleet ? 1000 : 1
   if (!yearlySavingsData || yearlySavingsData.length === 0) return null
 
   const currentYear = new Date().getFullYear()
@@ -81,7 +80,7 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
                   {d.year}{d.isPartial ? ' YTD' : ''}
                 </span>
                 <span className={`text-[12px] tabular-nums font-bold ${isCurrent ? 'text-emerald-700' : 'text-gray-500'}`}>
-                  {'\u20AC'}{Math.round(d.savings / perEvDivisor)}{isFleet ? '/EV' : ''}
+                  {'\u20AC'}{Math.round(d.savings)}{isFleet ? '/EV' : ''}
                 </span>
               </div>
               <div className="relative w-full h-3 bg-gray-100 rounded-full overflow-hidden">
@@ -112,7 +111,7 @@ export function YearlySavingsCard({ yearlySavingsData, weeklyPlugIns, energyPerS
                 )}
               </div>
               <div className="flex items-center justify-between text-[9px] text-gray-400 mt-0.5 tabular-nums">
-                <span>{isFleet ? `${partial} · fleet €${Math.round(d.savings)}` : `${d.sessionsCount} sessions · ${partial}`}</span>
+                <span>{isFleet ? `${partial} · fleet €${Math.round(d.savings * 1000)}` : `${d.sessionsCount} sessions · ${partial}`}</span>
                 {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined ? (
                   <span>
                     <span className="text-emerald-500">{'\u20AC'}{Math.round(d.loadShiftingEur)} shift</span>
