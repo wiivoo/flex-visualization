@@ -3361,14 +3361,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         <div className="space-y-6">
           {activeDailySavingsMap.size > 0 && (
             <DailySavingsHeatmap
-              dailySavingsMap={activeDailySavingsMap}
+              dailySavingsMap={showFleet
+                ? new Map([...activeDailySavingsMap].map(([k, v]) => [k, { ...v, savingsEur: v.savingsEur / 1000 }]))
+                : activeDailySavingsMap}
               selectedDate={prices.selectedDate}
               onSelect={prices.setSelectedDate}
-              energyPerSession={energyPerSession}
+              energyPerSession={showFleet ? computeFleetEnergyKwh(deriveFleetDistributions(fleetConfig)) / 1000 : energyPerSession}
               chargingMode={scenario.chargingMode}
-              rollingAvgSavings={activeRollingSavings}
-              sessionsPerYear={sessionsPerYear}
-              selectedDayCost={sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
+              rollingAvgSavings={showFleet ? activeRollingSavings / 1000 : activeRollingSavings}
+              sessionsPerYear={showFleet ? 365 : sessionsPerYear}
+              selectedDayCost={showFleet && fleetOptResult
+                ? { baselineAvgCt: fleetOptResult.baselineAvgCtKwh, optimizedAvgCt: fleetOptResult.optimizedAvgCtKwh, savingsEur: Math.abs(fleetOptResult.savingsEur) / 1000 }
+                : sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
             />
           )}
           {activeMonthlySavingsData.length > 0 && (
