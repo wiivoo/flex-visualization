@@ -152,22 +152,9 @@ export function FleetConfigPanel({ config, onChange }: Props) {
         onMaxChange={(v) => onChange({ ...config, chargeNeedMax: v })}
       />
 
-      {/* Charge power + spread — compact row */}
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Power</span>
-          <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
-            <button
-              onClick={() => onChange({ ...config, chargePowerKw: 7 })}
-              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${config.chargePowerKw === 7 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-            >7 kW</button>
-            <button
-              onClick={() => onChange({ ...config, chargePowerKw: 11 })}
-              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${config.chargePowerKw === 11 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-            >11 kW</button>
-          </div>
-        </div>
-        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Spread</span>
+      {/* Spread */}
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Fleet Spread</span>
         <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
           {(['off', 'narrow', 'normal', 'wide'] as SpreadMode[]).map(mode => (
             <button key={mode}
@@ -177,6 +164,21 @@ export function FleetConfigPanel({ config, onChange }: Props) {
               }`}
             >{mode}</button>
           ))}
+        </div>
+      </div>
+
+      {/* Charge power */}
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Charge Power</span>
+        <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
+          <button
+            onClick={() => onChange({ ...config, chargePowerKw: 7 })}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${config.chargePowerKw === 7 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+          >7 kW</button>
+          <button
+            onClick={() => onChange({ ...config, chargePowerKw: 11 })}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${config.chargePowerKw === 11 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+          >11 kW</button>
         </div>
       </div>
 
