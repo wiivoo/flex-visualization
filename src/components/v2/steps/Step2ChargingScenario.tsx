@@ -1894,8 +1894,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <stop offset="100%" stopColor="#D97706" stopOpacity={0} />
                     </linearGradient>
                     <linearGradient id="fleetBandGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.15} />
-                      <stop offset="100%" stopColor="#3B82F6" stopOpacity={0.03} />
+                      <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.10} />
+                      <stop offset="100%" stopColor="#F59E0B" stopOpacity={0.03} />
                     </linearGradient>
                   </defs>
 
@@ -2050,28 +2050,36 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Fleet flex band overlay (PROJ-36) — rendered behind price curve */}
                   {isFleetActive && (
                     <>
-                      {/* Greedy fill (red) = baseline "charge now" within band */}
+                      {/* 1. Band envelope (orange tint) — full flexibility range */}
                       <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        fill="#EF4444" fillOpacity={0.12} stroke="none"
+                        fill="url(#fleetBandGrad)" stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Optimized fill (blue) = price-optimal charging within band */}
+                      {/* 2. Greedy baseline (red) — "charge ASAP" pattern */}
+                      <Area type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
+                        fill="#EF4444" fillOpacity={0.14} stroke="none"
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                      {/* 3. Optimized schedule (blue) — price-optimal charging */}
                       <Area type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
-                        fill="#3B82F6" fillOpacity={0.18} stroke="none"
+                        fill="#3B82F6" fillOpacity={0.22} stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* White cutout below lazy bound — reveals the band shape */}
+                      {/* 4. White cutout below lazy bound */}
                       <Area type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
                         fill="#FFFFFF" stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Band boundary lines (subtle gray dashes) */}
+                      {/* Band boundary lines */}
                       <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        stroke="#9CA3AF" strokeWidth={1} strokeDasharray="4 3" strokeOpacity={0.35}
+                        stroke="#D97706" strokeWidth={1} strokeOpacity={0.4}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                       <Line type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
-                        stroke="#9CA3AF" strokeWidth={1} strokeDasharray="4 3" strokeOpacity={0.35}
+                        stroke="#D97706" strokeWidth={1} strokeOpacity={0.4}
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Optimized schedule line */}
+                      {/* Greedy baseline line (red) */}
+                      <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
+                        stroke="#EF4444" strokeWidth={1.5} strokeOpacity={0.5} strokeDasharray="4 3"
+                        connectNulls={false} dot={false} isAnimationActive={false} />
+                      {/* Optimized schedule line (blue, solid) */}
                       <Line type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
-                        stroke="#3B82F6" strokeWidth={1.5} strokeOpacity={0.6}
+                        stroke="#3B82F6" strokeWidth={2} strokeOpacity={0.7}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                     </>
                   )}

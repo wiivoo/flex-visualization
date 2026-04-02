@@ -44,12 +44,13 @@ function TriangleMarker({
 
   const handlePointerUp = useCallback(() => { dragging.current = false }, [])
 
-  // Position: 8px offset + fraction of track width (container - 16px)
+  // Position: aligned with slider thumb (8px offset for 16px thumb)
+  // top: 2px puts triangle just above the slider track inside pt-3 container
   return (
     <div
       ref={containerRef}
       className="absolute touch-none cursor-ew-resize"
-      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: -10, width: 10, height: 10 }}
+      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: 2, width: 10, height: 10 }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
