@@ -2010,38 +2010,42 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     )
                   })()}
 
-                  {/* Charging hour bands — clear colored backgrounds per block */}
-                  {/* Baseline bands — red (V1G: full opacity, V2G: subtle reference, hidden if no net charge) */}
-                  {(!isV2G || v2gHasNetCharge) && baselineRanges.map((r, i) => (
-                    <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={isV2G ? 0.05 : 0.08} ifOverflow="hidden" />
-                  ))}
-                  {/* V2G: separate load shifting (green) and arbitrage charge (blue) bands */}
-                  {isV2G ? (
+                  {/* Charging hour bands — hidden in fleet mode (fleet uses flex band fills instead) */}
+                  {!isFleetActive && (
                     <>
-                      {netChargeRanges.map((r, i) => (
-                        <ReferenceArea key={`nc-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.10} ifOverflow="hidden" />
+                      {/* Baseline bands — red */}
+                      {(!isV2G || v2gHasNetCharge) && baselineRanges.map((r, i) => (
+                        <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={isV2G ? 0.05 : 0.08} ifOverflow="hidden" />
                       ))}
-                      {arbChargeRanges.map((r, i) => (
-                        <ReferenceArea key={`ac-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+                      {/* V2G: separate load shifting (green) and arbitrage charge (blue) bands */}
+                      {isV2G ? (
+                        <>
+                          {netChargeRanges.map((r, i) => (
+                            <ReferenceArea key={`nc-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.10} ifOverflow="hidden" />
+                          ))}
+                          {arbChargeRanges.map((r, i) => (
+                            <ReferenceArea key={`ac-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+                          ))}
+                        </>
+                      ) : (
+                        optimizedRanges.map((r, i) => (
+                          <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+                        ))
+                      )}
+                      {/* DA sold position bands */}
+                      {showIntraday && hasIntraday && daSoldRanges.map((r, i) => (
+                        <ReferenceArea key={`sold-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
+                      ))}
+                      {/* ID3 bought position bands */}
+                      {showIntraday && hasIntraday && id3BoughtRanges.map((r, i) => (
+                        <ReferenceArea key={`id3b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#0EA5E9" fillOpacity={0.10} ifOverflow="hidden" />
+                      ))}
+                      {/* V2G discharge bands */}
+                      {dischargeRanges.map((r, i) => (
+                        <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#F59E0B" fillOpacity={0.10} ifOverflow="hidden" />
                       ))}
                     </>
-                  ) : (
-                    optimizedRanges.map((r, i) => (
-                      <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
-                    ))
                   )}
-                  {/* DA sold position bands — red tint for positions being exited */}
-                  {showIntraday && hasIntraday && daSoldRanges.map((r, i) => (
-                    <ReferenceArea key={`sold-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
-                  ))}
-                  {/* ID3 bought position bands — sky blue for new positions */}
-                  {showIntraday && hasIntraday && id3BoughtRanges.map((r, i) => (
-                    <ReferenceArea key={`id3b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#0EA5E9" fillOpacity={0.10} ifOverflow="hidden" />
-                  ))}
-                  {/* V2G discharge bands — amber */}
-                  {dischargeRanges.map((r, i) => (
-                    <ReferenceArea key={`d-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#F59E0B" fillOpacity={0.10} ifOverflow="hidden" />
-                  ))}
 
                   {/* Fleet flex band overlay (PROJ-36) — rendered behind price curve */}
                   {isFleetActive && (
