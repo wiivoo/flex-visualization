@@ -121,7 +121,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
     <div className="space-y-4">
       {/* Arrival */}
       <RangeSlider
-        label="Plug-in Time" unit=":00"
+        label="Arrival Time" unit=":00"
         avg={config.arrivalAvg} min={config.arrivalMin} max={config.arrivalMax}
         sliderMin={14} sliderMax={23}
         onAvgChange={(v) => onChange({ ...config, arrivalAvg: v, arrivalMin: Math.min(config.arrivalMin, v), arrivalMax: Math.max(config.arrivalMax, v) })}
@@ -141,7 +141,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
 
       {/* Charge Need */}
       <RangeSlider
-        label="Charge per Session" unit="kWh"
+        label="Charging Need" unit="kWh"
         avg={config.chargeNeedAvg} min={config.chargeNeedMin} max={config.chargeNeedMax}
         sliderMin={3} sliderMax={45}
         onAvgChange={(v) => {
