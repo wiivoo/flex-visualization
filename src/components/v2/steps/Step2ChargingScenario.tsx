@@ -794,10 +794,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       fleetMonthlySavings: Math.round(avgDaily * 30.44 * 100) / 100,
       fleetDailySavingsMap: perDay,
       fleetPerModeSavings: {
-        ctKwh4w: totalEnergy > 0 ? Math.round(avgDaily4w * 100 / totalEnergy * 100) / 100 : 0,
-        eur4w: Math.round(avgDaily4w * 28 * 100) / 100,
-        ctKwh52w: totalEnergy > 0 ? Math.round(avgDaily * 100 / totalEnergy * 100) / 100 : 0,
-        eur52w: Math.round(avgDaily * 365),
+        ctKwh4w: totalEnergy > 0 ? Math.round(Math.abs(avgDaily4w) * 100 / totalEnergy * 100) / 100 : 0,
+        eur4w: Math.round(Math.abs(avgDaily4w) * 28 * 100) / 100,
+        ctKwh52w: totalEnergy > 0 ? Math.round(Math.abs(avgDaily) * 100 / totalEnergy * 100) / 100 : 0,
+        eur52w: Math.round(Math.abs(avgDaily) * 365),
       },
     }
   }, [showFleet, date1, prices.hourly, fleetConfig])
@@ -2911,21 +2911,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </p>
                   </div>
                   {/* Selected day — Fleet / V2G / V1G savings */}
-                  {showFleet && row.key === 'overnight' && fleetOptResult ? (
+                  {showFleet && row.key === 'overnight' && fleetOptResult ? (() => {
+                    const fleetSavingsCtKwh = Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh)
+                    const fleetSavingsEur = Math.abs(fleetOptResult.savingsEur)
+                    const fleetTotalKwh = fleetOptResult.totalEnergyKwh
+                    return (
                     <div className="mb-2">
-                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Fleet savings on selected day</p>
+                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {fleetOptResult.savingsEur.toFixed(2)}
+                        {fleetSavingsCtKwh.toFixed(2)}
                       </span>
-                      <span className="text-[10px] text-gray-400 ml-1">EUR</span>
+                      <span className="text-[10px] text-gray-400 ml-1">ct/kWh cheaper</span>
                       <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        {fleetOptResult.savingsPct.toFixed(1)}% cheaper · {fleetOptResult.totalEnergyKwh.toFixed(0)} kWh · 1,000 EVs
+                        = {fleetSavingsEur.toFixed(2)} EUR saved on {fleetTotalKwh.toFixed(0)} kWh · 1,000 EVs
                       </p>
-                      <div className="flex gap-3 mt-1.5 text-[9px]">
-                        <span className="text-red-500">ASAP: {fleetOptResult.baselineAvgCtKwh.toFixed(1)} ct/kWh</span>
-                        <span className="text-blue-500">Opt: {fleetOptResult.optimizedAvgCtKwh.toFixed(1)} ct/kWh</span>
-                      </div>
                     </div>
+                    )
+                  })()
                   ) : isV2G && row.v2gProfit ? (
                     <div className="mb-2">
                       <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">
