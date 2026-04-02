@@ -98,7 +98,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const baselineEndHour = (scenario.plugInTime + sessionHoursNeeded) % 24
 
   const chartRef = useRef<HTMLDivElement>(null)
-  const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | null>(null)
+  const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | 'fleetArrival' | 'fleetDeparture' | null>(null)
   const [costDetailMode, setCostDetailMode] = useState<string | null>(null)
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
@@ -875,8 +875,26 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           setScenario({ ...scenario, departureTime: point.hour })
         }
       }
+    } else if (isDragging === 'fleetArrival') {
+      if (point.date === date1 && point.hour >= 14 && point.hour <= 23) {
+        setFleetConfig(c => ({
+          ...c,
+          arrivalAvg: point.hour,
+          arrivalMin: Math.min(c.arrivalMin, point.hour),
+          arrivalMax: Math.max(c.arrivalMax, point.hour),
+        }))
+      }
+    } else if (isDragging === 'fleetDeparture') {
+      if (point.date === date2 && point.hour >= 5 && point.hour <= 9) {
+        setFleetConfig(c => ({
+          ...c,
+          departureAvg: point.hour,
+          departureMin: Math.min(c.departureMin, point.hour),
+          departureMax: Math.max(c.departureMax, point.hour),
+        }))
+      }
     }
-  }, [isDragging, chartData, date1, date2, date4, scenario, setScenario, plotArea, isFullDay, isThreeDay])
+  }, [isDragging, chartData, date1, date2, date4, scenario, setScenario, setFleetConfig, plotArea, isFullDay, isThreeDay])
 
   useEffect(() => {
     if (!isDragging) return
@@ -2532,43 +2550,56 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
-              {/* ── Fleet floating pills — baseline + optimized avg ct/kWh ── */}
-              {isFleetActive && fleetOptResult && plotArea && (
-                <div className="absolute pointer-events-none z-10"
-                  style={{ left: plotArea.left, top: plotArea.top, width: plotArea.width, height: plotArea.height }}>
-                  {/* Savings pill — top center */}
-                  <div className="absolute" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
-                    <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
-                      <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                        ▼ {(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
-                      </span>
-                      <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                        {fleetOptResult.savingsEur.toFixed(0)} € saved
-                      </span>
+              {/* ── Fleet floating pills — same style as single-car ── */}
+              {isFleetActive && fleetOptResult && plotArea && (() => {
+                const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
+                const fleetArrIdx = chartData.findIndex(d => d.date === date1 && d.hour === fleetConfig.arrivalAvg)
+                const fleetDepIdx = chartData.findIndex(d => d.date === date2 && d.hour === fleetConfig.departureAvg)
+                const bCenter = fleetArrIdx >= 0 ? idxToPx(fleetArrIdx) + 40 : plotArea.left + 40
+                const oCenter = fleetDepIdx >= 0 ? idxToPx(fleetDepIdx) - 40 : plotArea.left + plotArea.width - 40
+                return (
+                  <>
+                    {/* Savings pill — top center */}
+                    <div className="absolute pointer-events-none z-10"
+                      style={{ left: '50%', top: plotArea.top + 4, transform: 'translateX(-50%)' }}>
+                      <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
+                        <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
+                          ▼ {(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh).toFixed(1)} ct/kWh
+                        </span>
+                        <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
+                          {fleetOptResult.savingsEur.toFixed(0)} € saved
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                  {/* Baseline pill — left side */}
-                  <div className="absolute" style={{ left: 8, top: 28 }}>
-                    <div className="bg-red-50/60 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
-                      <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                        {fleetOptResult.baselineAvgCtKwh.toFixed(1)} ct/kWh
-                      </span>
-                      <span className="text-red-400 text-[9px] whitespace-nowrap">ASAP</span>
+                    {/* Baseline pill — near arrival handle */}
+                    <div className="absolute pointer-events-none z-10"
+                      style={{ left: bCenter, top: plotArea.top + 28, transform: 'translateX(-50%)' }}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Charge ASAP</span>
+                        <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
+                          <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                            {fleetOptResult.baselineAvgCtKwh.toFixed(1)} ct/kWh
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  {/* Optimized pill — right of baseline */}
-                  <div className="absolute" style={{ right: 8, top: 28 }}>
-                    <div className="bg-blue-50/60 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
-                      <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                        {fleetOptResult.optimizedAvgCtKwh.toFixed(1)} ct/kWh
-                      </span>
-                      <span className="text-blue-400 text-[9px] whitespace-nowrap">Optimized</span>
+                    {/* Optimized pill — near departure handle */}
+                    <div className="absolute pointer-events-none z-10"
+                      style={{ left: oCenter, top: plotArea.top + 28, transform: 'translateX(-50%)' }}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">Smart charging</span>
+                        <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
+                          <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                            {fleetOptResult.optimizedAvgCtKwh.toFixed(1)} ct/kWh
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              )}
+                  </>
+                )
+              })()}
 
               {/* ── Drag handles — invisible touch targets + label pills (hidden in fleet mode) ── */}
               {N > 1 && !isFleetActive && (
@@ -2626,6 +2657,70 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   )}
                 </>
               )}
+
+              {/* ── Fleet drag handles — avg arrival + avg departure ── */}
+              {N > 1 && isFleetActive && plotArea && (() => {
+                const fleetArrIdx = chartData.findIndex(d => d.date === date1 && d.hour === fleetConfig.arrivalAvg)
+                const fleetDepIdx = chartData.findIndex(d => d.date === date2 && d.hour === fleetConfig.departureAvg)
+                const fleetArrLabel = `${String(fleetConfig.arrivalAvg).padStart(2, '0')}:00`
+                const fleetDepLabel = `${String(fleetConfig.departureAvg).padStart(2, '0')}:00`
+                return (
+                  <>
+                    {/* FLEET ARRIVAL HANDLE */}
+                    {fleetArrIdx >= 0 && (
+                      <div className="absolute transition-[left] duration-100 z-20" style={{
+                        left: getLeft(fleetArrIdx, N),
+                        top: 0, height: '100%', transform: 'translateX(-50%)',
+                      }}>
+                        <div className="relative h-full flex justify-center cursor-col-resize group"
+                          style={{ width: 28 }}
+                          onMouseDown={(e) => { e.preventDefault(); setIsDragging('fleetArrival') }}
+                          onTouchStart={(e) => { e.preventDefault(); setIsDragging('fleetArrival') }}>
+                          <div className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap transition-all ${
+                            isDragging === 'fleetArrival' ? 'scale-105' : ''
+                          }`} style={{ top: 4 }}>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border transition-colors ${
+                                isDragging === 'fleetArrival'
+                                  ? 'text-white bg-[#EA1C0A] border-[#EA1C0A]'
+                                  : 'text-[#EA1C0A] bg-white/95 border-red-200 group-hover:bg-red-50'
+                              }`}>
+                                Avg Arrival {fleetArrLabel}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {/* FLEET DEPARTURE HANDLE */}
+                    {fleetDepIdx >= 0 && (
+                      <div className="absolute transition-[left] duration-100 z-20" style={{
+                        left: getLeft(fleetDepIdx, N),
+                        top: 0, height: '100%', transform: 'translateX(-50%)',
+                      }}>
+                        <div className="relative h-full flex justify-center cursor-col-resize group"
+                          style={{ width: 28 }}
+                          onMouseDown={(e) => { e.preventDefault(); setIsDragging('fleetDeparture') }}
+                          onTouchStart={(e) => { e.preventDefault(); setIsDragging('fleetDeparture') }}>
+                          <div className={`absolute left-1/2 -translate-x-1/2 whitespace-nowrap transition-all ${
+                            isDragging === 'fleetDeparture' ? 'scale-105' : ''
+                          }`} style={{ top: 4 }}>
+                            <div className="flex flex-col items-center gap-0.5">
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border transition-colors ${
+                                isDragging === 'fleetDeparture'
+                                  ? 'text-white bg-blue-600 border-blue-600'
+                                  : 'text-blue-600 bg-white/95 border-blue-200 group-hover:bg-blue-50'
+                              }`}>
+                                Avg Departure {fleetDepLabel}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
 
               {/* ── Edge-scroll zones — press & hold to scrub through days ── */}
               {!isDragging && (
