@@ -2150,15 +2150,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <Area type="stepAfter" dataKey="optimizedKw" yAxisId="fleet"
                         fill="#3B82F6" fillOpacity={0.22} stroke="none"
                         connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* 4. White cutout below lazy bound */}
-                      <Area type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
-                        fill="#FFFFFF" stroke="none"
-                        connectNulls={false} dot={false} isAnimationActive={false} />
-                      {/* Band boundary lines (light orange) */}
+                      {/* Band upper boundary line (light orange) */}
                       <Line type="stepAfter" dataKey="greedyKw" yAxisId="fleet"
-                        stroke="#FDBA74" strokeWidth={1} strokeOpacity={0.5}
-                        connectNulls={false} dot={false} isAnimationActive={false} />
-                      <Line type="stepAfter" dataKey="lazyKw" yAxisId="fleet"
                         stroke="#FDBA74" strokeWidth={1} strokeOpacity={0.5}
                         connectNulls={false} dot={false} isAnimationActive={false} />
                       {/* Greedy baseline line (red dashed) */}
