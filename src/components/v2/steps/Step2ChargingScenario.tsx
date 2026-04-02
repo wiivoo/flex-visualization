@@ -754,13 +754,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
+    const fleetMode = scenario.chargingMode
     const derivedRoll = deriveFleetDistributions(deferredFleetConfig, fleetMode)
     const totalEnergy = computeFleetEnergyKwh(derivedRoll)
     let wdS = 0, wdD = 0, weS = 0, weD = 0
     let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
     const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
 
-    const fleetMode = scenario.chargingMode
     for (const [dDate, dPrices] of byDate) {
       const nd = nextDayStr(dDate)
       const nPrices = byDate.get(nd)
