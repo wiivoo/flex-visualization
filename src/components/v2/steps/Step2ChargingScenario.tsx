@@ -2742,6 +2742,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         left: getLeft(fleetArrIdx, N),
                         top: 0, height: '100%', transform: 'translateX(-50%)',
                       }}>
+                        {/* Light dotted vertical line */}
+                        <div className="absolute left-1/2 -translate-x-[0.5px] top-0 h-full pointer-events-none"
+                          style={{ width: 1, borderLeft: '1px dotted rgba(234, 28, 10, 0.25)' }} />
                         <div className="relative h-full flex justify-center cursor-col-resize group"
                           style={{ width: 28 }}
                           onMouseDown={(e) => { e.preventDefault(); setIsDragging('fleetArrival') }}
@@ -2768,6 +2771,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         left: getLeft(fleetDepIdx, N),
                         top: 0, height: '100%', transform: 'translateX(-50%)',
                       }}>
+                        {/* Light dotted vertical line */}
+                        <div className="absolute left-1/2 -translate-x-[0.5px] top-0 h-full pointer-events-none"
+                          style={{ width: 1, borderLeft: '1px dotted rgba(37, 99, 235, 0.25)' }} />
                         <div className="relative h-full flex justify-center cursor-col-resize group"
                           style={{ width: 28 }}
                           onMouseDown={(e) => { e.preventDefault(); setIsDragging('fleetDeparture') }}
