@@ -119,30 +119,10 @@ export function FleetConfigPanel({ config, onChange }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Arrival */}
-      <RangeSlider
-        label="Arrival Time" unit=":00"
-        avg={config.arrivalAvg} min={config.arrivalMin} max={config.arrivalMax}
-        sliderMin={14} sliderMax={23}
-        onAvgChange={(v) => onChange({ ...config, arrivalAvg: v, arrivalMin: Math.min(config.arrivalMin, v), arrivalMax: Math.max(config.arrivalMax, v) })}
-        onMinChange={(v) => onChange({ ...config, arrivalMin: v })}
-        onMaxChange={(v) => onChange({ ...config, arrivalMax: v })}
-      />
-
-      {/* Departure */}
-      <RangeSlider
-        label="Departure Time" unit=":00"
-        avg={config.departureAvg} min={config.departureMin} max={config.departureMax}
-        sliderMin={5} sliderMax={9}
-        onAvgChange={(v) => onChange({ ...config, departureAvg: v, departureMin: Math.min(config.departureMin, v), departureMax: Math.max(config.departureMax, v) })}
-        onMinChange={(v) => onChange({ ...config, departureMin: v })}
-        onMaxChange={(v) => onChange({ ...config, departureMax: v })}
-      />
-
-      {/* Yearly Mileage */}
+      {/* Yearly Mileage per EV */}
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between h-8">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Yearly Mileage</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Yearly Mileage per EV</span>
           <span className="text-2xl font-bold text-[#313131] tabular-nums">
             {(config.yearlyMileageKm ?? 12000).toLocaleString('en-US')}<span className="text-xs font-normal text-gray-400 ml-1">km</span>
           </span>
@@ -159,10 +139,10 @@ export function FleetConfigPanel({ config, onChange }: Props) {
         </div>
       </div>
 
-      {/* Weekly Plug-ins */}
+      {/* Weekly Plug-ins per EV */}
       <div className="flex flex-col gap-2">
         <div className="flex items-baseline justify-between h-8">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Weekly Plug-ins</span>
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Weekly Plug-ins per EV</span>
           <span className="text-2xl font-bold text-[#313131] tabular-nums">
             {config.plugInsPerWeek ?? 3}<span className="text-xs font-normal text-gray-400 ml-1">x / wk</span>
           </span>
@@ -178,9 +158,29 @@ export function FleetConfigPanel({ config, onChange }: Props) {
           </div>
         </div>
         <p className="text-[10px] text-gray-400 text-center">
-          {Math.round((config.yearlyMileageKm ?? 12000) / ((config.plugInsPerWeek ?? 3) * 52) / 100 * 19 * 10) / 10} kWh/session · {(config.plugInsPerWeek ?? 3) * 52} sessions/yr
+          {Math.round((config.yearlyMileageKm ?? 12000) / ((config.plugInsPerWeek ?? 3) * 52) / 100 * 19 * 10) / 10} kWh/session · {(config.plugInsPerWeek ?? 3) * 52} sessions/yr per EV
         </p>
       </div>
+
+      {/* Arrival Time */}
+      <RangeSlider
+        label="Arrival Time" unit=":00"
+        avg={config.arrivalAvg} min={config.arrivalMin} max={config.arrivalMax}
+        sliderMin={14} sliderMax={23}
+        onAvgChange={(v) => onChange({ ...config, arrivalAvg: v, arrivalMin: Math.min(config.arrivalMin, v), arrivalMax: Math.max(config.arrivalMax, v) })}
+        onMinChange={(v) => onChange({ ...config, arrivalMin: v })}
+        onMaxChange={(v) => onChange({ ...config, arrivalMax: v })}
+      />
+
+      {/* Departure Time */}
+      <RangeSlider
+        label="Departure Time" unit=":00"
+        avg={config.departureAvg} min={config.departureMin} max={config.departureMax}
+        sliderMin={5} sliderMax={9}
+        onAvgChange={(v) => onChange({ ...config, departureAvg: v, departureMin: Math.min(config.departureMin, v), departureMax: Math.max(config.departureMax, v) })}
+        onMinChange={(v) => onChange({ ...config, departureMin: v })}
+        onMaxChange={(v) => onChange({ ...config, departureMax: v })}
+      />
 
       {/* Spread */}
       <div className="flex items-center justify-between">
