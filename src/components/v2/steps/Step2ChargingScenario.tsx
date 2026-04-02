@@ -486,11 +486,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     if (windowPrices.length === 0) return { flexBand: null, fleetOptResult: null }
 
     const derived = deriveFleetDistributions(fleetConfig)
-    const band = computeFlexBand(derived, windowPrices, isQH)
+    const band = computeFlexBand(derived, windowPrices, isQH, scenario.chargingMode)
     const totalEnergy = computeFleetEnergyKwh(derived)
     const optResult = optimizeFleetSchedule(band, windowPrices, totalEnergy, isQH)
     return { flexBand: band, fleetOptResult: optResult }
-  }, [isFleetActive, chartData, fleetConfig, isQH])
+  }, [isFleetActive, chartData, fleetConfig, isQH, scenario.chargingMode])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
@@ -780,7 +780,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
       if (win.length < 4) continue
 
-      const band = computeFlexBand(derivedRoll, win, false)
+      const band = computeFlexBand(derivedRoll, win, false, fleetMode)
       if (band.length === 0) continue
       const opt = optimizeFleetSchedule(band, win, totalEnergy, false)
       const savEur = Math.abs(opt.savingsEur)

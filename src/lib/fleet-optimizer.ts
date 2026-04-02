@@ -126,6 +126,7 @@ export function computeFlexBand(
   config: FleetConfig,
   windowSlots: HourlyPrice[],
   isQH: boolean = false,
+  mode: 'overnight' | 'fullday' | 'threeday' = 'overnight',
 ): FlexBandSlot[] {
   if (windowSlots.length === 0) return []
 
@@ -142,6 +143,10 @@ export function computeFlexBand(
     minute: s.minute ?? 0,
     date: s.date,
   }))
+
+  // Determine which day departures map to
+  const allDates = [...new Set(slots.map(s => s.date))].sort()
+  const departureDay = mode === 'threeday' ? (allDates[allDates.length - 1] ?? allDates[1]) : (allDates[1] ?? allDates[0])
 
   // For each slot, accumulate upper and lower kW bounds across all cohorts.
   //
@@ -170,7 +175,7 @@ export function computeFlexBand(
     if (energyNeededKwh <= 0) continue
 
     const arrIdx = findSlotIndex(slots, cohort.arrivalHour, 0)
-    const depIdx = findDepartureIndex(slots, cohort.departureHour)
+    const depIdx = findDepartureIndex(slots, cohort.departureHour, departureDay)
     if (arrIdx < 0 || depIdx < 0 || depIdx <= arrIdx) continue
 
     const slotsInWindow = depIdx - arrIdx
@@ -242,20 +247,15 @@ function findSlotIndex(slots: { hour: number; minute: number; date: string }[], 
   return -1
 }
 
-/** Find the departure index — first slot in day2 at the departure hour */
-function findDepartureIndex(slots: { hour: number; minute: number; date: string }[], depHour: number): number {
-  // Departure hours (5–9) occur in day2 — find the first slot at that hour
-  // Day2 is the second date in the window (after midnight)
-  const dates = [...new Set(slots.map(s => s.date))].sort()
-  if (dates.length < 2) return -1 // No next-day data — skip this cohort
-  const day2 = dates[1]
-
+/** Find the departure index — first slot on the target day at the departure hour */
+function findDepartureIndex(slots: { hour: number; minute: number; date: string }[], depHour: number, targetDay: string): number {
+  if (!targetDay) return -1
   for (let i = 0; i < slots.length; i++) {
-    if (slots[i].date === day2 && slots[i].hour >= depHour) return i
+    if (slots[i].date === targetDay && slots[i].hour >= depHour) return i
   }
-  // Departure hour past available data — use end of day2 data
+  // Departure hour past available data — use end of target day data
   for (let i = slots.length - 1; i >= 0; i--) {
-    if (slots[i].date === day2) return i + 1
+    if (slots[i].date === targetDay) return i + 1
   }
   return -1
 }
