@@ -17,7 +17,9 @@ function TriangleMarker({
   value: number; sliderMin: number; sliderMax: number
   onChange: (v: number) => void; side: 'min' | 'max'
 }) {
-  const pct = ((value - sliderMin) / (sliderMax - sliderMin)) * 100
+  const frac = (value - sliderMin) / (sliderMax - sliderMin)
+  // Match HTML range input thumb positioning: thumb center offset by 8px (half of 16px thumb)
+  // at 0% it's at 8px from left, at 100% it's at (width - 8px)
   const dragging = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -32,18 +34,22 @@ function TriangleMarker({
     const parent = containerRef.current.parentElement
     if (!parent) return
     const rect = parent.getBoundingClientRect()
-    const relX = (e.clientX - rect.left) / rect.width
-    const raw = Math.round(sliderMin + relX * (sliderMax - sliderMin))
+    // Account for 8px thumb offset on each side
+    const thumbOffset = 8
+    const trackWidth = rect.width - thumbOffset * 2
+    const relX = (e.clientX - rect.left - thumbOffset) / trackWidth
+    const raw = Math.round(sliderMin + Math.max(0, Math.min(1, relX)) * (sliderMax - sliderMin))
     onChange(Math.max(sliderMin, Math.min(sliderMax, raw)))
   }, [sliderMin, sliderMax, onChange])
 
   const handlePointerUp = useCallback(() => { dragging.current = false }, [])
 
+  // Position: 8px offset + fraction of track width (container - 16px)
   return (
     <div
       ref={containerRef}
       className="absolute touch-none cursor-ew-resize"
-      style={{ left: `calc(${pct}% - 5px)`, top: -10, width: 10, height: 10 }}
+      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: -10, width: 10, height: 10 }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -69,8 +75,8 @@ function RangeSlider({
   onMinChange: (v: number) => void
   onMaxChange: (v: number) => void
 }) {
-  const pctMin = ((min - sliderMin) / (sliderMax - sliderMin)) * 100
-  const pctMax = ((max - sliderMin) / (sliderMax - sliderMin)) * 100
+  const fracMin = (min - sliderMin) / (sliderMax - sliderMin)
+  const fracMax = (max - sliderMin) / (sliderMax - sliderMin)
 
   return (
     <div className="flex flex-col gap-2">
@@ -86,9 +92,9 @@ function RangeSlider({
           onChange={(v) => onMinChange(Math.min(v, avg))} side="min" />
         <TriangleMarker value={max} sliderMin={sliderMin} sliderMax={sliderMax}
           onChange={(v) => onMaxChange(Math.max(v, avg))} side="max" />
-        {/* Range highlight bar between min and max */}
+        {/* Range highlight bar between min and max — matches slider thumb offset */}
         <div className="absolute top-[17px] h-1.5 bg-gray-300/30 rounded-full pointer-events-none"
-          style={{ left: `${pctMin}%`, width: `${pctMax - pctMin}%` }} />
+          style={{ left: `calc(8px + ${fracMin} * (100% - 16px))`, width: `calc(${fracMax - fracMin} * (100% - 16px))` }} />
         {/* Main avg slider */}
         <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
           value={avg} onChange={(e) => onAvgChange(Number(e.target.value))}

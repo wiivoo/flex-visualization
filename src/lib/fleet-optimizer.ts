@@ -135,34 +135,69 @@ export function computeFlexBand(
     date: s.date,
   }))
 
-  // For each slot, accumulate greedy and lazy kW across all cohorts
-  const greedyKw = new Float64Array(slots.length)
-  const lazyKw = new Float64Array(slots.length)
+  // For each slot, accumulate upper and lower kW bounds across all cohorts.
+  //
+  // For each cohort at each slot t (where arrival <= t < departure):
+  //
+  // UPPER BOUND (can charge): The car has been charging as LITTLE as possible
+  // up to this point (lazy strategy so far). How much energy remains?
+  // If > 0, this car CAN charge at this slot → contributes chargePowerKw.
+  // Calculated: energyCharged_lazy_up_to_t = max(0, energyNeeded - remainingCapacity_from_t_to_departure)
+  // remainingNeed = energyNeeded - energyCharged_lazy_up_to_t
+  // canCharge = remainingNeed > 0
+  //
+  // LOWER BOUND (must charge): How many slots remain until departure?
+  // If remainingEnergy > remainingSlotsCapacity, this car MUST charge now.
+  // Calculated: remainingSlots = depIdx - t
+  // mustCharge = energyNeeded > (remainingSlots - 1) * kwhPerSlot
+  // (i.e., if we skip this slot, we can't fit the remaining energy)
+
+  const upperKw = new Float64Array(slots.length)
+  const lowerKw = new Float64Array(slots.length)
 
   for (const cohort of cohorts) {
     const energyNeededKwh = cohort.chargeNeedKwh
     const kwhPerSlot = cohort.chargePowerKw * slotDurationH
-    const slotsNeeded = Math.ceil(energyNeededKwh / kwhPerSlot)
-    if (slotsNeeded <= 0) continue
+    if (energyNeededKwh <= 0) continue
 
-    // Find arrival and departure slot indices
     const arrIdx = findSlotIndex(slots, cohort.arrivalHour, 0)
     const depIdx = findDepartureIndex(slots, cohort.departureHour)
-
     if (arrIdx < 0 || depIdx < 0 || depIdx <= arrIdx) continue
 
-    const availableSlots = depIdx - arrIdx
-    const actualSlotsNeeded = Math.min(slotsNeeded, availableSlots)
+    const slotsInWindow = depIdx - arrIdx
+    const slotsNeeded = Math.min(Math.ceil(energyNeededKwh / kwhPerSlot), slotsInWindow)
+    const contribution = cohort.chargePowerKw * cohort.weight * fleetSize
 
-    // Greedy: charge starting from arrival
-    for (let i = arrIdx; i < arrIdx + actualSlotsNeeded && i < slots.length; i++) {
-      greedyKw[i] += cohort.chargePowerKw * cohort.weight * fleetSize
-    }
+    for (let t = arrIdx; t < depIdx && t < slots.length; t++) {
+      const slotsElapsed = t - arrIdx         // slots since arrival
+      const slotsRemaining = depIdx - t       // slots until departure (including this one)
 
-    // Lazy: charge ending at departure (last N slots before departure)
-    const lazyStart = depIdx - actualSlotsNeeded
-    for (let i = Math.max(arrIdx, lazyStart); i < depIdx && i < slots.length; i++) {
-      lazyKw[i] += cohort.chargePowerKw * cohort.weight * fleetSize
+      // UPPER: car can charge if it still has energy need remaining,
+      // assuming it has deferred charging as much as possible up to now.
+      // If it deferred, it charged 0 until the point where it must start.
+      // The latest it can start = depIdx - slotsNeeded.
+      // So at slot t, if t < latestStart, it hasn't charged yet → full need remains → CAN charge.
+      // If t >= latestStart, it has been charging → remaining = energyNeeded - (t - latestStart) * kwhPerSlot
+      const latestStart = depIdx - slotsNeeded
+      let remainingForUpper: number
+      if (t < latestStart) {
+        remainingForUpper = energyNeededKwh // hasn't started yet, full need available
+      } else {
+        remainingForUpper = Math.max(0, energyNeededKwh - (t - latestStart) * kwhPerSlot)
+      }
+      if (remainingForUpper > 0) {
+        upperKw[t] += contribution
+      }
+
+      // LOWER: car must charge now if skipping this slot means it can't
+      // finish by departure. Remaining energy if it charged as much as possible
+      // before now = energyNeeded - slotsElapsed * kwhPerSlot (greedy up to now).
+      // But lower bound is about: given optimal deferral, what's mandatory?
+      // Must charge at t if: energyNeeded > (slotsRemaining - 1) * kwhPerSlot
+      // i.e., even using all future slots, we still need this one.
+      if (energyNeededKwh > (slotsRemaining - 1) * kwhPerSlot) {
+        lowerKw[t] += contribution
+      }
     }
   }
 
@@ -170,8 +205,8 @@ export function computeFlexBand(
     hour: s.hour,
     minute: s.minute,
     date: s.date,
-    greedyKw: Math.round(greedyKw[i] * 10) / 10,
-    lazyKw: Math.round(Math.min(lazyKw[i], greedyKw[i]) * 10) / 10,
+    greedyKw: Math.round(upperKw[i] * 10) / 10,
+    lazyKw: Math.round(Math.min(lowerKw[i], upperKw[i]) * 10) / 10,
   }))
 }
 
