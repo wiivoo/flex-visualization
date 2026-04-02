@@ -902,7 +902,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     } else if (isDragging === 'fleetDeparture') {
       const fleetDepDate = isThreeDay ? date4 : date2
-      if (point.date === fleetDepDate && point.hour >= 4 && point.hour <= 10) {
+      const depMin = isFullDay ? 14 : 4
+      const depMax = isFullDay ? 23 : 10
+      if (point.date === fleetDepDate && point.hour >= depMin && point.hour <= depMax) {
         setFleetConfig(c => ({
           ...c,
           departureAvg: point.hour,
@@ -1460,6 +1462,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               <FleetConfigPanel
                 config={fleetConfig}
                 onChange={setFleetConfig}
+                mode={scenario.chargingMode}
               />
             </div>
           ) : (

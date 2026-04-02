@@ -6,6 +6,7 @@ import type { FleetConfig, SpreadMode } from '@/lib/v2-config'
 interface Props {
   config: FleetConfig
   onChange: (config: FleetConfig) => void
+  mode?: 'overnight' | 'fullday' | 'threeday'
 }
 
 const SLIDER_CLASS = "w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
@@ -114,8 +115,16 @@ function RangeSlider({
 
 /* ── Main Panel ── */
 
-export function FleetConfigPanel({ config, onChange }: Props) {
+export function FleetConfigPanel({ config, onChange, mode = 'overnight' }: Props) {
   const spread = config.spreadMode
+  // Departure slider adapts to mode:
+  // 12h overnight: 5–9h (next morning)
+  // 24h fullday: 14–23h (next afternoon/evening — same as arrival range)
+  // 72h threeday: 5–9h (morning of day 4)
+  const isFullDay = mode === 'fullday'
+  const depSliderMin = isFullDay ? 14 : 5
+  const depSliderMax = isFullDay ? 23 : 9
+  const depLabel = isFullDay ? 'Departure Time (day+1)' : mode === 'threeday' ? 'Departure Time (day+3)' : 'Departure Time (day+1)'
 
   return (
     <div className="space-y-4">
@@ -172,11 +181,13 @@ export function FleetConfigPanel({ config, onChange }: Props) {
         onMaxChange={(v) => onChange({ ...config, arrivalMax: v })}
       />
 
-      {/* Departure Time */}
+      {/* Departure Time — adapts range to charging mode */}
       <RangeSlider
-        label="Departure Time" unit=":00"
-        avg={config.departureAvg} min={config.departureMin} max={config.departureMax}
-        sliderMin={5} sliderMax={9}
+        label={depLabel} unit=":00"
+        avg={Math.max(depSliderMin, Math.min(depSliderMax, config.departureAvg))}
+        min={Math.max(depSliderMin, Math.min(depSliderMax, config.departureMin))}
+        max={Math.max(depSliderMin, Math.min(depSliderMax, config.departureMax))}
+        sliderMin={depSliderMin} sliderMax={depSliderMax}
         onAvgChange={(v) => onChange({ ...config, departureAvg: v, departureMin: Math.min(config.departureMin, v), departureMax: Math.max(config.departureMax, v) })}
         onMinChange={(v) => onChange({ ...config, departureMin: v })}
         onMaxChange={(v) => onChange({ ...config, departureMax: v })}
