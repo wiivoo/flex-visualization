@@ -214,7 +214,7 @@ export function FleetConfigPanel({ config, onChange }: Props) {
 
       {/* Fleet size note */}
       <p className="text-[9px] text-gray-400 text-center pt-1 border-t border-gray-100">
-        All values normalized for 1,000 EVs
+        Fleet of 1,000 EVs · ~{Math.round(1000 * Math.min(1, (config.plugInsPerWeek ?? 3) / 7))} charging per night · per-EV savings
       </p>
     </div>
   )
