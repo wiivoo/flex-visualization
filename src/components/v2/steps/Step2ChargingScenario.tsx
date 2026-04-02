@@ -2884,6 +2884,32 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         // Determine which mode is currently active for highlight
         const activeMode = scenario.chargingMode === 'threeday' ? '3day' : scenario.chargingMode === 'fullday' ? 'fullday' : 'overnight'
 
+        // Fleet optimization per mode — so each card shows its own result
+        type FleetModeResult = { savingsCtKwh: number; savingsEur: number; baselineAvgCt: number; optimizedAvgCt: number; totalKwh: number } | null
+        const fleetPerMode: Record<string, FleetModeResult> = { overnight: null, fullday: null, '3day': null }
+        if (showFleet) {
+          const modes: { key: string; win: HourlyPrice[]; mode: 'overnight' | 'fullday' | 'threeday' }[] = [
+            { key: 'overnight', win: overnightSpreadWin, mode: 'overnight' },
+            { key: 'fullday', win: fullDaySpreadWin, mode: 'fullday' },
+            ...(threeDaySpreadWin.length > 0 ? [{ key: '3day', win: threeDaySpreadWin, mode: 'threeday' as const }] : []),
+          ]
+          for (const { key, win, mode: m } of modes) {
+            if (win.length < 4) continue
+            const derived = deriveFleetDistributions(fleetConfig, m)
+            const band = computeFlexBand(derived, win, useQH, m)
+            const totalE = computeFleetEnergyKwh(derived)
+            const opt = optimizeFleetSchedule(band, win, totalE, useQH)
+            const savCt = Math.abs(opt.baselineAvgCtKwh - opt.optimizedAvgCtKwh)
+            fleetPerMode[key] = {
+              savingsCtKwh: Math.round(savCt * 100) / 100,
+              savingsEur: Math.abs(opt.savingsEur) / 1000,
+              baselineAvgCt: opt.baselineAvgCtKwh,
+              optimizedAvgCt: opt.optimizedAvgCtKwh,
+              totalKwh: opt.totalEnergyKwh / 1000,
+            }
+          }
+        }
+
         type SpreadRow = {
           key: string
           label: string
@@ -2987,23 +3013,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </p>
                   </div>
                   {/* Selected day — Fleet / V2G / V1G savings */}
-                  {showFleet && row.key === activeMode && fleetOptResult ? (() => {
-                    const fleetSavingsCtKwh = Math.abs(fleetOptResult.baselineAvgCtKwh - fleetOptResult.optimizedAvgCtKwh)
-                    const fleetSavingsEur = Math.abs(fleetOptResult.savingsEur)
-                    const perEvSavingsEur = fleetSavingsEur / 1000
-                    const perEvKwh = fleetOptResult.totalEnergyKwh / 1000
+                  {showFleet && fleetPerMode[row.key] ? (() => {
+                    const fm = fleetPerMode[row.key]!
                     return (
                     <div className="mb-2">
                       <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {fleetSavingsCtKwh.toFixed(2)}
+                        {fm.savingsCtKwh.toFixed(2)}
                       </span>
                       <span className="text-[10px] text-gray-400 ml-1">ct/kWh cheaper</span>
                       <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        = {(perEvSavingsEur * 100).toFixed(1)} ct saved per EV on {perEvKwh.toFixed(1)} kWh session
-                      </p>
-                      <p className="text-[8px] text-gray-400 mt-0.5">
-                        Fleet total: {fleetSavingsEur.toFixed(2)} EUR · 1,000 EVs
+                        = {(fm.savingsEur * 100).toFixed(1)} ct saved per EV on {fm.totalKwh.toFixed(1)} kWh session
                       </p>
                     </div>
                     )
