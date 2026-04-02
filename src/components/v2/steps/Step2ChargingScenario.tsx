@@ -485,7 +485,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }))
     if (windowPrices.length === 0) return { flexBand: null, fleetOptResult: null }
 
-    const derived = deriveFleetDistributions(fleetConfig)
+    const derived = deriveFleetDistributions(fleetConfig, scenario.chargingMode)
     const band = computeFlexBand(derived, windowPrices, isQH, scenario.chargingMode)
     const totalEnergy = computeFleetEnergyKwh(derived)
     const optResult = optimizeFleetSchedule(band, windowPrices, totalEnergy, isQH)
@@ -754,7 +754,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
-    const derivedRoll = deriveFleetDistributions(deferredFleetConfig)
+    const derivedRoll = deriveFleetDistributions(deferredFleetConfig, fleetMode)
     const totalEnergy = computeFleetEnergyKwh(derivedRoll)
     let wdS = 0, wdD = 0, weS = 0, weD = 0
     let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0

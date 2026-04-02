@@ -47,9 +47,14 @@ export function generateDistribution(
 }
 
 /** Derive full FleetConfig distributions from the simplified avg/min/max params */
-export function deriveFleetDistributions(config: FleetConfig): FleetConfig {
+export function deriveFleetDistributions(config: FleetConfig, mode: 'overnight' | 'fullday' | 'threeday' = 'overnight'): FleetConfig {
   const arrivalHours = [14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-  const departureHours = [5, 6, 7, 8, 9]
+  // 24h mode: cars depart ~same time next day (use arrival hours as departure hours)
+  // overnight/72h: cars depart in the morning
+  const departureHours = mode === 'fullday' ? arrivalHours : [5, 6, 7, 8, 9]
+  const depAvg = mode === 'fullday' ? config.arrivalAvg : config.departureAvg
+  const depMin = mode === 'fullday' ? config.arrivalMin : config.departureMin
+  const depMax = mode === 'fullday' ? config.arrivalMax : config.departureMax
   // Derive charge need per session from mileage + frequency (same formula as single-car)
   const sessionsPerYear = Math.max(1, (config.plugInsPerWeek ?? 3)) * 52
   const kmPerSession = (config.yearlyMileageKm ?? 12000) / sessionsPerYear
@@ -60,7 +65,7 @@ export function deriveFleetDistributions(config: FleetConfig): FleetConfig {
   return {
     ...config,
     arrivalDist: generateDistribution(config.arrivalMin, config.arrivalMax, config.arrivalAvg, config.spreadMode, arrivalHours),
-    departureDist: generateDistribution(config.departureMin, config.departureMax, config.departureAvg, config.spreadMode, departureHours),
+    departureDist: generateDistribution(depMin, depMax, depAvg, config.spreadMode, departureHours),
     socMin: Math.max(3, avgChargeKwh - chargeSpread),
     socMax: Math.min(50, avgChargeKwh + chargeSpread),
   }
