@@ -50,7 +50,7 @@ function TriangleMarker({
     <div
       ref={containerRef}
       className="absolute touch-none cursor-ew-resize"
-      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: 2, width: 10, height: 10 }}
+      style={{ left: `calc(8px + ${frac} * (100% - 16px) - 5px)`, top: 0, width: 10, height: 8, zIndex: 1 }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
@@ -87,19 +87,19 @@ function RangeSlider({
           {avg}<span className="text-xs font-normal text-gray-400 ml-1">{unit}</span>
         </span>
       </div>
-      <div className="relative pt-3">
-        {/* Triangle markers above the slider */}
+      <div className="relative pt-[10px]">
+        {/* Triangle markers just above the slider */}
         <TriangleMarker value={min} sliderMin={sliderMin} sliderMax={sliderMax}
           onChange={(v) => onMinChange(Math.min(v, avg))} side="min" />
         <TriangleMarker value={max} sliderMin={sliderMin} sliderMax={sliderMax}
           onChange={(v) => onMaxChange(Math.max(v, avg))} side="max" />
-        {/* Range highlight bar between min and max — matches slider thumb offset */}
-        <div className="absolute top-[17px] h-1.5 bg-gray-300/30 rounded-full pointer-events-none"
+        {/* Range highlight bar between min and max */}
+        <div className="absolute top-[14px] h-1.5 bg-gray-300/30 rounded-full pointer-events-none"
           style={{ left: `calc(8px + ${fracMin} * (100% - 16px))`, width: `calc(${fracMax - fracMin} * (100% - 16px))` }} />
-        {/* Main avg slider */}
+        {/* Main avg slider — z-10 so thumb is above triangles */}
         <input type="range" min={sliderMin} max={sliderMax} step={step ?? 1}
           value={avg} onChange={(e) => onAvgChange(Number(e.target.value))}
-          className={SLIDER_CLASS} />
+          className={`${SLIDER_CLASS} relative z-10`} />
       </div>
       <div className="flex justify-between text-[10px] text-gray-400 -mt-1">
         <span>{sliderMin}{unit === ':00' ? ':00' : ` ${unit}`}</span>
