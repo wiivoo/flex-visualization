@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -7,6 +8,17 @@ import {
 } from 'recharts'
 
 const BAR_COLOR = '#10B981'  // emerald-500
+
+export interface DaySavingsEntry {
+  date: string
+  dow: number
+  dowLabel: string
+  savingsEur: number
+  dailySpreadCt: number
+  windowSpreadCt: number
+  savingsCtKwh: number
+  isSelected: boolean
+}
 
 export interface MonthlySavingsEntry {
   month: string
@@ -20,6 +32,7 @@ export interface MonthlySavingsEntry {
   avgDailySpreadCt?: number    // avg daily max-min spread (full 24h)
   avgWindowSpreadCt?: number   // avg daily spread within charging window
   avgSavingsCtKwh?: number     // avg monetizable savings (ct/kWh)
+  dayDetails?: DaySavingsEntry[]
 }
 
 interface Props {
@@ -34,6 +47,7 @@ interface Props {
   chargingMode?: 'overnight' | 'fullday' | 'threeday'
   isV2G?: boolean
   v2gHasNetCharge?: boolean
+  plugInDays?: number[]
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -45,8 +59,11 @@ const MODE_LABELS: Record<string, string> = {
 export function MonthlySavingsCard({
   monthlySavingsData, weeklyPlugIns, energyPerSession,
   sessionsPerYear, rollingAvgSavings, monthlySavings, avgDailyEur, selectedDate,
-  chargingMode = 'overnight', isV2G = false, v2gHasNetCharge = false,
+  chargingMode = 'overnight', isV2G = false, v2gHasNetCharge = false, plugInDays,
 }: Props) {
+  const [viewMode, setViewMode] = useState<'month' | 'day'>('month')
+  const [dayViewMonth, setDayViewMonth] = useState<string | undefined>(undefined)
+
   const selectedMonth = selectedDate ? selectedDate.slice(0, 7) : undefined
   const filteredMonths = selectedMonth
     ? monthlySavingsData.filter(d => d.month <= selectedMonth)
@@ -60,17 +77,92 @@ export function MonthlySavingsCard({
 
   const totalSum = last12c[last12c.length - 1]?.cumulative ?? 0
 
+  // Day view: find the active month's day details
+  const activeMonth = dayViewMonth ?? selectedMonth
+  const dayViewData = useMemo(() => {
+    if (viewMode !== 'day') return null
+    const entry = monthlySavingsData.find(d => d.month === activeMonth)
+    return entry?.dayDetails ?? null
+  }, [viewMode, activeMonth, monthlySavingsData])
+
+  // Available months for day view navigation
+  const availableMonths = useMemo(() =>
+    last12.map(d => d.month), [last12])
+
+  const navigateMonth = (dir: -1 | 1) => {
+    const idx = availableMonths.indexOf(activeMonth ?? '')
+    const next = idx + dir
+    if (next >= 0 && next < availableMonths.length) {
+      setDayViewMonth(availableMonths[next])
+    }
+  }
+
+  const dayViewTotal = dayViewData?.filter(d => d.isSelected).reduce((s, d) => s + d.savingsEur, 0) ?? 0
+
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80 flex flex-col">
       <CardHeader className="pb-3 border-b border-gray-100">
-        <CardTitle className="text-base font-bold text-[#313131]">
-          {isV2G ? (v2gHasNetCharge ? 'Monthly V2G Benefit' : 'Monthly Arbitrage') : 'Monthly Savings'} — Rolling 365-Day Average
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base font-bold text-[#313131]">
+            {isV2G ? (v2gHasNetCharge ? 'Monthly V2G Benefit' : 'Monthly Arbitrage') : 'Monthly Savings'} — Rolling 365-Day Average
+          </CardTitle>
+          <div className="flex gap-0.5 bg-gray-100 rounded p-0.5">
+            <button
+              onClick={() => setViewMode('month')}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${viewMode === 'month' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+            >Month</button>
+            <button
+              onClick={() => { setViewMode('day'); setDayViewMonth(selectedMonth) }}
+              className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${viewMode === 'day' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+            >Day</button>
+          </div>
+        </div>
         <p className="text-[11px] text-gray-500 mt-1">
           {weeklyPlugIns}x/week · {energyPerSession} kWh/session · {isV2G ? (v2gHasNetCharge ? 'load shifting + arbitrage' : 'pure arbitrage') : (MODE_LABELS[chargingMode] || 'day-ahead spot shifting')}
         </p>
       </CardHeader>
       <CardContent className="pt-5 space-y-4 flex-1 flex flex-col">
+        {viewMode === 'day' && dayViewData ? (
+          <>
+            {/* Day view header with month nav */}
+            <div className="flex items-center justify-between">
+              <button onClick={() => navigateMonth(-1)} className="text-gray-400 hover:text-gray-600 text-sm px-1" disabled={availableMonths.indexOf(activeMonth ?? '') <= 0}>&#9664;</button>
+              <span className="text-xs font-semibold text-gray-600">{activeMonth}</span>
+              <button onClick={() => navigateMonth(1)} className="text-gray-400 hover:text-gray-600 text-sm px-1" disabled={availableMonths.indexOf(activeMonth ?? '') >= availableMonths.length - 1}>&#9654;</button>
+            </div>
+            <div className="overflow-y-auto max-h-[320px] -mx-1">
+              <table className="w-full text-[10px] tabular-nums">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="text-gray-400 text-left">
+                    <th className="font-semibold pb-1 pl-1 pr-2">Date</th>
+                    <th className="font-semibold pb-1 pr-2">Day</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">24h Spread</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">Win. Spread</th>
+                    <th className="font-semibold pb-1 text-right pr-1">Savings</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayViewData.map(d => (
+                    <tr key={d.date} className={`border-t border-gray-50 ${d.isSelected ? '' : 'opacity-30'}`}>
+                      <td className="py-0.5 pl-1 pr-2 text-gray-500 font-mono">{d.date.slice(5)}</td>
+                      <td className="py-0.5 pr-2 text-gray-500">{d.dowLabel}</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.dailySpreadCt.toFixed(1)} ct</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.windowSpreadCt.toFixed(1)} ct</td>
+                      <td className={`py-0.5 text-right pr-1 font-semibold ${d.savingsEur >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{d.savingsEur.toFixed(2)} EUR</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t-2 border-gray-200">
+                  <tr className="font-semibold">
+                    <td colSpan={4} className="py-1 pl-1 text-gray-600">Total ({dayViewData.filter(d => d.isSelected).length} sessions)</td>
+                    <td className="py-1 text-right pr-1 text-emerald-700">{dayViewTotal.toFixed(2)} EUR</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        ) : (
+        <>
         <div className="flex-1 min-h-[180px]">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={last12c} margin={{ top: 12, right: 48, bottom: 2, left: 5 }}>
@@ -177,6 +269,8 @@ export function MonthlySavingsCard({
               </table>
             </div>
           </div>
+        )}
+        </>
         )}
 
       </CardContent>

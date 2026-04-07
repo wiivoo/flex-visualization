@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
 import { runOptimization, type OptimizeResult } from '@/lib/optimizer'
-import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, type ChargingScenario } from '@/lib/v2-config'
+import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, splitPlugInDays, type ChargingScenario, type DayOfWeek } from '@/lib/v2-config'
 import { Step2ChargingScenario } from '@/components/v2/steps/Step2ChargingScenario'
 import { TutorialOverlay } from '@/components/v2/TutorialOverlay'
 import { ExportDialog } from '@/components/v2/ExportDialog'
@@ -30,11 +30,23 @@ function parseScenario(params: URLSearchParams): ChargingScenario {
     weekdayPlugIns = Math.min(old, 5)
     weekendPlugIns = Math.max(0, old - 5)
   }
+  // Parse explicit day selection (e.g. days=1,3,5 for Mon,Wed,Fri)
+  let plugInDays: DayOfWeek[] | undefined = undefined
+  if (params.has('days')) {
+    const parsed = params.get('days')!.split(',').map(Number).filter(n => n >= 0 && n <= 6) as DayOfWeek[]
+    if (parsed.length > 0) {
+      plugInDays = parsed
+      const split = splitPlugInDays(parsed)
+      weekdayPlugIns = split.weekdayPlugIns
+      weekendPlugIns = split.weekendPlugIns
+    }
+  }
   return {
     ...DEFAULT_SCENARIO,
     yearlyMileageKm: get('mileage', DEFAULT_SCENARIO.yearlyMileageKm),
     weekdayPlugIns,
     weekendPlugIns,
+    plugInDays,
     plugInTime:      get('plugin_time', DEFAULT_SCENARIO.plugInTime),
     departureTime:   get('departure', DEFAULT_SCENARIO.departureTime),
     chargePowerKw:   get('power', DEFAULT_SCENARIO.chargePowerKw),
@@ -115,6 +127,7 @@ function V2Inner() {
     p.set('departure',   String(scenario.departureTime))
     if (scenario.chargePowerKw !== 7) p.set('power', String(scenario.chargePowerKw))
     if (scenario.chargingMode !== 'overnight') p.set('mode', scenario.chargingMode)
+    if (scenario.plugInDays) p.set('days', [...scenario.plugInDays].sort((a, b) => a - b).join(','))
     router.replace(`/v2?${p.toString()}`, { scroll: false })
   }, [scenario, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
 

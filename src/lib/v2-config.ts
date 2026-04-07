@@ -30,6 +30,7 @@ export interface ChargingScenario {
   weekendPlugIns: number   // 0-2 (Sat-Sun)
   chargePowerKw: number    // 7 or 11
   chargingMode: 'overnight' | 'fullday' | 'threeday'
+  plugInDays?: DayOfWeek[]  // explicit day selection (when undefined, derived from weekday/weekendPlugIns)
   gridMode: 'v1g' | 'v2g'  // V1G = smart charging only, V2G = bidirectional
   // V2G-specific settings (only used when gridMode === 'v2g')
   v2gStartSoc: number          // percent 10-90 — battery level at plug-in
@@ -41,9 +42,48 @@ export interface ChargingScenario {
   v2gBatteryKwh: number        // 20-120 kWh in 10 kWh steps (V2G battery size)
 }
 
+/** Day of week using JS getUTCDay convention: 0=Sun, 1=Mon, ..., 6=Sat */
+export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6
+
+/** Default day selections for a given total weekly plug-in count (1–7) */
+export const DEFAULT_PLUGIN_DAYS: Record<number, DayOfWeek[]> = {
+  1: [1],                         // Mon
+  2: [1, 3],                      // Mon, Wed
+  3: [1, 3, 5],                   // Mon, Wed, Fri
+  4: [0, 1, 3, 5],                // Sun, Mon, Wed, Fri
+  5: [0, 1, 2, 3, 5],             // Sun, Mon, Tue, Wed, Fri
+  6: [0, 1, 2, 3, 4, 5],          // Sun, Mon–Fri
+  7: [0, 1, 2, 3, 4, 5, 6],       // All
+}
+
+/** Display order for day-of-week: Mon→Sun */
+export const DOW_DISPLAY_ORDER: DayOfWeek[] = [1, 2, 3, 4, 5, 6, 0]
+export const DOW_LABELS: Record<DayOfWeek, string> = { 0: 'Sun', 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat' }
+
 /** Total weekly plug-ins (weekday + weekend) */
 export function totalWeeklyPlugIns(s: ChargingScenario): number {
   return s.weekdayPlugIns + s.weekendPlugIns
+}
+
+/** Derive default plugInDays from weekday/weekend counts */
+export function derivePlugInDays(weekdayPlugIns: number, weekendPlugIns: number): DayOfWeek[] {
+  const total = Math.min(7, Math.max(1, weekdayPlugIns + weekendPlugIns))
+  return DEFAULT_PLUGIN_DAYS[total] ?? DEFAULT_PLUGIN_DAYS[2]
+}
+
+/** Get effective plugInDays — explicit if set, otherwise derived from counts */
+export function effectivePlugInDays(s: ChargingScenario): DayOfWeek[] {
+  return s.plugInDays ?? derivePlugInDays(s.weekdayPlugIns, s.weekendPlugIns)
+}
+
+/** Reverse: given selected days, compute weekday/weekend counts */
+export function splitPlugInDays(days: DayOfWeek[]): { weekdayPlugIns: number; weekendPlugIns: number } {
+  let wd = 0, we = 0
+  for (const d of days) {
+    if (d === 0 || d === 6) we++
+    else wd++
+  }
+  return { weekdayPlugIns: wd, weekendPlugIns: we }
 }
 
 export const DEFAULT_SCENARIO: ChargingScenario = {

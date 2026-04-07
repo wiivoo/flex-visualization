@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } f
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
-import { deriveEnergyPerSession, totalWeeklyPlugIns, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats } from '@/lib/v2-config'
+import { deriveEnergyPerSession, totalWeeklyPlugIns, effectivePlugInDays, splitPlugInDays, DEFAULT_PLUGIN_DAYS, DOW_DISPLAY_ORDER, DOW_LABELS, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats, type DayOfWeek } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr, computeV2gWindowSavings, type V2gResult } from '@/lib/charging-helpers'
 import { VEHICLE_PRESETS, ENABLE_V2G } from '@/lib/v2-config'
@@ -104,6 +104,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
   const [showRenewable, setShowRenewable] = useState(false)
   const [showIntraday, setShowIntraday] = useState(false)
+  // showDayPicker removed — always visible
   const [renewableData, setRenewableData] = useState<Map<string, number>>(new Map())
   // Fleet flex band state (PROJ-35/36/37)
   const [showFleet, setShowFleet] = useState(false)
@@ -204,6 +205,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const deferredWeekendPlugIns = useDeferredValue(scenario.weekendPlugIns)
   const deferredWeeklyPlugIns = useDeferredValue(weeklyPlugIns)
   const deferredEnergyPerSession = useDeferredValue(energyPerSession)
+  // Memoize plugInDays to avoid new array ref every render (would break useMemo deps)
+  const plugInDays = useMemo(() => effectivePlugInDays(scenario), [scenario.plugInDays, scenario.weekdayPlugIns, scenario.weekendPlugIns])
+  const deferredPlugInDays = useDeferredValue(plugInDays)
+  // Stable key for useMemo dependency arrays (array identity changes even when contents are same)
+  const plugInDaysKey = deferredPlugInDays.join(',')
 
 
   // ── Active price source for the chart (hourly or quarter-hourly) ──
@@ -596,7 +602,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
-    let wdSavings = 0, wdDays = 0, weSavings = 0, weDays = 0
+    let matchingSavings = 0, matchingCount = 0
     const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
     for (const [dDate, dPricesH] of byDate) {
       // Use QH data for this day if available, otherwise hourly
@@ -640,18 +646,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       for (const p of win) { if (p.priceCtKwh < spreadMin) spreadMin = p.priceCtKwh; if (p.priceCtKwh > spreadMax) spreadMax = p.priceCtKwh }
       const spreadCt = spreadMax - spreadMin
       perDay.set(dDate, { savingsEur: Math.round(savEur * 100) / 100, bAvg: Math.round(bAvg * 100) / 100, oAvg: Math.round(oAvg * 100) / 100, spreadCt: Math.round(spreadCt * 100) / 100, windowHours: win.length / slotsPerHour })
+      // Only count toward rolling average if this day-of-week is in plugInDays
       const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
-      const isWeekend = dow === 0 || dow === 6
-      if (isWeekend) { weSavings += savEur; weDays++ }
-      else { wdSavings += savEur; wdDays++ }
+      if (deferredPlugInDays.includes(dow as DayOfWeek)) { matchingSavings += savEur; matchingCount++ }
     }
-    const avgWdSavings = wdDays > 0 ? wdSavings / wdDays : 0
-    const avgWeSavings = weDays > 0 ? weSavings / weDays : 0
-    const weeklySavings = avgWdSavings * deferredWeekdayPlugIns + avgWeSavings * deferredWeekendPlugIns
+    const avgPerDay = matchingCount > 0 ? matchingSavings / matchingCount : 0
+    const weeklySavings = avgPerDay * deferredPlugInDays.length
     const mSav = Math.round(weeklySavings * (30.44 / 7) * 100) / 100
     const rollSav = Math.round(weeklySavings * 52 * 100) / 100
     return { rollingAvgSavings: rollSav, monthlySavings: mSav, dailySavingsMap: perDay }
-  }, [prices.hourly, prices.hourlyQH, isQH, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prices.hourly, prices.hourlyQH, isQH, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, plugInDaysKey, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
 
   // ── Per-mode rolling savings: 4 weeks + 52 weeks for overnight/fullday/threeday ──
   type ModeSavings = { ctKwh4w: number; eur4w: number; ctKwh52w: number; eur52w: number }
@@ -685,11 +690,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
-    function calcMode(buildWindow: (dDate: string, useQH: boolean, lookup: Map<string, HourlyPrice[]>) => HourlyPrice[] | null): { wdS4w: number; wdD4w: number; weS4w: number; weD4w: number; wdS52w: number; wdD52w: number; weS52w: number; weD52w: number } {
-      let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
-      let wdS52w = 0, wdD52w = 0, weS52w = 0, weD52w = 0
+    function calcMode(buildWindow: (dDate: string, useQH: boolean, lookup: Map<string, HourlyPrice[]>) => HourlyPrice[] | null): { s4w: number; d4w: number; s52w: number; d52w: number } {
+      let s4w = 0, d4w = 0, s52w = 0, d52w = 0
       for (const dDate of byDate.keys()) {
-        // Use QH data for this day if available, otherwise hourly
         const dPricesQH = byDateQH.get(dDate)
         const useQH = !!dPricesQH && dPricesQH.length > 0
         const lookup = useQH ? byDateQH : byDate
@@ -697,18 +700,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const minSlots = Math.ceil(deferredEnergyPerSession / kwhSlot)
         const win = buildWindow(dDate, useQH, lookup)
         if (!win || win.length < minSlots) continue
+        const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
+        if (!deferredPlugInDays.includes(dow as DayOfWeek)) continue
         let savEur: number
         if (isV2G) {
           savEur = computeV2gWindowSavings(win, batteryKwh, chargePowerKw, scenario.dischargePowerKw, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.roundTripEfficiency, scenario.degradationCtKwh, kwhSlot).profitEur
         } else {
           savEur = computeWindowSavings(win, deferredEnergyPerSession, kwhSlot, 1).savingsEur
         }
-        const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
-        const isWe = dow === 0 || dow === 6
-        if (isWe) { weS52w += savEur; weD52w++; if (dDate >= start4w) { weS4w += savEur; weD4w++ } }
-        else { wdS52w += savEur; wdD52w++; if (dDate >= start4w) { wdS4w += savEur; wdD4w++ } }
+        s52w += savEur; d52w++
+        if (dDate >= start4w) { s4w += savEur; d4w++ }
       }
-      return { wdS4w, wdD4w, weS4w, weD4w, wdS52w, wdD52w, weS52w, weD52w }
+      return { s4w, d4w, s52w, d52w }
     }
 
     // Each mode: use actual departure when active, canonical when inactive
@@ -746,30 +749,30 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       return all
     })
 
-    function toResult(r: { wdS4w: number; wdD4w: number; weS4w: number; weD4w: number; wdS52w: number; wdD52w: number; weS52w: number; weD52w: number }): ModeSavings {
-      // Weekday/weekend weighted average — same method as rollingAvgSavings
-      const avgWd4w = r.wdD4w > 0 ? r.wdS4w / r.wdD4w : 0
-      const avgWe4w = r.weD4w > 0 ? r.weS4w / r.weD4w : 0
-      const weekly4w = avgWd4w * deferredWeekdayPlugIns + avgWe4w * deferredWeekendPlugIns
-      const avgWd52w = r.wdD52w > 0 ? r.wdS52w / r.wdD52w : 0
-      const avgWe52w = r.weD52w > 0 ? r.weS52w / r.weD52w : 0
-      const weekly52w = avgWd52w * deferredWeekdayPlugIns + avgWe52w * deferredWeekendPlugIns
+    function toResult(r: { s4w: number; d4w: number; s52w: number; d52w: number }): ModeSavings {
+      // Average per matching day × days selected per week
+      const avg4w = r.d4w > 0 ? r.s4w / r.d4w : 0
+      const avg52w = r.d52w > 0 ? r.s52w / r.d52w : 0
+      const weekly4w = avg4w * deferredPlugInDays.length
+      const weekly52w = avg52w * deferredPlugInDays.length
       const eur4w = Math.round(weekly4w * 4 * 100) / 100
       const eur52w = Math.round(weekly52w * 52 * 100) / 100
-      // ct/kWh: weighted average savings per session ÷ energy
-      const avgSavPerSession4w = (r.wdD4w + r.weD4w) > 0 ? (r.wdS4w + r.weS4w) / (r.wdD4w + r.weD4w) : 0
-      const avgSavPerSession52w = (r.wdD52w + r.weD52w) > 0 ? (r.wdS52w + r.weS52w) / (r.wdD52w + r.weD52w) : 0
-      const ctKwh4w = deferredEnergyPerSession > 0 ? avgSavPerSession4w / deferredEnergyPerSession * 100 : 0
-      const ctKwh52w = deferredEnergyPerSession > 0 ? avgSavPerSession52w / deferredEnergyPerSession * 100 : 0
+      // ct/kWh: average savings per matching session ÷ energy
+      const ctKwh4w = deferredEnergyPerSession > 0 ? avg4w / deferredEnergyPerSession * 100 : 0
+      const ctKwh52w = deferredEnergyPerSession > 0 ? avg52w / deferredEnergyPerSession * 100 : 0
       return { ctKwh4w, eur4w, ctKwh52w, eur52w }
     }
 
     return { overnight: toResult(overnight), fullday: toResult(fullday), threeday: toResult(threeday) }
-  }, [prices.hourly, prices.hourlyQH, isQH, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prices.hourly, prices.hourlyQH, isQH, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, plugInDaysKey, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
 
   // ── Fleet rolling savings (PROJ-37): runs fleet optimizer per-day over 365 days ──
-  const { fleetRollingSavings, fleetMonthlySavings, fleetDailySavingsMap, fleetPerModeSavings } = useMemo(() => {
-    const empty = { fleetRollingSavings: 0, fleetMonthlySavings: 0, fleetDailySavingsMap: new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>(), fleetPerModeSavings: { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 } }
+  // Computes all three modes so inactive cards show stable fleet values
+  type FleetModeSavingsMap = Record<string, { ctKwh4w: number; eur4w: number; ctKwh52w: number; eur52w: number }>
+  const { fleetRollingSavings, fleetMonthlySavings, fleetDailySavingsMap, fleetPerModeSavings, fleetAllModeSavings } = useMemo(() => {
+    const zeroMs = { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }
+    const empty = { fleetRollingSavings: 0, fleetMonthlySavings: 0, fleetDailySavingsMap: new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>(), fleetPerModeSavings: zeroMs, fleetAllModeSavings: { overnight: zeroMs, fullday: zeroMs, threeday: zeroMs } as FleetModeSavingsMap }
     if (!showFleet || !date1 || prices.hourly.length === 0) return empty
 
     const endDate = date1
@@ -785,67 +788,79 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       }
     }
 
-    const fleetMode = scenario.chargingMode
-    const derivedRoll = deriveFleetDistributions(deferredFleetConfig, fleetMode)
-    const totalEnergy = computeFleetEnergyKwh(derivedRoll)
-    let wdS = 0, wdD = 0, weS = 0, weD = 0
-    let wdS4w = 0, wdD4w = 0, weS4w = 0, weD4w = 0
-    const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
+    const fleetStart = Math.min(deferredFleetConfig.arrivalMin, deferredFleetConfig.arrivalAvg, 14)
+    const fleetDepEnd = Math.max(deferredFleetConfig.departureMax, deferredFleetConfig.departureAvg + 1, 9)
 
-    for (const [dDate, dPrices] of byDate) {
-      const nd = nextDayStr(dDate)
-      const nPrices = byDate.get(nd)
-      if (!nPrices || nPrices.length === 0) continue
-      // Build window matching current charging mode — start at fleet's earliest arrival
-      const fleetStart = Math.min(deferredFleetConfig.arrivalMin, deferredFleetConfig.arrivalAvg, 14)
-      let win: HourlyPrice[]
-      if (fleetMode === 'threeday') {
-        const d3 = addDaysStr(dDate, 2), d4 = addDaysStr(dDate, 3)
-        const p3 = byDate.get(d3), p4 = byDate.get(d4)
-        win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices]
-        if (p3) win.push(...p3)
-        if (p4) win.push(...p4.filter(p => p.hour < 10))
-      } else if (fleetMode === 'fullday') {
-        win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices]
-      } else {
-        win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices.filter(p => p.hour < 10)]
+    // Run rolling savings for all three modes
+    const modes: ('overnight' | 'fullday' | 'threeday')[] = ['overnight', 'fullday', 'threeday']
+    const allModeResults: FleetModeSavingsMap = {}
+    let activePerDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
+    let activeAvgDaily = 0, activeAvgDaily4w = 0, activeTotalEnergy = 0
+
+    for (const mode of modes) {
+      const derived = deriveFleetDistributions(deferredFleetConfig, mode)
+      const totalEnergy = computeFleetEnergyKwh(derived)
+      let totalS = 0, totalD = 0, s4w = 0, d4w = 0
+      const perDay = new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>()
+
+      for (const [dDate, dPrices] of byDate) {
+        const nd = nextDayStr(dDate)
+        const nPrices = byDate.get(nd)
+        if (!nPrices || nPrices.length === 0) continue
+        let win: HourlyPrice[]
+        if (mode === 'threeday') {
+          const d3 = addDaysStr(dDate, 2), d4str = addDaysStr(dDate, 3)
+          const p3 = byDate.get(d3), p4 = byDate.get(d4str)
+          win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices]
+          if (p3) win.push(...p3)
+          if (p4) win.push(...p4.filter(p => p.hour < Math.min(fleetDepEnd, 10)))
+        } else if (mode === 'fullday') {
+          win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices]
+        } else {
+          win = [...dPrices.filter(p => p.hour >= fleetStart), ...nPrices.filter(p => p.hour < Math.min(fleetDepEnd, 10))]
+        }
+        if (win.length < 4) continue
+
+        const band = computeFlexBand(derived, win, false, mode)
+        if (band.length === 0) continue
+        const opt = optimizeFleetSchedule(band, win, totalEnergy, false)
+        const savEur = Math.abs(opt.savingsEur)
+
+        let spreadMin = Infinity, spreadMax = -Infinity
+        for (const p of win) { if (p.priceCtKwh < spreadMin) spreadMin = p.priceCtKwh; if (p.priceCtKwh > spreadMax) spreadMax = p.priceCtKwh }
+        perDay.set(dDate, { savingsEur: Math.round(savEur / 1000 * 100) / 100, bAvg: Math.round(opt.baselineAvgCtKwh * 100) / 100, oAvg: Math.round(opt.optimizedAvgCtKwh * 100) / 100, spreadCt: Math.round((spreadMax - spreadMin) * 100) / 100, windowHours: win.length })
+
+        totalS += savEur; totalD++
+        if (dDate >= start4w) { s4w += savEur; d4w++ }
       }
-      if (win.length < 4) continue
 
-      const band = computeFlexBand(derivedRoll, win, false, fleetMode)
-      if (band.length === 0) continue
-      const opt = optimizeFleetSchedule(band, win, totalEnergy, false)
-      const savEur = Math.abs(opt.savingsEur)
+      const avgDaily = totalD > 0 ? totalS / totalD : 0
+      const avgDaily4w = d4w > 0 ? s4w / d4w : 0
+      const perEvDaily = avgDaily / 1000
+      const perEvDaily4w = avgDaily4w / 1000
+      const perEvEnergy = totalEnergy / 1000
 
-      let spreadMin = Infinity, spreadMax = -Infinity
-      for (const p of win) { if (p.priceCtKwh < spreadMin) spreadMin = p.priceCtKwh; if (p.priceCtKwh > spreadMax) spreadMax = p.priceCtKwh }
-      perDay.set(dDate, { savingsEur: Math.round(savEur / 1000 * 100) / 100, bAvg: Math.round(opt.baselineAvgCtKwh * 100) / 100, oAvg: Math.round(opt.optimizedAvgCtKwh * 100) / 100, spreadCt: Math.round((spreadMax - spreadMin) * 100) / 100, windowHours: win.length })
-
-      const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
-      const isWe = dow === 0 || dow === 6
-      if (isWe) { weS += savEur; weD++; if (dDate >= start4w) { weS4w += savEur; weD4w++ } }
-      else { wdS += savEur; wdD++; if (dDate >= start4w) { wdS4w += savEur; wdD4w++ } }
-    }
-
-    // Fleet charges every day (7x/week), not based on single-EV plug-in frequency
-    const avgDaily = (wdD + weD) > 0 ? (wdS + weS) / (wdD + weD) : 0
-    const avgDaily4w = (wdD4w + weD4w) > 0 ? (wdS4w + weS4w) / (wdD4w + weD4w) : 0
-
-    // All EUR values stored as per-EV (÷1000) so call sites don't need to divide
-    const perEvDaily = avgDaily / 1000
-    const perEvDaily4w = avgDaily4w / 1000
-    const perEvEnergy = totalEnergy / 1000
-
-    return {
-      fleetRollingSavings: Math.round(perEvDaily * 365 * 100) / 100,  // per-EV annual
-      fleetMonthlySavings: Math.round(perEvDaily * 30.44 * 100) / 100,  // per-EV monthly
-      fleetDailySavingsMap: perDay,
-      fleetPerModeSavings: {
+      allModeResults[mode] = {
         ctKwh4w: perEvEnergy > 0 ? Math.round(Math.abs(perEvDaily4w) * 100 / perEvEnergy * 100) / 100 : 0,
         eur4w: Math.round(Math.abs(perEvDaily4w) * 28 * 100) / 100,
         ctKwh52w: perEvEnergy > 0 ? Math.round(Math.abs(perEvDaily) * 100 / perEvEnergy * 100) / 100 : 0,
         eur52w: Math.round(Math.abs(perEvDaily) * 365),
-      },
+      }
+
+      if (mode === scenario.chargingMode) {
+        activePerDay = perDay
+        activeAvgDaily = avgDaily / 1000
+        activeAvgDaily4w = avgDaily4w / 1000
+        activeTotalEnergy = totalEnergy
+      }
+    }
+
+    return {
+      fleetRollingSavings: Math.round(activeAvgDaily * 365 * 100) / 100,
+      fleetMonthlySavings: Math.round(activeAvgDaily * 30.44 * 100) / 100,
+      fleetDailySavingsMap: activePerDay,
+      fleetPerModeSavings: allModeResults[scenario.chargingMode] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 },
+      fleetAllModeSavings: allModeResults,
     }
   }, [showFleet, date1, prices.hourly, deferredFleetConfig, scenario.chargingMode])
 
@@ -1056,7 +1071,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         if (all.length === 0) continue
         const sorted = [...all].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
         const dow = new Date(dDate + 'T12:00:00Z').getUTCDay()
-        rawWindows.push({ date: dDate, month: dDate.slice(0, 7), prices: all, sorted, isProjected: all.some(p => p.isProjected), isWeekend: dow === 0 || dow === 6 })
+        rawWindows.push({ date: dDate, month: dDate.slice(0, 7), prices: all, sorted, isProjected: all.some(p => p.isProjected), isWeekend: dow === 0 || dow === 6, dow })
       }
     } else {
       rawWindows = buildOvernightWindows(prices.hourly, deferredPlugInTime, deferredDepartureTime)
@@ -1122,12 +1137,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   }, [onExportReady, overnightWindows, showFleet, fleetConfig, resolution])
 
   // ── Monthly savings breakdown for yearly chart ──
-  // Uses pre-computed savings from enriched overnightWindows (no redundant computation)
+  // Uses pre-computed savings from enriched overnightWindows — filters by plugInDays (actual calendar matching)
   const monthlySavingsData = useMemo(() => {
     if (overnightWindows.length === 0) return []
     const minSlots = Math.ceil(deferredEnergyPerSession / chargePowerKw)
-    const weekdayScale = deferredWeekdayPlugIns / 5
-    const weekendScale = deferredWeekendPlugIns / 2
     // Build per-date lookup for full-day spread (all 24h)
     const byDateH = new Map<string, HourlyPrice[]>()
     for (const p of prices.hourly) {
@@ -1136,49 +1149,59 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       byDateH.set(p.date, arr)
     }
 
-    const monthMap = new Map<string, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; wdLS: number; weLS: number; wdArb: number; weArb: number; totalDailySpread: number; totalWindowSpread: number; totalSavingsCtKwh: number; spreadDays: number }>()
+    type MonthAcc = { totalSavings: number; matchDays: number; totalLS: number; totalArb: number; totalDailySpread: number; totalWindowSpread: number; totalSavingsCtKwh: number; spreadDays: number; dayDetails: import('@/components/v2/MonthlySavingsCard').DaySavingsEntry[] }
+    const monthMap = new Map<string, MonthAcc>()
     for (const w of overnightWindows) {
       if (w.prices.length < minSlots) continue
       if (w.isProjected) continue
-      const entry = monthMap.get(w.month) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, wdLS: 0, weLS: 0, wdArb: 0, weArb: 0, totalDailySpread: 0, totalWindowSpread: 0, totalSavingsCtKwh: 0, spreadDays: 0 }
-      if (w.isWeekend) {
-        entry.weSavings += w.savingsEur; entry.weDays++
-        entry.weLS += w.v2gLS ?? 0; entry.weArb += w.v2gArb ?? 0
-      } else {
-        entry.wdSavings += w.savingsEur; entry.wdDays++
-        entry.wdLS += w.v2gLS ?? 0; entry.wdArb += w.v2gArb ?? 0
-      }
-      // Window spread (max-min within charging window)
+      const entry: MonthAcc = monthMap.get(w.month) || { totalSavings: 0, matchDays: 0, totalLS: 0, totalArb: 0, totalDailySpread: 0, totalWindowSpread: 0, totalSavingsCtKwh: 0, spreadDays: 0, dayDetails: [] }
+
+      // Compute per-day metrics
+      let windowSpreadCt = 0
       if (w.sorted.length >= 2) {
-        entry.totalWindowSpread += w.sorted[w.sorted.length - 1].priceCtKwh - w.sorted[0].priceCtKwh
+        windowSpreadCt = w.sorted[w.sorted.length - 1].priceCtKwh - w.sorted[0].priceCtKwh
       }
-      // Full 24h spread for the arrival date
+      let dailySpreadCt = 0
       const dayPrices = byDateH.get(w.date)
       if (dayPrices && dayPrices.length >= 2) {
         const prices24 = dayPrices.map(p => p.priceCtKwh)
-        entry.totalDailySpread += Math.max(...prices24) - Math.min(...prices24)
+        dailySpreadCt = Math.max(...prices24) - Math.min(...prices24)
       }
-      // Savings ct/kWh from baseline vs optimized avg
       const savCt = w.savingsEur > 0 && deferredEnergyPerSession > 0
         ? (w.savingsEur / deferredEnergyPerSession) * 100 : 0
-      entry.totalSavingsCtKwh += savCt
-      entry.spreadDays++
+      const isMatch = deferredPlugInDays.includes(w.dow as DayOfWeek)
+
+      // Store day detail for day view
+      entry.dayDetails.push({
+        date: w.date,
+        dow: w.dow,
+        dowLabel: DOW_LABELS[w.dow as DayOfWeek] ?? '?',
+        savingsEur: Math.round(w.savingsEur * 100) / 100,
+        dailySpreadCt: Math.round(dailySpreadCt * 10) / 10,
+        windowSpreadCt: Math.round(windowSpreadCt * 10) / 10,
+        savingsCtKwh: Math.round(savCt * 100) / 100,
+        isSelected: isMatch,
+      })
+
+      // Only count toward monthly total if this DOW is selected
+      if (isMatch) {
+        entry.totalSavings += w.savingsEur
+        entry.matchDays++
+        entry.totalLS += w.v2gLS ?? 0
+        entry.totalArb += w.v2gArb ?? 0
+        entry.totalDailySpread += dailySpreadCt
+        entry.totalWindowSpread += windowSpreadCt
+        entry.totalSavingsCtKwh += savCt
+        entry.spreadDays++
+      }
       monthMap.set(w.month, entry)
     }
     return [...monthMap.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([month, data]) => {
-        const wdAvg = data.wdDays > 0 ? data.wdSavings / data.wdDays : 0
-        const weAvg = data.weDays > 0 ? data.weSavings / data.weDays : 0
-        const wdMonthly = wdAvg * weekdayScale * 21.74
-        const weMonthly = weAvg * weekendScale * 8.70
-        const monthlySav = Math.round((wdMonthly + weMonthly) * 100) / 100
-        const wdLSAvg = data.wdDays > 0 ? data.wdLS / data.wdDays : 0
-        const weLSAvg = data.weDays > 0 ? data.weLS / data.weDays : 0
-        const wdArbAvg = data.wdDays > 0 ? data.wdArb / data.wdDays : 0
-        const weArbAvg = data.weDays > 0 ? data.weArb / data.weDays : 0
-        const lsMonthly = Math.round((wdLSAvg * weekdayScale * 21.74 + weLSAvg * weekendScale * 8.70) * 100) / 100
-        const arbMonthly = Math.round((wdArbAvg * weekdayScale * 21.74 + weArbAvg * weekendScale * 8.70) * 100) / 100
+        const monthlySav = Math.round(data.totalSavings * 100) / 100
+        const lsMonthly = Math.round(data.totalLS * 100) / 100
+        const arbMonthly = Math.round(data.totalArb * 100) / 100
         const [y, m] = month.split('-').map(Number)
         const label = new Date(y, m - 1, 15).toLocaleDateString('en-US', { month: 'short' })
         const mNum = m
@@ -1190,9 +1213,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           avgDailySpreadCt: data.spreadDays > 0 ? Math.round(data.totalDailySpread / data.spreadDays * 10) / 10 : undefined,
           avgWindowSpreadCt: data.spreadDays > 0 ? Math.round(data.totalWindowSpread / data.spreadDays * 10) / 10 : undefined,
           avgSavingsCtKwh: data.spreadDays > 0 ? Math.round(data.totalSavingsCtKwh / data.spreadDays * 100) / 100 : undefined,
+          dayDetails: data.dayDetails.sort((a, b) => a.date.localeCompare(b.date)),
         }
       })
-  }, [overnightWindows, prices.hourly, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, chargePowerKw, isV2G])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overnightWindows, prices.hourly, deferredEnergyPerSession, plugInDaysKey, chargePowerKw, isV2G])
 
   // ── Fleet monthly savings — derived from fleetDailySavingsMap ──
   const fleetMonthlySavingsData = useMemo(() => {
@@ -1333,25 +1358,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   }, [overnightWindows, chargePowerKw, isV2G])
 
   // ── Yearly savings data (2022-2030) ──
-  // Uses pre-computed savings from enriched windows (no redundant computation)
+  // Uses pre-computed savings from enriched windows — filters by plugInDays (actual calendar matching)
   const yearlySavingsData = useMemo((): YearlySavingsEntry[] => {
     if (overnightWindows.length === 0) return []
     const minSlots = Math.ceil(deferredEnergyPerSession / chargePowerKw)
-    const weekdayScale = deferredWeekdayPlugIns / 5
-    const weekendScale = deferredWeekendPlugIns / 2
 
-    const yearMap = new Map<number, { wdSavings: number; wdDays: number; weSavings: number; weDays: number; months: Set<string>; wdLS: number; weLS: number; wdArb: number; weArb: number }>()
+    const yearMap = new Map<number, { totalSavings: number; matchDays: number; months: Set<string>; totalLS: number; totalArb: number }>()
     for (const w of overnightWindows) {
       if (w.prices.length < minSlots) continue
+      if (!deferredPlugInDays.includes(w.dow as DayOfWeek)) continue
       const yr = parseInt(w.date.slice(0, 4))
-      const entry = yearMap.get(yr) || { wdSavings: 0, wdDays: 0, weSavings: 0, weDays: 0, months: new Set<string>(), wdLS: 0, weLS: 0, wdArb: 0, weArb: 0 }
-      if (w.isWeekend) {
-        entry.weSavings += w.savingsEur; entry.weDays++
-        entry.weLS += w.v2gLS ?? 0; entry.weArb += w.v2gArb ?? 0
-      } else {
-        entry.wdSavings += w.savingsEur; entry.wdDays++
-        entry.wdLS += w.v2gLS ?? 0; entry.wdArb += w.v2gArb ?? 0
-      }
+      const entry = yearMap.get(yr) || { totalSavings: 0, matchDays: 0, months: new Set<string>(), totalLS: 0, totalArb: 0 }
+      entry.totalSavings += w.savingsEur
+      entry.matchDays++
+      entry.totalLS += w.v2gLS ?? 0
+      entry.totalArb += w.v2gArb ?? 0
       entry.months.add(w.month)
       yearMap.set(yr, entry)
     }
@@ -1360,29 +1381,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       .sort(([a], [b]) => a - b)
       .map(([year, data]) => {
         const monthsCovered = data.months.size
-        const wdAvg = data.wdDays > 0 ? data.wdSavings / data.wdDays : 0
-        const weAvg = data.weDays > 0 ? data.weSavings / data.weDays : 0
-        const wdYearly = wdAvg * weekdayScale * 21.74 * monthsCovered
-        const weYearly = weAvg * weekendScale * 8.70 * monthsCovered
-        const yearlySav = Math.round((wdYearly + weYearly) * 100) / 100
-        const wdLSAvg = data.wdDays > 0 ? data.wdLS / data.wdDays : 0
-        const weLSAvg = data.weDays > 0 ? data.weLS / data.weDays : 0
-        const wdArbAvg = data.wdDays > 0 ? data.wdArb / data.wdDays : 0
-        const weArbAvg = data.weDays > 0 ? data.weArb / data.weDays : 0
-        const lsYearly = Math.round((wdLSAvg * weekdayScale * 21.74 + weLSAvg * weekendScale * 8.70) * monthsCovered * 100) / 100
-        const arbYearly = Math.round((wdArbAvg * weekdayScale * 21.74 + weArbAvg * weekendScale * 8.70) * monthsCovered * 100) / 100
-        const plugDaysPerMonth = (deferredWeeklyPlugIns / 7) * 30.44
+        const yearlySav = Math.round(data.totalSavings * 100) / 100
+        const lsYearly = Math.round(data.totalLS * 100) / 100
+        const arbYearly = Math.round(data.totalArb * 100) / 100
         return {
           year,
           savings: yearlySav,
-          sessionsCount: Math.round(plugDaysPerMonth * monthsCovered),
+          sessionsCount: data.matchDays,
           isProjected: false,
           isPartial: monthsCovered < 12,
           monthsCovered,
           ...(isV2G ? { loadShiftingEur: lsYearly, arbitrageEur: arbYearly } : {}),
         }
       })
-  }, [overnightWindows, deferredEnergyPerSession, deferredWeekdayPlugIns, deferredWeekendPlugIns, deferredWeeklyPlugIns, chargePowerKw, isV2G])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overnightWindows, deferredEnergyPerSession, plugInDaysKey, chargePowerKw, isV2G])
 
   // ── Active yearly data (fleet or single-EV) ──
   const activeYearlySavingsData = showFleet ? fleetYearlySavingsData : yearlySavingsData
@@ -1596,9 +1609,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 <input type="range" min={1} max={7} step={1} value={weeklyPlugIns}
                   onChange={(e) => {
                     const total = Number(e.target.value)
-                    const wd = Math.min(total, 5)
-                    const we = Math.max(0, total - 5)
-                    setScenario({ ...scenario, weekdayPlugIns: wd, weekendPlugIns: we })
+                    const days = DEFAULT_PLUGIN_DAYS[total]
+                    const split = splitPlugInDays(days)
+                    setScenario({ ...scenario, weekdayPlugIns: split.weekdayPlugIns, weekendPlugIns: split.weekendPlugIns, plugInDays: undefined })
                   }}
                   aria-label={`Weekly plug-ins: ${weeklyPlugIns}`}
                   className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
@@ -1606,6 +1619,29 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   <span>1x</span>
                   <span>7x</span>
                 </div>
+              </div>
+              {/* Day-of-week picker — always visible */}
+              <div className="flex gap-1 mt-1.5">
+                {DOW_DISPLAY_ORDER.map(dow => {
+                  const isActive = plugInDays.includes(dow)
+                  return (
+                    <button
+                      key={dow}
+                      onClick={() => {
+                        const current = [...plugInDays]
+                        const next = isActive ? current.filter(d => d !== dow) : [...current, dow].sort((a, b) => a - b)
+                        if (next.length === 0) return
+                        const split = splitPlugInDays(next as DayOfWeek[])
+                        const defaultForCount = DEFAULT_PLUGIN_DAYS[next.length]
+                        const isDefault = defaultForCount && next.length === defaultForCount.length && next.every(d => defaultForCount.includes(d as DayOfWeek))
+                        setScenario({ ...scenario, weekdayPlugIns: split.weekdayPlugIns, weekendPlugIns: split.weekendPlugIns, plugInDays: isDefault ? undefined : next as DayOfWeek[] })
+                      }}
+                      className={`flex-1 py-1 rounded text-[10px] font-medium transition-colors ${isActive ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}
+                    >
+                      {DOW_LABELS[dow].slice(0, 2)}
+                    </button>
+                  )
+                })}
               </div>
             </div>
             </>
@@ -3049,7 +3085,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           <div id="tour-scenario-cards" className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
             {rows.map(row => {
               const isActive = row.key === activeMode
-              const ms = showFleet && row.key === activeMode ? fleetPerModeSavings : (perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 })
+              const ms = showFleet ? (fleetAllModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }) : (perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 })
               return (
                 <div key={row.key}
                   onClick={() => {
@@ -3506,6 +3542,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 chargingMode={scenario.chargingMode}
                 isV2G={isV2G}
                 v2gHasNetCharge={v2gHasNetCharge}
+                plugInDays={showFleet ? undefined : plugInDays}
               />
               {activeYearlySavingsData.length > 0 && (
                 <YearlySavingsCard

@@ -3,14 +3,15 @@
  * Generates a multi-sheet .xlsx with scenario, statistics, monthly summary, and daily breakdown.
  * Only includes days the user would actually charge on (based on plug-in frequency).
  */
-import type { HourlyPrice, ChargingScenario } from '@/lib/v2-config'
-import { deriveEnergyPerSession, VEHICLE_PRESETS, AVG_CONSUMPTION_KWH_PER_100KM } from '@/lib/v2-config'
+import type { HourlyPrice, ChargingScenario, DayOfWeek } from '@/lib/v2-config'
+import { deriveEnergyPerSession, VEHICLE_PRESETS, AVG_CONSUMPTION_KWH_PER_100KM, effectivePlugInDays, DOW_LABELS } from '@/lib/v2-config'
 import * as XLSX from 'xlsx'
 
 export interface EnrichedWindow {
   date: string
   month: string
   isWeekend: boolean
+  dow: number
   prices: HourlyPrice[]
   sorted: HourlyPrice[]
   savingsEur: number
@@ -350,44 +351,31 @@ export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
     showFleet ? (fleetConfig.plugInsPerWeek ?? 3) : scenario.weekdayPlugIns,
     showFleet ? 0 : scenario.weekendPlugIns,
   )
+  const chargePowerKw = scenario.chargePowerKw ?? 7
+  const plugInDays = showFleet ? null : effectivePlugInDays(scenario)
+  const plugInDaysLabel = plugInDays ? plugInDays.map(d => DOW_LABELS[d as DayOfWeek]).join(', ') : 'All (fleet)'
 
   // Date cutoff
   const cutoff = new Date()
   cutoff.setUTCDate(cutoff.getUTCDate() - dateRange)
   const cutoffStr = cutoff.toISOString().slice(0, 10)
 
+  // Filter windows: within date range, non-projected, matching plug-in days
+  const allWindows = overnightWindows
+    .filter(w => !w.isProjected && w.date >= cutoffStr)
+    .sort((a, b) => a.date.localeCompare(b.date))
+  const chargingWindows = plugInDays
+    ? allWindows.filter(w => plugInDays.includes(w.dow as DayOfWeek))
+    : allWindows
+
   const wb = XLSX.utils.book_new()
   const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-  // ── Sheet 1: Raw Prices ──
-  let priceDataRowCount = 0
-  if (sheets.prices) {
-    const priceSource = resolution === '15min' && hourlyQH.length > 0 ? hourlyQH : hourlyPrices
-    const filteredPrices = priceSource
-      .filter(p => p.date >= cutoffStr && !p.isProjected)
-      .sort((a, b) => a.timestamp - b.timestamp)
-
-    const priceRows: (string | number)[][] = [
-      ['Date', 'Hour', 'Minute', 'Price (ct/kWh)', 'Price (EUR/MWh)'],
-    ]
-    for (const p of filteredPrices) {
-      priceRows.push([
-        p.date,
-        p.hour,
-        p.minute,
-        r2(p.priceCtKwh),
-        r2(p.priceEurMwh),
-      ])
-    }
-    priceDataRowCount = priceRows.length - 1 // excluding header
-    const wsPrices = XLSX.utils.aoa_to_sheet(priceRows)
-    wsPrices['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 16 }, { wch: 16 }]
-    XLSX.utils.book_append_sheet(wb, wsPrices, 'Prices')
-  }
-
-  // ── Sheet 2: Profile Settings ──
+  // ── Sheet 1: Profile Settings + Optimization Method ──
   if (sheets.profile) {
-    const profileRows: (string | number | string[])[][] = [
+    const profileRows: (string | number)[][] = [
+      ['EV Flex Charging — Export Profile'],
+      [],
       ['Parameter', 'Value'],
       ['Generated', new Date().toISOString().slice(0, 19)],
       ['Country', country],
@@ -415,180 +403,250 @@ export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
       )
     } else {
       const vehicle = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId)
+      const slotsNeeded = Math.ceil(energyPerSession / chargePowerKw)
       profileRows.push(
         ['Single EV Configuration', ''],
         ['Vehicle', `${vehicle?.label ?? scenario.vehicleId} (${vehicle?.battery_kwh ?? 60} kWh)`],
-        ['Charge Power (kW)', scenario.chargePowerKw],
+        ['Charge Power (kW)', chargePowerKw],
         ['Yearly Mileage (km)', scenario.yearlyMileageKm],
         ['Consumption (kWh/100km)', AVG_CONSUMPTION_KWH_PER_100KM],
         ['Energy per Session (kWh)', r1(energyPerSession)],
-        ['Weekday Plug-ins', scenario.weekdayPlugIns],
-        ['Weekend Plug-ins', scenario.weekendPlugIns],
+        ['Slots Needed per Session', slotsNeeded],
+        ['Plug-in Days', plugInDaysLabel],
         ['Plug-in Time', `${String(scenario.plugInTime).padStart(2, '0')}:00`],
         ['Departure Time', `${String(scenario.departureTime).padStart(2, '0')}:00`],
         ['Charging Mode', scenario.chargingMode],
         ['Start Level (%)', scenario.startLevel],
         ['Target Level (%)', scenario.targetLevel],
       )
+      profileRows.push(
+        [],
+        ['How Optimization Works', ''],
+        ['1. Charging Window', `All price slots from ${String(scenario.plugInTime).padStart(2, '0')}:00 to ${String(scenario.departureTime).padStart(2, '0')}:00 next day`],
+        ['2. Energy Needed', `${r1(energyPerSession)} kWh = ${slotsNeeded} slot(s) at ${chargePowerKw} kW`],
+        ['3. Baseline (ASAP)', `Charge in the first ${slotsNeeded} slots after plug-in (immediate charging)`],
+        ['4. Optimized (Smart)', `Charge in the ${slotsNeeded} cheapest slots within the window`],
+        ['5. Savings', 'Baseline avg price - Optimized avg price, multiplied by energy'],
+        ['', 'Savings (EUR) = (Baseline ct/kWh - Optimized ct/kWh) x Energy kWh / 100'],
+        [],
+        ['Sheet Guide', ''],
+        ['Prices', 'Raw day-ahead electricity prices (source: SMARD/ENTSO-E)'],
+        ['Slot Detail', 'Every price slot for every session — shows baseline vs optimized selection'],
+        ['Daily Sessions', 'One row per charging day with formulas referencing Profile'],
+        ['Monthly Summary', 'Aggregated monthly totals with SUMIF formulas referencing Daily Sessions'],
+      )
     }
 
-    const wsProfile = XLSX.utils.aoa_to_sheet(profileRows as (string | number)[][])
-    wsProfile['!cols'] = [{ wch: 26 }, { wch: 40 }]
+    const wsProfile = XLSX.utils.aoa_to_sheet(profileRows)
+    wsProfile['!cols'] = [{ wch: 30 }, { wch: 70 }]
     XLSX.utils.book_append_sheet(wb, wsProfile, 'Profile')
   }
 
-  // ── Sheet 3: Daily Sessions (with Excel formulas) ──
-  // Energy per session cell reference in Profile sheet
-  const energyCellRef = showFleet ? 'Profile!B20' : 'Profile!B13'
+  // ── Sheet 2: Raw Prices ──
+  if (sheets.prices) {
+    const priceSource = resolution === '15min' && hourlyQH.length > 0 ? hourlyQH : hourlyPrices
+    const filteredPrices = priceSource
+      .filter(p => p.date >= cutoffStr && !p.isProjected)
+      .sort((a, b) => a.timestamp - b.timestamp)
 
+    const priceRows: (string | number)[][] = [
+      ['Date', 'Hour', 'Minute', 'Price (ct/kWh)', 'Price (EUR/MWh)'],
+    ]
+    for (const p of filteredPrices) {
+      priceRows.push([p.date, p.hour, p.minute, r2(p.priceCtKwh), r2(p.priceEurMwh)])
+    }
+    const wsPrices = XLSX.utils.aoa_to_sheet(priceRows)
+    wsPrices['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 16 }, { wch: 16 }]
+    XLSX.utils.book_append_sheet(wb, wsPrices, 'Prices')
+  }
+
+  // ── Sheet 3: Slot Detail — per-session slot-by-slot transparency ──
+  // Shows every price slot in each charging window, marking baseline vs optimized
   if (sheets.daily) {
-    const windows = overnightWindows
-      .filter(w => !w.isProjected && w.date >= cutoffStr)
-      .sort((a, b) => a.date.localeCompare(b.date))
+    const slotsNeeded = Math.ceil(energyPerSession / chargePowerKw)
+    const detailRows: (string | number | boolean)[][] = [
+      ['Date', 'Day', 'Slot Time', 'Price (ct/kWh)', 'Price Rank', 'Baseline?', 'Optimized?',
+       'Baseline explains: first ' + slotsNeeded + ' slots chronologically',
+       'Optimized explains: cheapest ' + slotsNeeded + ' slots by price'],
+    ]
 
-    // Header row (row 1)
+    for (const w of chargingWindows) {
+      const dow = new Date(w.date + 'T12:00:00Z').getUTCDay()
+      // Rank prices from cheapest (1) to most expensive
+      const ranked = [...w.prices].sort((a, b) => a.priceCtKwh - b.priceCtKwh)
+      const rankMap = new Map<string, number>()
+      ranked.forEach((p, idx) => {
+        const key = `${p.date}_${p.hour}_${p.minute ?? 0}`
+        rankMap.set(key, idx + 1)
+      })
+
+      for (let slotIdx = 0; slotIdx < w.prices.length; slotIdx++) {
+        const p = w.prices[slotIdx]
+        const key = `${p.date}_${p.hour}_${p.minute ?? 0}`
+        const rank = rankMap.get(key) ?? 0
+        const isBaseline = slotIdx < slotsNeeded ? 'YES' : ''
+        const isOptimized = rank <= slotsNeeded ? 'YES' : ''
+        const timeLabel = `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`
+
+        detailRows.push([
+          slotIdx === 0 ? w.date : '',
+          slotIdx === 0 ? dowNames[dow] : '',
+          timeLabel,
+          r2(p.priceCtKwh),
+          rank,
+          isBaseline,
+          isOptimized,
+          '', '',
+        ])
+      }
+
+      // Summary row after each session
+      detailRows.push([
+        '', '', 'SUMMARY',
+        '',
+        '',
+        `Baseline avg: ${r2(w.bAvg)} ct/kWh`,
+        `Optimized avg: ${r2(w.oAvg)} ct/kWh`,
+        `Savings: ${r2(w.bAvg - w.oAvg)} ct/kWh`,
+        `= ${r4(w.savingsEur)} EUR`,
+      ])
+      detailRows.push([]) // blank row separator
+    }
+
+    const wsDetail = XLSX.utils.aoa_to_sheet(detailRows)
+    wsDetail['!cols'] = [
+      { wch: 12 }, { wch: 5 }, { wch: 10 }, { wch: 16 }, { wch: 10 },
+      { wch: 10 }, { wch: 12 }, { wch: 30 }, { wch: 20 },
+    ]
+    XLSX.utils.book_append_sheet(wb, wsDetail, 'Slot Detail')
+  }
+
+  // ── Sheet 4: Daily Sessions (with Excel formulas) ──
+  // Row in Profile sheet where "Energy per Session (kWh)" lives
+  // Fleet: row 22 (after fleet config block), Single EV: row 15 (after EV config block)
+  const energyCellRef = showFleet ? 'Profile!B22' : 'Profile!B15'
+  if (sheets.daily) {
     const dailyHeader = [
       'Date',           // A
       'Day',            // B
-      'Window Start',   // C
-      'Window End',     // D
-      'Baseline Avg (ct/kWh)',   // E
-      'Optimized Avg (ct/kWh)',  // F
-      'Savings (ct/kWh)',        // G — formula
-      'Savings (EUR)',           // H — formula
-      'Energy (kWh)',            // I — from Profile
-      'Window Spread (ct)',      // J
+      'Selected?',      // C — is this a plug-in day
+      'Window Start',   // D
+      'Window End',     // E
+      'Slots in Window', // F
+      'Baseline Avg (ct/kWh)',   // G
+      'Optimized Avg (ct/kWh)',  // H
+      'Savings (ct/kWh)',        // I — formula
+      'Savings (EUR)',           // J — formula
+      'Energy (kWh)',            // K
+      'Window Spread (ct)',      // L
+      'Min Price (ct/kWh)',      // M
+      'Max Price (ct/kWh)',      // N
     ]
 
     const dailyRows: (string | number)[][] = [dailyHeader]
 
-    for (let i = 0; i < windows.length; i++) {
-      const w = windows[i]
-      const d = new Date(w.date + 'T12:00:00Z')
-      const dow = d.getUTCDay()
-      const row = i + 2 // Excel row (1-indexed, header is row 1)
+    for (const w of allWindows) {
+      const dow = new Date(w.date + 'T12:00:00Z').getUTCDay()
+      const isSelected = !plugInDays || plugInDays.includes(dow as DayOfWeek)
+      const minP = w.sorted.length > 0 ? w.sorted[0].priceCtKwh : 0
+      const maxP = w.sorted.length > 0 ? w.sorted[w.sorted.length - 1].priceCtKwh : 0
 
       dailyRows.push([
         w.date,
         dowNames[dow],
+        isSelected ? 'YES' : '',
         `${String(scenario.plugInTime).padStart(2, '0')}:00`,
         `${String(scenario.departureTime).padStart(2, '0')}:00`,
+        w.prices.length,
         r2(w.bAvg),
         r2(w.oAvg),
-        0, // placeholder — will be replaced by formula
-        0, // placeholder — will be replaced by formula
+        0, // formula placeholder
+        0, // formula placeholder
         r1(energyPerSession),
         r2(w.spreadCt),
+        r2(minP),
+        r2(maxP),
       ])
     }
 
     const wsDaily = XLSX.utils.aoa_to_sheet(dailyRows)
 
-    // Inject formulas for Savings columns
-    for (let i = 0; i < windows.length; i++) {
+    for (let i = 0; i < allWindows.length; i++) {
       const row = i + 2
-      // G: Savings (ct/kWh) = Baseline - Optimized
-      wsDaily[`G${row}`] = { t: 'n', f: `E${row}-F${row}` }
-      // H: Savings (EUR) = (Baseline - Optimized) * Energy / 100
+      wsDaily[`I${row}`] = { t: 'n', f: `G${row}-H${row}` }
       if (sheets.profile) {
-        wsDaily[`H${row}`] = { t: 'n', f: `G${row}*${energyCellRef}/100` }
+        wsDaily[`J${row}`] = { t: 'n', f: `I${row}*${energyCellRef}/100` }
       } else {
-        wsDaily[`H${row}`] = { t: 'n', f: `G${row}*I${row}/100` }
+        wsDaily[`J${row}`] = { t: 'n', f: `I${row}*K${row}/100` }
       }
     }
 
     wsDaily['!cols'] = [
-      { wch: 12 }, { wch: 5 }, { wch: 14 }, { wch: 12 },
-      { wch: 22 }, { wch: 24 }, { wch: 18 },
-      { wch: 14 }, { wch: 12 }, { wch: 18 },
+      { wch: 12 }, { wch: 5 }, { wch: 10 }, { wch: 12 }, { wch: 10 },
+      { wch: 8 }, { wch: 22 }, { wch: 24 }, { wch: 18 },
+      { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
     ]
     XLSX.utils.book_append_sheet(wb, wsDaily, 'Daily Sessions')
   }
 
-  // ── Sheet 4: Monthly Summary (with SUMIF/AVERAGEIF formulas) ──
+  // ── Sheet 5: Monthly Summary (with SUMIF/AVERAGEIF formulas) ──
   if (sheets.monthly && sheets.daily) {
-    const windows = overnightWindows
-      .filter(w => !w.isProjected && w.date >= cutoffStr)
-      .sort((a, b) => a.date.localeCompare(b.date))
-
-    // Collect unique months
     const monthSet = new Set<string>()
-    for (const w of windows) monthSet.add(w.month)
+    for (const w of allWindows) monthSet.add(w.month)
     const months = [...monthSet].sort()
 
-    const dailyDataRows = windows.length
+    const dailyDataRows = allWindows.length
+    // Ranges reference Daily Sessions — only selected days (C column = "YES")
     const dailyDateRange = `'Daily Sessions'!A2:A${dailyDataRows + 1}`
-    const dailyGRange = `'Daily Sessions'!G2:G${dailyDataRows + 1}`
-    const dailyHRange = `'Daily Sessions'!H2:H${dailyDataRows + 1}`
+    const dailySelectedRange = `'Daily Sessions'!C2:C${dailyDataRows + 1}`
+    const dailyIRange = `'Daily Sessions'!I2:I${dailyDataRows + 1}`
     const dailyJRange = `'Daily Sessions'!J2:J${dailyDataRows + 1}`
+    const dailyLRange = `'Daily Sessions'!L2:L${dailyDataRows + 1}`
 
     const monthlyHeader = [
       'Month',                    // A
-      'Sessions',                 // B
-      'Avg Spread (ct)',          // C
-      'Avg Savings (ct/kWh)',     // D
-      'Monthly Savings (EUR)',    // E
-      'Cumulative (EUR)',         // F
+      'Total Days',               // B — all days with data
+      'Charging Sessions',        // C — only selected days
+      'Avg Spread (ct)',          // D
+      'Avg Savings (ct/kWh)',     // E
+      'Monthly Savings (EUR)',    // F — only selected days
+      'Cumulative (EUR)',         // G
     ]
 
     const monthlyRows: (string | number)[][] = [monthlyHeader]
-
-    for (let i = 0; i < months.length; i++) {
-      const month = months[i]
-      const row = i + 2
-      // Use month prefix match: "2025-01*"
-      const criteria = `"${month}*"`
-
-      monthlyRows.push([
-        month,
-        0, // placeholder for COUNTIF
-        0, // placeholder for AVERAGEIF spread
-        0, // placeholder for AVERAGEIF savings ct
-        0, // placeholder for SUMIF savings EUR
-        0, // placeholder for cumulative SUM
-      ])
+    for (const month of months) {
+      monthlyRows.push([month, 0, 0, 0, 0, 0, 0])
     }
 
     const wsMonthly = XLSX.utils.aoa_to_sheet(monthlyRows)
 
-    // Inject formulas
     for (let i = 0; i < months.length; i++) {
       const row = i + 2
       const criteria = `A${row}&"*"`
-
-      // B: Sessions count
       wsMonthly[`B${row}`] = { t: 'n', f: `COUNTIF(${dailyDateRange},${criteria})` }
-      // C: Avg Spread
-      wsMonthly[`C${row}`] = { t: 'n', f: `AVERAGEIF(${dailyDateRange},${criteria},${dailyJRange})` }
-      // D: Avg Savings ct/kWh
-      wsMonthly[`D${row}`] = { t: 'n', f: `AVERAGEIF(${dailyDateRange},${criteria},${dailyGRange})` }
-      // E: Monthly Savings EUR
-      wsMonthly[`E${row}`] = { t: 'n', f: `SUMIF(${dailyDateRange},${criteria},${dailyHRange})` }
-      // F: Cumulative EUR — SUM of E2:E(current row)
-      wsMonthly[`F${row}`] = { t: 'n', f: `SUM(E2:E${row})` }
+      wsMonthly[`C${row}`] = { t: 'n', f: `COUNTIFS(${dailyDateRange},${criteria},${dailySelectedRange},"YES")` }
+      wsMonthly[`D${row}`] = { t: 'n', f: `AVERAGEIFS(${dailyLRange},${dailyDateRange},${criteria},${dailySelectedRange},"YES")` }
+      wsMonthly[`E${row}`] = { t: 'n', f: `AVERAGEIFS(${dailyIRange},${dailyDateRange},${criteria},${dailySelectedRange},"YES")` }
+      wsMonthly[`F${row}`] = { t: 'n', f: `SUMIFS(${dailyJRange},${dailyDateRange},${criteria},${dailySelectedRange},"YES")` }
+      wsMonthly[`G${row}`] = { t: 'n', f: `SUM(F2:F${row})` }
     }
 
-    // Total row
     const totalRow = months.length + 2
-    monthlyRows.push(['TOTAL', 0, 0, 0, 0, 0])
+    monthlyRows.push(['TOTAL', 0, 0, 0, 0, 0, 0])
     wsMonthly[`A${totalRow}`] = { t: 's', v: 'TOTAL' }
     wsMonthly[`B${totalRow}`] = { t: 'n', f: `SUM(B2:B${totalRow - 1})` }
-    wsMonthly[`D${totalRow}`] = { t: 'n', f: `AVERAGE(D2:D${totalRow - 1})` }
-    wsMonthly[`E${totalRow}`] = { t: 'n', f: `SUM(E2:E${totalRow - 1})` }
+    wsMonthly[`C${totalRow}`] = { t: 'n', f: `SUM(C2:C${totalRow - 1})` }
+    wsMonthly[`E${totalRow}`] = { t: 'n', f: `AVERAGE(E2:E${totalRow - 1})` }
+    wsMonthly[`F${totalRow}`] = { t: 'n', f: `SUM(F2:F${totalRow - 1})` }
 
     wsMonthly['!cols'] = [
       { wch: 10 }, { wch: 10 }, { wch: 16 },
-      { wch: 22 }, { wch: 22 }, { wch: 18 },
+      { wch: 16 }, { wch: 22 }, { wch: 22 }, { wch: 18 },
     ]
     XLSX.utils.book_append_sheet(wb, wsMonthly, 'Monthly Summary')
   } else if (sheets.monthly && !sheets.daily) {
-    // Fallback: monthly without formulas (no Daily Sessions to reference)
-    const windows = overnightWindows
-      .filter(w => !w.isProjected && w.date >= cutoffStr)
-      .sort((a, b) => a.date.localeCompare(b.date))
-
     const monthMap = new Map<string, { sum: number; count: number; spreadSum: number; savingsCtSum: number }>()
-    for (const w of windows) {
+    for (const w of chargingWindows) {
       const e = monthMap.get(w.month) || { sum: 0, count: 0, spreadSum: 0, savingsCtSum: 0 }
       e.sum += (w.bAvg - w.oAvg) * energyPerSession / 100
       e.spreadSum += w.spreadCt
@@ -603,20 +661,11 @@ export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
     let cumulative = 0
     for (const [month, d] of [...monthMap.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       cumulative += d.sum
-      monthlyRows.push([
-        month, d.count,
-        r2(d.spreadSum / d.count),
-        r2(d.savingsCtSum / d.count),
-        r2(d.sum),
-        r2(cumulative),
-      ])
+      monthlyRows.push([month, d.count, r2(d.spreadSum / d.count), r2(d.savingsCtSum / d.count), r2(d.sum), r2(cumulative)])
     }
 
     const wsMonthly = XLSX.utils.aoa_to_sheet(monthlyRows)
-    wsMonthly['!cols'] = [
-      { wch: 10 }, { wch: 10 }, { wch: 16 },
-      { wch: 22 }, { wch: 22 }, { wch: 18 },
-    ]
+    wsMonthly['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 16 }, { wch: 22 }, { wch: 22 }, { wch: 18 }]
     XLSX.utils.book_append_sheet(wb, wsMonthly, 'Monthly Summary')
   }
 

@@ -368,6 +368,7 @@ export interface OvernightWindow {
   sorted: HourlyPrice[]
   isProjected?: boolean  // true if any price in the window uses projected data
   isWeekend: boolean     // true if the plug-in date is Saturday or Sunday
+  dow: number            // day of week (JS getUTCDay: 0=Sun, 1=Mon, ..., 6=Sat)
 }
 
 export function buildOvernightWindows(
@@ -393,7 +394,7 @@ export function buildOvernightWindows(
     const sorted = [...win].sort((a, b) => a.priceEurMwh - b.priceEurMwh)
     const dow = new Date(dDate + 'T12:00:00Z').getUTCDay() // 0=Sun, 6=Sat
     const isWeekend = dow === 0 || dow === 6
-    windows.push({ date: dDate, month: dDate.slice(0, 7), prices: win, sorted, isProjected: win.some(p => p.isProjected), isWeekend })
+    windows.push({ date: dDate, month: dDate.slice(0, 7), prices: win, sorted, isProjected: win.some(p => p.isProjected), isWeekend, dow })
   }
   return windows
 }

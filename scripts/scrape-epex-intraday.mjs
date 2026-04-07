@@ -73,8 +73,8 @@ function parseNum(v) {
  */
 async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
   console.log(`  ${deliveryDate}: loading...`)
-  await page.goto(buildUrl(deliveryDate, marketArea), { waitUntil: 'networkidle', timeout: 60000 })
-  await page.waitForTimeout(5000)
+  await page.goto(buildUrl(deliveryDate, marketArea), { waitUntil: 'domcontentloaded', timeout: 60000 })
+  await page.waitForTimeout(10000)
 
   // Check WAF
   const title = await page.title()
@@ -93,8 +93,16 @@ async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
     if (await c.isVisible({ timeout: 1500 })) { await c.click(); await page.waitForTimeout(500) }
   } catch {}
 
-  // Extract data rows — try tr.child first, fallback to any tr with exactly 10 td cells
-  let allCells = await page.$$eval('table.table-01 tr.child', trs =>
+  // Wait for table to render (JS-loaded content)
+  try {
+    await page.waitForSelector('table.table-01 tr[class^="child-"]', { timeout: 15000 })
+  } catch {
+    // Table may not appear if no data for this date — continue to fallback
+    await page.waitForTimeout(5000)
+  }
+
+  // Extract data rows — try tr[class^="child-"] first, fallback to any tr with exactly 10 td cells
+  let allCells = await page.$$eval('table.table-01 tr[class^="child-"]', trs =>
     trs.map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.textContent?.trim() || ''))
   ).catch(() => [])
 
