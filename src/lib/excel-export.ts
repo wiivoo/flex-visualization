@@ -6,7 +6,6 @@
 import type { HourlyPrice, ChargingScenario, DayOfWeek } from '@/lib/v2-config'
 import { deriveEnergyPerSession, VEHICLE_PRESETS, AVG_CONSUMPTION_KWH_PER_100KM, effectivePlugInDays, DOW_LABELS } from '@/lib/v2-config'
 import * as XLSX from 'xlsx'
-import * as ExcelJS from 'exceljs'
 
 export interface EnrichedWindow {
   date: string
@@ -355,7 +354,8 @@ const COLORS = {
   red: 'DC2626',
 }
 
-function styleHeader(row: ExcelJS.Row, colCount: number) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function styleHeader(row: any, colCount: number) {
   row.font = { bold: true, color: { argb: COLORS.headerFg }, size: 10 }
   row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } }
   row.alignment = { vertical: 'middle' }
@@ -365,7 +365,8 @@ function styleHeader(row: ExcelJS.Row, colCount: number) {
   }
 }
 
-function styleAltRows(ws: ExcelJS.Worksheet, startRow: number, endRow: number, colCount: number) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function styleAltRows(ws: any, startRow: number, endRow: number, colCount: number) {
   for (let r = startRow; r <= endRow; r++) {
     if (r % 2 === 0) {
       const row = ws.getRow(r)
@@ -377,6 +378,7 @@ function styleAltRows(ws: ExcelJS.Worksheet, startRow: number, endRow: number, c
 }
 
 export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promise<void> {
+  const ExcelJS = await import('exceljs')
   const {
     scenario, overnightWindows, hourlyPrices, hourlyQH, country,
     dateRange, resolution, showFleet, fleetConfig, sheets,
@@ -399,7 +401,10 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
     .filter(w => !w.isProjected && w.date >= cutoffStr)
     .sort((a, b) => a.date.localeCompare(b.date))
 
-  const wb = new ExcelJS.Workbook()
+  // Handle both ESM default and namespace imports
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const EJ = (ExcelJS as any).default ?? ExcelJS
+  const wb = new EJ.Workbook()
   wb.creator = 'EV Flex Charging Dashboard'
   wb.created = new Date()
   const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -428,8 +433,8 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
     ws.getCell('A3').font = { bold: true, size: 9, color: { argb: '059669' } }
 
     // Editable cells (yellow background)
-    const editFill: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.editableBg } }
-    const editBorder: Partial<ExcelJS.Borders> = {
+    const editFill = { type: 'pattern' as const, pattern: 'solid' as const, fgColor: { argb: COLORS.editableBg } }
+    const editBorder = {
       top: { style: 'thin', color: { argb: 'D97706' } },
       bottom: { style: 'thin', color: { argb: 'D97706' } },
       left: { style: 'thin', color: { argb: 'D97706' } },
