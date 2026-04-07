@@ -623,24 +623,13 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
       ws.getCell(`J${r}`).value = { formula: `IF(H${r}<=Profile!$B$${PROFILE_SLOTS_ROW},"YES","")` }
     }
 
-    // Conditional formatting: highlight Baseline=YES in red-100, Optimized=YES in green-100
+    // Color scale on price column (green=cheap, red=expensive)
     if (wpRowCount > 0) {
-      ws.addConditionalFormatting({
-        ref: `I2:I${lastR}`,
-        rules: [{ type: 'containsText', operator: 'containsText', text: 'YES', priority: 2,
-          style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: COLORS.baselineBg } }, font: { color: { argb: COLORS.red }, bold: true } } }],
-      })
-      ws.addConditionalFormatting({
-        ref: `J2:J${lastR}`,
-        rules: [{ type: 'containsText', operator: 'containsText', text: 'YES', priority: 3,
-          style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: COLORS.optimizedBg } }, font: { color: { argb: COLORS.emerald }, bold: true } } }],
-      })
-      // Color scale on price column
       ws.addConditionalFormatting({
         ref: `F2:F${lastR}`,
         rules: [{
           type: 'colorScale',
-          priority: 4,
+          priority: 2,
           cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
           color: [{ argb: 'D1FAE5' }, { argb: 'FFFDE7' }, { argb: 'FEE2E2' }],
         }],
@@ -701,17 +690,16 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
       }
     }
 
-    // Data bars on Savings EUR column
+    // Color scale on Savings EUR column (green gradient — darker = more savings)
     if (allWindows.length > 0) {
       const dLast = allWindows.length + 1
       ws.addConditionalFormatting({
         ref: `G2:G${dLast}`,
         rules: [{
-          type: 'dataBar',
+          type: 'colorScale',
           priority: 5,
-          minLength: 0, maxLength: 100,
-          gradient: true,
-          cfvo: [{ type: 'min' }, { type: 'max' }],
+          cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
+          color: [{ argb: 'FFFFFF' }, { argb: 'D1FAE5' }, { argb: '059669' }],
         }],
       })
     }
@@ -776,27 +764,26 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
     ws.getCell(`F${tRow}`).value = { formula: `SUM(F2:F${tRow - 1})` }
     ws.getCell(`F${tRow}`).numFmt = '0.00'
 
-    // Data bars on Monthly Savings EUR column (chart-like visualization)
+    // Color scales on savings columns (visual chart alternative)
     if (months.length > 0) {
+      // Monthly Savings: white → green gradient
       ws.addConditionalFormatting({
         ref: `F2:F${months.length + 1}`,
         rules: [{
-          type: 'dataBar',
+          type: 'colorScale',
           priority: 6,
-          minLength: 0, maxLength: 100,
-          gradient: true,
-          cfvo: [{ type: 'min' }, { type: 'max' }],
+          cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
+          color: [{ argb: 'FFFFFF' }, { argb: 'D1FAE5' }, { argb: '059669' }],
         }],
       })
-      // Data bars on Cumulative column too
+      // Cumulative: white → blue gradient
       ws.addConditionalFormatting({
         ref: `G2:G${months.length + 1}`,
         rules: [{
-          type: 'dataBar',
+          type: 'colorScale',
           priority: 7,
-          minLength: 0, maxLength: 100,
-          gradient: true,
-          cfvo: [{ type: 'num', value: 0 }, { type: 'max' }],
+          cfvo: [{ type: 'min' }, { type: 'max' }],
+          color: [{ argb: 'EFF6FF' }, { argb: '3B82F6' }],
         }],
       })
     }
