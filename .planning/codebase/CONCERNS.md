@@ -1,199 +1,219 @@
-# Codebase Concerns & Tech Debt
+# Codebase Concerns
 
-> Generated: 2026-03-26. Based on analysis of all active source files.
+**Analysis Date:** 2026-04-07
 
----
+## Tech Debt
 
-## 1. Large Files Needing Refactoring
+### [CRITICAL] Step2ChargingScenario — 3,608-line God Component
 
-### Step2ChargingScenario.tsx — CRITICAL (2,924 lines)
+- Issue: Single component file handles chart rendering, drag interactions, edge-scroll navigation, V2G logic, fleet flex band, intraday ID3 overlays, renewable overlays, cost calculations, and all UI controls. At 3,608 lines it is 7x the project's own 500-line guideline. Contains 40 `useMemo`/`useCallback`/`useDeferredValue` calls.
+- Files: `src/components/v2/steps/Step2ChargingScenario.tsx`
+- Impact: Every feature addition (fleet, V2G, intraday, 3-day mode) increases cognitive load and merge conflict risk. The single `useMemo` that builds chart data (lines 251-475) is ~225 lines of dense logic with a 22-element dependency array. Any dependency change recomputes everything.
+- Fix approach: Extract into focused modules:
+  1. `src/lib/use-chart-data.ts` — the big useMemo building chart points, baseline/optimized keys, V2G slots, intraday re-optimization (lines 251-475)
+  2. `src/lib/use-overnight-windows.ts` — overnight window computation + rolling savings (lines 500-770)
+  3. `src/components/v2/ChartRenderer.tsx` — Recharts ComposedChart JSX, drag handles, edge-scroll (lines 900-1200)
+  4. `src/components/v2/ScenarioControls.tsx` — sliders, toggles, mode selectors, customer profile sidebar (lines 1200-1600)
+  5. `src/components/v2/FleetSection.tsx` — fleet flex band UI (lines 1600-1800)
 
-The single most urgent structural problem in the codebase. This file contains six distinct responsibilities that have accumulated across PROJ-12, 17, 19, 22, 27, 28:
+### [HIGH] Duplicate Page Logic Across Dynamic Pages
 
-- **Customer Profile sidebar** (sliders, V1G/V2G toggle, vehicle presets) — lines ~1160–1700
-- **Chart rendering** (Recharts ComposedChart, custom x-tick renderer, drag handles, ReferenceAreas) — lines ~700–1160
-- **Core optimization logic** (chart data build, baseline/optimized key sets, V2G slot assignment, intraday ID3 re-optimization) — lines ~235–460
-- **Rolling statistics** (365-day scan, per-mode savings, weekday/weekend split) — lines ~466–670
-- **Heatmap data derivation** (prefix-sum O(1) lookups, mileage×plugIns grid) — lines ~970–1011
-- **Yearly/monthly/quarterly rollups** — lines ~905–968, 1013–1063
+- Issue: Three large page files contain duplicated price-fetching, chart rendering, and savings computation logic.
+- Files: `src/app/dynamic/page.tsx` (1,572 lines), `src/app/dynamic/nl/page.tsx` (1,191 lines), `src/app/dynamic/analysis/page.tsx` (1,822 lines)
+- Impact: Bug fixes must be applied in 3 places. Features diverge between pages silently.
+- Fix approach: Extract shared hooks (`useDynamicPrices`, `useDynamicSavings`) and shared chart components. NL page should be a config variant of DE page, not a copy.
 
-Suggested split (all are already `useMemo`/computation blocks that can be extracted):
-- `src/lib/use-rolling-savings.ts` — the 365-day rolling scan hook (~200 lines)
-- `src/lib/use-chart-data.ts` — chart data builder + intraday ID3 re-optimization
-- `src/components/v2/CustomerProfileSidebar.tsx` — the left sidebar Card
-- `src/components/v2/ChargingChart.tsx` — Recharts chart + drag logic
+### [MEDIUM] Excel Export — Dual Library Dependency
 
-The `useMemo` dependency arrays are already very long (17–20 deps) which is a signal that these blocks belong in dedicated hooks.
+- Issue: The export module uses both `xlsx` (SheetJS, 7.2MB) for the basic export and `exceljs` (22MB) for the enhanced export with styling/formulas. Two libraries serving the same purpose.
+- Files: `src/lib/excel-export.ts` (832 lines)
+- Impact: Bundle size inflation. Maintenance burden of two different APIs (`XLSX.utils.aoa_to_sheet` vs `wb.addWorksheet`). Multiple `eslint-disable @typescript-eslint/no-explicit-any` suppressions for ExcelJS typing gaps. `xlsx@0.18.5` is the last open-source version (2022) with no security patches.
+- Fix approach: Migrate the basic export (`generateAndDownloadExcel`) to ExcelJS, then remove `xlsx` dependency entirely.
 
-### Other Large Files
+### [MEDIUM] Pervasive eslint-disable Comments (20+ instances)
 
-- `src/components/v2/SpreadIndicatorsCard.tsx` — 539 lines; no immediate risk but approaching limit
-- `src/components/v2/TheoryOverlay.tsx` — 511 lines; pure JSX, low risk
-- `src/components/v2/TutorialOverlay.tsx` — 371 lines; acceptable
-- `src/lib/use-prices.ts` — 587 lines; well-structured but the incremental fetch and generation logic could be separated hooks
+- Issue: `react-hooks/exhaustive-deps` suppressed 12 times, `@typescript-eslint/no-explicit-any` suppressed 5 times across the codebase.
+- Files: `src/components/v2/steps/Step2ChargingScenario.tsx` (5), `src/lib/use-prices.ts` (3), `src/lib/excel-export.ts` (3), `src/app/dynamic/*.tsx` (5), `src/app/v2/page.tsx` (2)
+- Impact: Suppressed `exhaustive-deps` warnings may hide stale closure bugs. The `fetchIncremental`/`fetchIncrementalQH` callbacks in `use-prices.ts` disable exhaustive-deps to avoid re-fetch loops but closures may capture stale state.
+- Fix approach: Refactor callbacks to use `useRef` for mutable state access (pattern already used for `selectedDateRef`/`sortedDatesRef`). Use `AbortController` per `loadData` invocation to cancel in-flight requests on re-trigger.
 
----
+## Known Bugs
 
-## 2. Complex Data Flows That Could Break
+### [LOW] Date Math Edge Case in use-prices.ts
 
-### Incremental Price Fetch Race Condition (`use-prices.ts`)
+- Symptoms: Line 334 calculates yesterday using `getDate() - 1` which produces day 0 (invalid) on the 1st of any month.
+- Files: `src/lib/use-prices.ts` (line 334)
+- Trigger: User visits the dashboard on the 1st of any month.
+- Workaround: The `todayStr()` helper and other date functions use the safe `T12:00:00Z` anchor pattern but this one instance does not. The fallback `dailySummaries.filter(d => d.date <= yest).pop()` likely catches invalid dates.
 
-`loadData()` fires `fetchIncremental` and `fetchIncrementalQH` as fire-and-forget calls (no `await`). Both callbacks close over `existingPrices`/`existingQH` from the time `loadData` runs. If `loadData` is re-triggered (country switch), the closures from the previous run still hold stale array references and can write to state after the reset. The `fetchedCountry` ref guard prevents duplicate triggers for the same country but does not cancel in-flight requests from a prior `loadData`.
+## Security Considerations
 
-**Fix needed:** Use an `AbortController` per `loadData` invocation, pass the signal to fetch calls inside `fetchIncremental` and `fetchIncrementalQH`, and abort on the next `loadData`.
+### [MEDIUM] Middleware is a No-Op — No Route Protection
 
-### Intraday ID3 Fetch (`use-prices.ts` lines 520–553)
+- Risk: `src/middleware.ts` passes all requests through with `matcher: []`. Auth is enforced only at the `/api/auth` route level. Any new API route added without explicit auth checking is unprotected by default.
+- Files: `src/middleware.ts`
+- Current mitigation: Single shared password with JWT session cookie (`flexmon-session`, 24h expiry, HS256 via `jose`).
+- Recommendations: Add middleware matching for `/api/*` routes that need auth. Add rate limiting on `/api/auth`. The batch API (`/api/prices/batch`) is fully unauthenticated — any user can trigger external API calls consuming rate-limited quotas (aWATTar 100 req/day, EnergyForecast.de 50 req/day).
 
-This `useEffect` does use an `AbortController`, which is correct. However, it silently swallows all errors (`catch(() => setIntradayId3([]))`), including network timeouts. A SMARD scraper outage will silently disable the intraday overlay with no user-visible indication.
+### [MEDIUM] EPEX Scraper Uses Anon Key for Writes
 
-### `forecastStart` Determination (`batch/route.ts` lines 476–506)
+- Risk: `scripts/scrape-epex-intraday.mjs` loads `NEXT_PUBLIC_SUPABASE_ANON_KEY` and uses it to upsert into `price_cache`. If RLS write policies are missing, the anon key could allow unintended data modification.
+- Files: `scripts/scrape-epex-intraday.mjs` (lines 38-43)
+- Current mitigation: Unknown — no RLS policies visible in repository.
+- Recommendations: Use a Supabase service role key for server-side write operations. Verify RLS policies on `price_cache` table in Supabase dashboard.
 
-Every request with `endDate` in the future makes two calls to `fetchEnergyForecast` — one for HOURLY and one for QUARTER_HOURLY resolution. These are separate HTTP requests with no shared result, and the 50 req/day rate limit from EnergyForecast.de can be hit quickly during development or if caching fails. The `next: { revalidate: 3600 }` is on the fetch inside `fetchEnergyForecast`, but Next.js route handlers running in Vercel serverless functions do not use the Data Cache by default for internal `fetch` calls — this needs verification.
+### [LOW] Supabase Anon Key in Client Bundle
 
-### Fallback Chain Sequential Failures (`fetchHourlyChain`)
+- Risk: `NEXT_PUBLIC_SUPABASE_ANON_KEY` is embedded in the client bundle (by design). This is standard Supabase architecture but RLS must be properly configured.
+- Files: Client-side Supabase initialization
+- Recommendations: Verify RLS policies exist for all tables. Document expected RLS configuration.
 
-The fallback chain in `batch/route.ts` is sequential: aWATTar → ENTSO-E → SMARD → Energy-Charts → CSV → demo. If aWATTar is slow but eventually succeeds, all subsequent sources are skipped even if aWATTar returned incomplete data. There is no minimum-record validation between fallback steps — a 404 that returns an empty but valid JSON array would satisfy `prices?.length` as falsy and fall through, but a malformed response would throw and be caught, also falling through. This is acceptable behavior but should be noted.
+## Performance Bottlenecks
 
-### SMARD Source Mislabeled as ENTSO-E (`batch/route.ts` line 322)
+### [HIGH] Heavy useMemo Chains in Step2
 
-When ENTSO-E is the data source, the result is tagged `source: 'smard' as const`. This mislabeling propagates to the Supabase cache and the response `source` field. It is cosmetic but can confuse debugging.
+- Problem: The primary chart data memo (lines 251-475) rebuilds ~200+ chart points with V2G, intraday, fleet, and renewable overlays on any of 22 dependency changes. Three additional memos (overnight windows, yearly savings, fleet optimization) cascade from this. `useDeferredValue` is used for scenario params during drag but deferred values still trigger full recomputation when they settle.
+- Files: `src/components/v2/steps/Step2ChargingScenario.tsx`
+- Cause: All computation is co-located in one component with no separation between chart-critical and background calculations.
+- Improvement path:
+  1. Extract yearly/monthly aggregation to Web Workers (these are pure functions operating on arrays of 365+ windows)
+  2. Split chart data memo into: window prices (changes on date nav) + slot assignments (changes on scenario edit)
+  3. Move overnight window building into `use-prices.ts` where the raw data lives
 
----
+### [MEDIUM] plugInDays Array Identity Workaround
 
-## 3. Missing Error Handling
+- Problem: `effectivePlugInDays(scenario)` returns a new array reference on every call. The component stabilizes via `useMemo` + `plugInDaysKey = deferredPlugInDays.join(',')` for downstream dependencies.
+- Files: `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 209-212)
+- Cause: Array identity instability; stringification workaround is fragile and non-obvious.
+- Improvement path: Return a stable reference from `effectivePlugInDays` using module-level memoization, or use a custom `useStableArray` hook.
 
-### `use-prices.ts` — Generation API
+### [MEDIUM] Bundle Size — Recharts + ExcelJS
 
-`fetchLiveGeneration` swallows all errors silently (`catch(() => {/* keep existing data */})`). If the generation API is down for an extended period, users see no message and may think generation data is simply not available.
+- Problem: Recharts (8MB node_modules), ExcelJS (22MB), xlsx (7.2MB). ExcelJS is dynamically imported but Recharts is statically imported in Step2 and other chart components. No evidence of bundle analysis tooling.
+- Files: `package.json`, `src/components/v2/steps/Step2ChargingScenario.tsx`
+- Improvement path: Run `@next/bundle-analyzer` to measure actual client impact. Consider `next/dynamic` with `ssr: false` for chart components. Verify ExcelJS dynamic import does not leak into initial bundle.
 
-### `batch/route.ts` — Cache Write Failure
+### [LOW] No Lazy Loading for Chart Components
 
-Cache write failures are caught and logged (`console.error`) but the response still returns 200. This is correct behavior (non-fatal). However, a persistent Supabase connection failure will cause every future request to re-fetch from external sources, potentially hitting rate limits on aWATTar (100 req/day) and EnergyForecast.de (50 req/day).
+- Problem: No `dynamic()` or `React.lazy()` usage detected anywhere in the codebase. All components are eagerly loaded.
+- Files: All component imports in page files
+- Improvement path: Wrap `Step2ChargingScenario` and other heavy chart components in `next/dynamic({ ssr: false })`.
 
-### `csv-prices.ts` — Silent Throw
+## Fragile Areas
 
-`fetchCsvPrices` logs and re-throws. The caller in `fetchCsvBatch` catches and skips silently. No log is emitted when CSV files are absent in production (Vercel). If CSV files are the only fallback for historical gaps and were never deployed, the app falls silently to demo data. This is acceptable but not observable.
+### [CRITICAL] EPEX Intraday Scraper
 
-### `energy-forecast.ts` — `fetchForecastOnly` is Dead Code
+- Files: `scripts/scrape-epex-intraday.mjs` (317 lines)
+- Why fragile:
+  1. **WAF blocking**: EPEX detects Playwright automation and shows CAPTCHA ("Human Verification" page). The scraper detects this (line 81) but cannot bypass it. Has broken in production.
+  2. **CSS selector dependency**: Relies on `table.table-01 tr[class^="child-"]` for data extraction (line 105). Any EPEX website redesign breaks extraction silently. Fallback selector `tr` with 10 `td` cells (line 110) is equally fragile.
+  3. **Fixed table structure**: Assumes exactly 7 rows per hour (168 rows/day) with QH data at offsets `[2, 3, 5, 6]` (line 59). If EPEX changes row layout, extracted data is silently corrupt.
+  4. **Hard-coded waits**: Uses `page.waitForTimeout(10000)` (line 77) instead of element-based waits. Too short = empty data; too long = timeout.
+  5. **Playwright as production dep**: Listed in `dependencies` (not `devDependencies`), inflating production install by ~150MB+.
+- Safe modification: Always run with `--dry-run` first. Do not change selector patterns without testing against live EPEX site.
+- Test coverage: Zero automated tests.
 
-`fetchForecastOnly` is exported but never called anywhere in the codebase. It is not imported by any file other than its own module. It should be removed.
+### [HIGH] SMARD Data Pipeline
 
----
+- Files: `.github/workflows/update-smard-data.yml`, `src/lib/smard.ts`, `src/lib/use-prices.ts`
+- Why fragile:
+  1. **~2 day publication delay**: SMARD publishes with lag. App bridges via incremental API fetch but gap can cause missing data for recent dates.
+  2. **Forecast blending**: Future prices from EnergyForecast.de are marked `isProjected` but visually similar to real data. Users may not notice the distinction.
+  3. **Silent CI failure**: GitHub Actions cron (13:30 UTC daily) commits updated JSON. If it fails silently, static data goes stale with no alerting.
+  4. **Incremental fetch race condition**: `fetchIncremental` and `fetchIncrementalQH` are fire-and-forget from `loadData()`. On rapid country switches, stale closures can write wrong data to state.
+- Safe modification: Test with dates near the static/incremental boundary. Verify `fetchedCountry` guard works for rapid switches.
+- Test coverage: `tests/savings-math.test.ts` uses synthetic data only — no integration tests for SMARD API responses.
 
-## 4. Security Considerations
+### [MEDIUM] Supabase Cache Layer
 
-### `ENERGY_FORECAST_TOKEN` Exposed in Query String
+- Files: `src/app/api/prices/batch/route.ts` (536 lines)
+- Why fragile: Cache TTL logic is embedded in application code with varying durations by date age. Cache key format `(date, type)` with country prefix (e.g., `nl:day-ahead`). If Supabase is unreachable, the fallback chain activates but with potential data gaps. The CSV fallback step uses `process.cwd()/CSVs/` which is unlikely to exist on Vercel, making it effectively non-functional in production.
+- Test coverage: None.
 
-In `energy-forecast.ts` (lines 36 and 79):
-```
-const url = `...?token=${token}&market_zone=DE-LU...`
-```
-The API token is placed in the URL query string. This is only ever called server-side (in API route handlers), so it does not reach the browser — the risk is limited to server logs, proxy access logs, and Vercel function logs. The EnergyForecast.de API may not support Authorization header authentication. Regardless, this should be documented as a known risk.
+## Dependencies at Risk
 
-### `NEXT_PUBLIC_SUPABASE_ANON_KEY` Is Browser-Visible
+### [MEDIUM] xlsx (SheetJS) — Abandoned Open Source Version
 
-The Supabase anon key is prefixed `NEXT_PUBLIC_` and is therefore embedded in the client-side bundle. This is normal for Supabase — the anon key is intentionally public and Row Level Security is the actual access control layer. No RLS policies are visible in this repository audit; their presence should be verified in the Supabase dashboard.
+- Risk: `xlsx@0.18.5` is the last open-source version (2022). Newer versions are proprietary (SheetJS Pro). No security patches or updates.
+- Impact: Potential compatibility issues with future Node.js/bundler versions.
+- Migration plan: Already partially migrated to ExcelJS for enhanced export. Complete migration and remove `xlsx`.
 
-### Batch API Has No Authentication
+### [LOW] Playwright in Production Dependencies
 
-`GET /api/prices/batch` is unauthenticated. Any internet user who knows the URL can trigger external API calls (aWATTar, ENTSO-E, EnergyForecast.de) that consume rate-limited quotas. The password protection middleware likely covers `/v2` page routes but not API routes — verify `middleware.ts` matcher config.
+- Risk: `playwright@^1.58.2` in `dependencies` rather than `devDependencies`. Only used by EPEX scraper script, not the web app.
+- Impact: Inflates production `npm install` by ~150MB+ (Chromium binaries).
+- Migration plan: Move to `devDependencies` or separate `scripts/package.json`.
 
-### Date Range Limit
+## Missing Critical Features
 
-The 400-day maximum (`differenceInDays > 400`) guards against runaway SMARD chunk fetches. The country schema only allows `DE | NL` — this correctly constrains ENTSO-E domain lookup.
+### [MEDIUM] No Error Monitoring
 
----
+- Problem: No error tracking (Sentry, LogRocket, etc.). Client errors, API failures, and scraper breakdowns are only visible via console logs.
+- Blocks: Cannot detect when EPEX scraper breaks, SMARD API changes format, or EnergyForecast.de rate limit is hit.
 
-## 5. Performance Concerns
+### [MEDIUM] No Data Staleness Detection
 
-### Initial Bundle Size
+- Problem: No mechanism to detect or alert when static JSON data (`public/data/smard-*.json`) is more than N days old. No health check endpoint.
+- Blocks: Cannot set up uptime monitoring. If GitHub Actions cron fails, the app silently serves stale data.
 
-`Step2ChargingScenario.tsx` is a single `'use client'` component importing Recharts (`ComposedChart`, `Line`, `Area`, `XAxis`, `YAxis`, `CartesianGrid`, `Tooltip`, `ResponsiveContainer`, `ReferenceLine`, `ReferenceArea`). Recharts is ~300 KB minified. The component is not lazy-loaded. If the v2 page is the app entry point, this adds to initial load. A `dynamic(() => import(...), { ssr: false })` wrapper would defer it.
+### [LOW] No Demo Data Indicator
 
-### Three Overlapping 365-Day Scans
+- Problem: When all price sources fail, the batch API serves fabricated demo data (`source: 'demo'`). The UI shows no banner or warning that displayed prices are synthetic.
+- Blocks: Users may make decisions based on demo data without realizing it.
 
-`Step2ChargingScenario.tsx` contains three separate `useMemo` blocks that each iterate over up to 365 days of hourly prices (~8,760 points):
+## Test Coverage Gaps
 
-1. `rollingAvgSavings / dailySavingsMap` (line 469) — one pass per date
-2. `perModeSavings` (line 556) — three mode passes per date
-3. `overnightWindows` (line 821) — one pass per date with prefix sums
+### [CRITICAL] Near-Zero Test Coverage
 
-These three memos have partially overlapping dependency arrays, so they do not share computation. Extracting them into a single shared hook that builds the `byDate` map once and runs all three rollups in a single pass would reduce work by roughly 5×. The `overnightWindows` memo is then reused downstream by `monthlySavingsData`, `heatmapData`, and `yearlySavingsData` — this part is already well-optimized.
+- What's not tested: Only one test file exists (`tests/savings-math.test.ts`) covering core math functions (`computeWindowSavings`, `computeV2gWindowSavings`, `computeSpread`, `runOptimization`, `deriveEnergyPerSession`). No tests for:
+  - **API routes**: `/api/prices/batch` (536 lines), `/api/generation`, `/api/auth` — zero route tests
+  - **React components**: No component/integration tests for 15+ components in `src/components/v2/`
+  - **use-prices hook**: Complex data fetching, merging, incremental update, and generation fallback logic — untested
+  - **Excel export**: Both `generateAndDownloadExcel` and `generateEnhancedExcel` (832 lines combined) — untested. Formula generation references specific cell positions; structural changes produce silently wrong spreadsheets
+  - **EPEX scraper**: No automated tests for HTML parsing or data validation
+  - **Fleet optimizer**: `src/lib/fleet-optimizer.ts` (397 lines) — no dedicated tests
+  - **Grid fees**: `src/lib/grid-fees.ts` — no tests for DSO tariff lookups
+- Files: `tests/savings-math.test.ts` (single test file, ~500 lines), `vitest.config.ts` (config present)
+- Risk: Regression bugs in savings calculations, price conversions (EUR/MWh to ct/kWh), overnight window construction, or V2G arbitrage logic would go undetected. The savings math is the core value proposition.
+- Priority: High — expand existing test file with edge cases: negative prices, DST transitions, missing data gaps, zero-energy sessions, single-slot windows.
 
-### `Math.min(...allPrices)` Spread on Large Arrays
+### [HIGH] No E2E or Smoke Tests
 
-`priceRange` useMemo (line 1065) calls `Math.min(...allPrices)` and `Math.max(...allPrices)` using spread syntax on an array that can be ~100 items (chart window). Not a problem at current sizes, but worth noting for future multi-day chart windows.
+- What's not tested: No Playwright/Cypress tests verify dashboard loads, displays prices, or responds to user interaction.
+- Files: None exist (Playwright is installed but only used for EPEX scraping)
+- Risk: UI regressions from Recharts updates, Tailwind changes, or React 19 behavior differences are invisible until manual testing.
+- Priority: High — a single smoke test loading `/v2` and verifying chart render would catch most catastrophic failures.
 
-### Public Static JSON Files
+## Scaling Limits
 
-`/public/data/smard-prices.json` and `smard-prices-qh.json` are fetched on every page load. No `ETag` or `If-None-Match` handling is present in `use-prices.ts`. If the files are large (months of historical data), repeat visits will re-download the full JSON even if unchanged. Next.js's static file serving adds `Cache-Control: public, max-age=0` by default — increasing this or using `Last-Modified` would help on repeat visits.
+### [LOW] Static JSON Price Files Growing Linearly
 
----
+- Current capacity: ~2 years of hourly data in `public/data/smard-prices.json`. File grows at ~8,760 entries/year.
+- Limit: At ~10 years, JSON file reaches ~5MB, causing slow initial page load on mobile.
+- Scaling path: Paginate by year or switch to API-only loading. The incremental fetch pattern already exists and could replace static files.
 
-## 6. Tech Debt — Archived Code
+## Accessibility Gaps
 
-`src/_archive/` contains: `app/`, `components/`, `docs/`, `hooks/`, `lib/`, `scripts/`. The archive is excluded from builds via tsconfig `paths` (verify this is a path alias exclusion and not just a folder convention). The presence of old hooks and lib files in `_archive/lib/` creates risk if a new developer imports from them accidentally. The archive has grown to a full mirror of the `src/` structure.
+### [MEDIUM] Chart Interactions Inaccessible
 
-**Recommendation:** Delete the archive entirely or move it outside `src/` to a top-level `_archive/` directory. Document in `features/INDEX.md` that the old v1 code is preserved in git history (tag `v1-archive`).
+- Problem: Chart drag handles (`div` elements with `onMouseDown`/`onTouchStart`) have no `role`, `tabIndex`, or keyboard event handlers. The Recharts chart area has no `aria-label`. Baseline vs. optimized slots are distinguished only by color (no pattern/label for color vision deficiency).
+- Files: `src/components/v2/steps/Step2ChargingScenario.tsx` (drag handle JSX)
+- Fix approach: Add `role="slider"`, `tabIndex={0}`, `aria-label`, and keyboard handlers (ArrowLeft/ArrowRight) to drag handles. Add `role="img"` with `aria-label` describing the chart summary.
 
----
+## Dead Code
 
-## 7. Missing Tests
-
-There are zero test files in the repository (no `tests/`, `__tests__/`, or `*.test.ts` files anywhere). The following units have enough pure logic to be tested with no mocking:
-
-| Function | File | Priority |
-|---|---|---|
-| `runOptimization` | `lib/optimizer.ts` | HIGH — financial calculations |
-| `computeV2gWindowSavings` | `lib/charging-helpers.ts` | HIGH — complex V2G logic |
-| `computeWindowSavings` | `lib/charging-helpers.ts` | HIGH — baseline savings |
-| `deriveDailySummaries` | `lib/use-prices.ts` | MEDIUM |
-| `deriveMonthlyStats` | `lib/use-prices.ts` | MEDIUM |
-| `buildOvernightWindows` | `lib/charging-helpers.ts` | MEDIUM |
-| `generateDemoBatchPrices` | `batch/route.ts` | LOW — deterministic seeded output |
-
-A regression in `runOptimization` (e.g., dividing by zero when `energy_needed_kwh = 0`) would silently return wrong financial figures to the UI. The existing `energy_needed_kwh <= 0` guard is correct, but edge cases like `intervals_needed > pricesWithTime.length` (insufficient price data for full charge) could produce `NaN` savings.
-
----
-
-## 8. Accessibility Gaps
-
-- **Chart drag handles** (`div` elements with `onMouseDown`/`onTouchStart`) have no `role`, `tabIndex`, or keyboard event handlers. Users navigating by keyboard cannot move the arrival/departure handles.
-- **The Recharts chart area** has no `aria-label` or `role="img"` fallback for screen readers.
-- **Color-only encoding:** The baseline (gray fill) vs. optimized (green fill) charging slots are distinguished only by color. No pattern, label, or `aria-describedby` text is provided for users with color vision deficiency.
-- **Sliders in the sidebar** do have `aria-label` attributes (lines 1205, 1250, 1277, 1304) — this is good.
-- **The MiniCalendar date cells** are rendered as `div` elements with `onClick` rather than `button` elements, missing keyboard focus/activation behavior.
-- **V1G/V2G toggle buttons** at the top of the Customer Profile card use `button` elements correctly.
-
----
-
-## 9. Dead Code / Unused Exports
+### [LOW] Unused Exports in Library Files
 
 | Symbol | File | Status |
 |---|---|---|
-| `fetchForecastOnly` | `lib/energy-forecast.ts` | Never imported. Dead export. |
-| `fetchEnergyChartsDayAhead` | `lib/energy-charts.ts` | Never imported (only `fetchEnergyChartsRange` is used). |
-| `fetchAwattarDayAhead` | `lib/awattar.ts` | Never imported (only `fetchAwattarRange` is used). |
-| `fetchSmardDayAhead` | `lib/smard.ts` | Never imported in batch route or anywhere. |
-| `hasCsvData` | `lib/csv-prices.ts` | Never imported. |
-| `SMARD_RESOLUTION` const | `lib/smard.ts` | Not used by any caller (batch route uses string literals). |
-| `projected-prices.json` | `public/data/` | File exists but no reference found in source code. |
+| `fetchForecastOnly` | `src/lib/energy-forecast.ts` | Never imported |
+| `fetchEnergyChartsDayAhead` | `src/lib/energy-charts.ts` | Never imported |
+| `fetchAwattarDayAhead` | `src/lib/awattar.ts` | Never imported |
+| `fetchSmardDayAhead` | `src/lib/smard.ts` | Never imported |
+| `hasCsvData` | `src/lib/csv-prices.ts` | Never imported |
 
-The four `*DayAhead` functions are v1-era single-day fetch APIs replaced by the `*Range` variants used in the batch route.
+These are v1-era single-day fetch APIs replaced by `*Range` variants. Safe to remove.
 
 ---
 
-## 10. Data Fallback Chain Reliability
-
-The fallback chain for DE hourly prices is: aWATTar → ENTSO-E → SMARD → Energy-Charts → CSV → demo.
-
-**Reliability risks:**
-
-- **aWATTar (~3 days history):** Only covers the very recent window. For historical date ranges it will return empty data and fall through immediately. This is expected but adds latency because the fetch still runs.
-- **ENTSO-E (full historical):** Requires `ENTSOE_API_TOKEN` env var. If the token is missing or expired, `fetchEntsoeRange` throws, is caught, and falls through to SMARD silently. No alert is raised.
-- **EnergyForecast.de (50 req/day limit):** Called on every request that touches a future date. If the limit is hit, `fetchEnergyForecast` throws `"EnergyForecast API failed: 429"`, is caught with `console.error`, and `forecastStart` stays `null`. The response is returned without forecast extension. Users see a chart that stops at the last real price with no explanation.
-- **SMARD (weekly chunks):** Stable and well-tested. The main risk is delayed publication — SMARD sometimes publishes D+1 prices hours after EPEX closes (~12:15 CET). During this window the batch route returns today's prices as demo data.
-- **CSV fallback:** The `CSVs/` directory is at `process.cwd()/CSVs/` which resolves correctly in local dev but is unlikely to be deployed to Vercel. If CSV files are absent, the step silently returns empty and falls to demo. This means the CSV fallback is effectively non-functional in production.
-- **Demo data:** Always available. Clearly seeded and deterministic, but prices are fabricated. There is no visual indicator in the UI that a chart is showing demo data vs. real prices. Adding a banner when `source === 'demo'` would prevent user confusion.
-
-**Static JSON as primary DE source:** The actual primary path for the DE dashboard is the pre-downloaded `smard-prices.json` served as a static file, not the batch API fallback chain. The batch API is only used for incremental updates (last few days). This is the correct and reliable design — the fallback chain only fires for the delta.
+*Concerns audit: 2026-04-07*
