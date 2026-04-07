@@ -137,10 +137,10 @@ export function ExportDialog({
             <label className="text-[11px] font-medium text-gray-500 uppercase tracking-wide">Sheets</label>
             <div className="mt-1.5 space-y-2">
               {([
-                { key: 'prices' as const, label: 'Raw Prices', desc: 'Hourly/QH price data' },
-                { key: 'profile' as const, label: 'Profile Settings', desc: 'Scenario parameters' },
-                { key: 'daily' as const, label: 'Daily Sessions', desc: 'Per-session breakdown with formulas' },
-                { key: 'monthly' as const, label: 'Monthly Summary', desc: 'Aggregated with SUMIF formulas' },
+                { key: 'prices' as const, label: 'Source Prices', desc: 'Raw day-ahead prices with lookup key' },
+                { key: 'profile' as const, label: 'Profile (editable)', desc: 'Change Power/Energy to recalculate' },
+                { key: 'daily' as const, label: 'Window Prices + Daily', desc: 'Per-slot formulas + daily AVERAGEIFS' },
+                { key: 'monthly' as const, label: 'Monthly Summary', desc: 'SUMIFS/COUNTIFS from Daily Sessions' },
               ]).map(({ key, label, desc }) => (
                 <label key={key} className="flex items-start gap-2 cursor-pointer group">
                   <Checkbox
