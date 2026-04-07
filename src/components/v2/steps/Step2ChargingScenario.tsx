@@ -426,7 +426,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         priceVal: ct,
         baselinePrice: baselineKeys.has(key) ? ct : null,
         optimizedPrice: optKey ? ct : null,
-        daSoldPrice: (optimizedKeys.has(key) && !id3OptimizedKeys.has(key) && hasIntradayData) ? ct : null,
+        daSoldPrice: (optimizedKeys.has(key) && !id3OptimizedKeys.has(key) && hasIntradayData) ? (id3Map.get(key) ?? ct) : null,
         dischargePrice: v2gDischargeKeys.has(key) ? ct : null,
         netChargePrice: v2gNetChargeKeys.has(key) ? ct : null,
         arbChargePrice: v2gArbChargeKeys.has(key) ? ct : null,
