@@ -678,9 +678,10 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
       ws.getCell(`G${r}`).numFmt = '0.0000'
       ws.getCell(`H${r}`).value = { formula: `Profile!$B$${PROFILE_ENERGY_ROW}` }
       ws.getCell(`H${r}`).numFmt = '0.0'
-      ws.getCell(`I${r}`).value = { formula: `MAXIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r})-MINIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r})` }
+      // Spread + slots: pre-computed (spread doesn't depend on user inputs, and avoids MAXIFS which requires Excel 2019+)
+      ws.getCell(`I${r}`).value = r2(w.spreadCt)
       ws.getCell(`I${r}`).numFmt = '0.00'
-      ws.getCell(`J${r}`).value = { formula: `COUNTIF('Window Prices'!A$2:A$${wpLast},A${r})` }
+      ws.getCell(`J${r}`).value = w.prices.length
 
       // Green bg for selected days
       if (isSelected) {
