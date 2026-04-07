@@ -23,6 +23,8 @@ interface Props {
   /** Live-computed cost for selected date (from chart's QH optimization) — overrides rolling scan values */
   selectedDayCost?: { baselineAvgCt: number; optimizedAvgCt: number; savingsEur: number } | null
   isFleet?: boolean
+  /** Selected plug-in days (JS getUTCDay: 0=Sun..6=Sat). When set, non-matching days are dimmed. */
+  plugInDays?: number[]
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -73,12 +75,15 @@ function buildBuckets(savings: number[]): { min: number; max: number; color: str
   })
 }
 
-export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost, isFleet = false }: Props) {
+export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost, isFleet = false, plugInDays }: Props) {
   const [hoveredDate, setHoveredDate] = useState<string | null>(null)
   // Filter by spread: null = show all, Set = active bucket indices
   const [activeBuckets, setActiveBuckets] = useState<Set<number> | null>(null)
   // Preview date: first click selects, second click on same date navigates
   const [previewDate, setPreviewDate] = useState<string | null>(null)
+  // Toggle: show only plug-in days or all days
+  const [showPlugInOnly, setShowPlugInOnly] = useState(false)
+  const hasPlugInFilter = plugInDays && plugInDays.length < 7
 
   const { grid, weeks, monthLabels, allEntries, quarterWeeks } = useMemo(() => {
     if (dailySavingsMap.size === 0) return { grid: [], weeks: 0, monthLabels: [], allEntries: [], quarterWeeks: new Set<number>() }
@@ -131,25 +136,34 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
     return { grid: cells, weeks: totalWeeks, monthLabels: labels, allEntries: entries, quarterWeeks }
   }, [dailySavingsMap])
 
+  // Filter entries by plug-in days when toggle is on
+  const plugInFilteredEntries = useMemo(() => {
+    if (!showPlugInOnly || !plugInDays) return allEntries
+    return allEntries.filter(e => {
+      const dow = new Date(e.date + 'T12:00:00Z').getUTCDay()
+      return plugInDays.includes(dow)
+    })
+  }, [allEntries, showPlugInOnly, plugInDays])
+
   const isFiltering = activeBuckets !== null
 
-  // Adaptive quintile-based buckets from actual savings data
-  const savingsBuckets = useMemo(() => buildBuckets(allEntries.map(e => e.ctSav)), [allEntries])
+  // Adaptive quintile-based buckets from actual savings data (use filtered set)
+  const savingsBuckets = useMemo(() => buildBuckets(plugInFilteredEntries.map(e => e.ctSav)), [plugInFilteredEntries])
 
   // Count entries per bucket for badge display
   const bucketCounts = useMemo(() => {
     const counts = new Array(savingsBuckets.length).fill(0)
-    for (const e of allEntries) {
+    for (const e of plugInFilteredEntries) {
       const bi = savingsBuckets.findIndex(b => e.ctSav >= b.min && e.ctSav < b.max)
       if (bi >= 0) counts[bi]++
       else if (e.ctSav >= savingsBuckets[savingsBuckets.length - 1].min) counts[savingsBuckets.length - 1]++
     }
     return counts
-  }, [allEntries, savingsBuckets])
+  }, [plugInFilteredEntries, savingsBuckets])
 
   const filtered = useMemo(() => {
-    if (!isFiltering) return allEntries
-    return allEntries.filter(e => {
+    if (!isFiltering) return plugInFilteredEntries
+    return plugInFilteredEntries.filter(e => {
       const bi = savingsBuckets.findIndex(b => e.ctSav >= b.min && e.ctSav < b.max)
       const idx = bi >= 0 ? bi : (e.ctSav >= savingsBuckets[savingsBuckets.length - 1].min ? savingsBuckets.length - 1 : -1)
       return idx >= 0 && activeBuckets!.has(idx)
@@ -226,9 +240,23 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
       <CardHeader className="pb-2 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle className="text-base font-bold text-[#313131]">Daily Savings</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-base font-bold text-[#313131]">Daily Savings</CardTitle>
+              {hasPlugInFilter && (
+                <div className="flex gap-0.5 bg-gray-100 rounded p-0.5">
+                  <button
+                    onClick={() => setShowPlugInOnly(false)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${!showPlugInOnly ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                  >All</button>
+                  <button
+                    onClick={() => setShowPlugInOnly(true)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${showPlugInOnly ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                  >Plug-in</button>
+                </div>
+              )}
+            </div>
             <p className="text-[11px] text-gray-400 mt-0.5">
-              {modeLabel} · {energyPerSession} kWh · {allEntries.length} days
+              {modeLabel} · {energyPerSession} kWh · {showPlugInOnly && plugInDays ? plugInFilteredEntries.length : allEntries.length} days{showPlugInOnly && plugInDays ? ` (of ${allEntries.length})` : ''}
             </p>
           </div>
           <div className="flex items-center gap-1.5 text-[10px] text-gray-400">
@@ -325,7 +353,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                                     outline: isSelected ? '2px solid #313131' : isPreviewed ? '2px solid #6B7280' : 'none',
                                     outlineOffset: -1,
                                     cursor: entry ? 'pointer' : 'default',
-                                    opacity: !entry ? 0.4 : (isFiltering && !inFilter ? 0.15 : 1),
+                                    opacity: !entry ? 0.4 : (showPlugInOnly && plugInDays && !plugInDays.includes(new Date(cell.date + 'T12:00:00Z').getUTCDay())) ? 0.1 : (isFiltering && !inFilter ? 0.15 : 1),
                                   }}
                                 />
                               </TooltipTrigger>
