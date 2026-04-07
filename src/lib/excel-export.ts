@@ -6,7 +6,7 @@
 import type { HourlyPrice, ChargingScenario, DayOfWeek } from '@/lib/v2-config'
 import { deriveEnergyPerSession, VEHICLE_PRESETS, AVG_CONSUMPTION_KWH_PER_100KM, effectivePlugInDays, DOW_LABELS } from '@/lib/v2-config'
 import * as XLSX from 'xlsx'
-import ExcelJS from 'exceljs'
+import * as ExcelJS from 'exceljs'
 
 export interface EnrichedWindow {
   date: string
