@@ -82,7 +82,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
   // Preview date: first click selects, second click on same date navigates
   const [previewDate, setPreviewDate] = useState<string | null>(null)
   // Toggle: show only plug-in days or all days
-  const [showPlugInOnly, setShowPlugInOnly] = useState(false)
+  const [showPlugInOnly, setShowPlugInOnly] = useState(true)
   const hasPlugInFilter = plugInDays && plugInDays.length < 7
 
   const { grid, weeks, monthLabels, allEntries, quarterWeeks } = useMemo(() => {
