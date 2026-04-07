@@ -50,10 +50,10 @@ export function ExportDialog({
     setSheets(prev => ({ ...prev, [key]: !prev[key] }))
   }, [])
 
-  const handleExport = useCallback(() => {
+  const handleExport = useCallback(async () => {
     setExporting(true)
     try {
-      generateEnhancedExcel({
+      await generateEnhancedExcel({
         scenario,
         overnightWindows,
         hourlyPrices,

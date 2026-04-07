@@ -6,6 +6,7 @@
 import type { HourlyPrice, ChargingScenario, DayOfWeek } from '@/lib/v2-config'
 import { deriveEnergyPerSession, VEHICLE_PRESETS, AVG_CONSUMPTION_KWH_PER_100KM, effectivePlugInDays, DOW_LABELS } from '@/lib/v2-config'
 import * as XLSX from 'xlsx'
+import ExcelJS from 'exceljs'
 
 export interface EnrichedWindow {
   date: string
@@ -340,7 +341,42 @@ function colLetter(idx: number): string {
   return s
 }
 
-export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
+// ── Shared styles for ExcelJS ──
+const COLORS = {
+  headerBg: '1F2937',     // gray-800
+  headerFg: 'FFFFFF',
+  editableBg: 'FEF9C3',   // yellow-100 (editable cells)
+  baselineBg: 'FEE2E2',   // red-100
+  optimizedBg: 'D1FAE5',  // emerald-100
+  selectedBg: 'F0FDF4',   // emerald-50
+  altRow: 'F9FAFB',       // gray-50
+  border: 'E5E7EB',       // gray-200
+  emerald: '059669',       // emerald-600
+  red: 'DC2626',
+}
+
+function styleHeader(row: ExcelJS.Row, colCount: number) {
+  row.font = { bold: true, color: { argb: COLORS.headerFg }, size: 10 }
+  row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } }
+  row.alignment = { vertical: 'middle' }
+  row.height = 22
+  for (let c = 1; c <= colCount; c++) {
+    row.getCell(c).border = { bottom: { style: 'thin', color: { argb: COLORS.border } } }
+  }
+}
+
+function styleAltRows(ws: ExcelJS.Worksheet, startRow: number, endRow: number, colCount: number) {
+  for (let r = startRow; r <= endRow; r++) {
+    if (r % 2 === 0) {
+      const row = ws.getRow(r)
+      for (let c = 1; c <= colCount; c++) {
+        row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.altRow } }
+      }
+    }
+  }
+}
+
+export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promise<void> {
   const {
     scenario, overnightWindows, hourlyPrices, hourlyQH, country,
     dateRange, resolution, showFleet, fleetConfig, sheets,
@@ -363,228 +399,336 @@ export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
     .filter(w => !w.isProjected && w.date >= cutoffStr)
     .sort((a, b) => a.date.localeCompare(b.date))
 
-  const wb = XLSX.utils.book_new()
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'EV Flex Charging Dashboard'
+  wb.created = new Date()
   const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-  // ═══════════════════════════════════════════════════════════════
-  // Sheet 1: Profile — editable inputs + explanation
-  // Key cells: B3=Power, B4=Energy, B5=SlotsNeeded (formula)
-  // ═══════════════════════════════════════════════════════════════
-  // Profile row where SlotsNeeded lives (used by Window Prices formulas)
-  const PROFILE_POWER_ROW = 3
-  const PROFILE_ENERGY_ROW = 4
-  const PROFILE_SLOTS_ROW = 5
+  const PROFILE_POWER_ROW = 4
+  const PROFILE_ENERGY_ROW = 5
+  const PROFILE_SLOTS_ROW = 6
 
+  // ═══════════════════════════════════════════════════════════════
+  // Sheet 1: Profile — editable inputs + explanation (styled)
+  // ═══════════════════════════════════════════════════════════════
   if (sheets.profile) {
-    const vehicle = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId)
-    const slotsNeeded = Math.ceil(energyPerSession / chargePowerKw)
+    const ws = wb.addWorksheet('Profile', { properties: { tabColor: { argb: '059669' } } })
+    ws.columns = [{ width: 32 }, { width: 72 }]
 
-    const profileRows: (string | number)[][] = [
-      ['EV Flex Charging — Dynamic Export', '(change yellow cells to recalculate)'],
-      [],
-      // Row 3-5: editable inputs
-      ['Charge Power (kW)', chargePowerKw],                // B3 — editable
-      ['Energy per Session (kWh)', r1(energyPerSession)],  // B4 — editable
-      ['Slots Needed', slotsNeeded],                       // B5 — FORMULA
-      [],
-      // Row 7+: info
+    // Title
+    ws.mergeCells('A1:B1')
+    const titleCell = ws.getCell('A1')
+    titleCell.value = 'EV Flex Charging — Dynamic Export'
+    titleCell.font = { bold: true, size: 14, color: { argb: '1F2937' } }
+    ws.getCell('A2').value = 'Change the yellow cells below to recalculate all sheets'
+    ws.getCell('A2').font = { italic: true, size: 10, color: { argb: '6B7280' } }
+
+    // Row 3: Section header
+    ws.getCell('A3').value = 'EDITABLE INPUTS'
+    ws.getCell('A3').font = { bold: true, size: 9, color: { argb: '059669' } }
+
+    // Editable cells (yellow background)
+    const editFill: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.editableBg } }
+    const editBorder: Partial<ExcelJS.Borders> = {
+      top: { style: 'thin', color: { argb: 'D97706' } },
+      bottom: { style: 'thin', color: { argb: 'D97706' } },
+      left: { style: 'thin', color: { argb: 'D97706' } },
+      right: { style: 'thin', color: { argb: 'D97706' } },
+    }
+
+    // B4: Power
+    ws.getCell('A4').value = 'Charge Power (kW)'
+    ws.getCell('A4').font = { bold: true }
+    ws.getCell('B4').value = chargePowerKw
+    ws.getCell('B4').fill = editFill
+    ws.getCell('B4').border = editBorder
+    ws.getCell('B4').numFmt = '0.0'
+    // B5: Energy
+    ws.getCell('A5').value = 'Energy per Session (kWh)'
+    ws.getCell('A5').font = { bold: true }
+    ws.getCell('B5').value = r1(energyPerSession)
+    ws.getCell('B5').fill = editFill
+    ws.getCell('B5').border = editBorder
+    ws.getCell('B5').numFmt = '0.0'
+    // B6: Slots Needed (formula)
+    ws.getCell('A6').value = 'Slots Needed (auto)'
+    ws.getCell('A6').font = { bold: true, color: { argb: '6B7280' } }
+    ws.getCell('B6').value = { formula: `CEILING(B${PROFILE_ENERGY_ROW}/B${PROFILE_POWER_ROW},1)` }
+    ws.getCell('B6').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F3F4F6' } }
+    ws.getCell('B6').numFmt = '0'
+
+    // Info section
+    let row = 8
+    const vehicle = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId)
+    const info: [string, string | number][] = [
       ['Generated', new Date().toISOString().slice(0, 19)],
       ['Country', country],
       ['Date Range', `Last ${dateRange} days`],
-      ['Resolution', resolution === '15min' ? '15 minutes' : '60 minutes'],
-      ['Mode', showFleet ? 'Fleet' : 'Single EV'],
+      ['Resolution', resolution === '15min' ? '15 min' : '60 min'],
       ['Vehicle', `${vehicle?.label ?? scenario.vehicleId} (${vehicle?.battery_kwh ?? 60} kWh)`],
       ['Plug-in Days', plugInDaysLabel],
       ['Plug-in Time', `${String(scenario.plugInTime).padStart(2, '0')}:00`],
       ['Departure Time', `${String(scenario.departureTime).padStart(2, '0')}:00`],
       ['Charging Mode', scenario.chargingMode],
-      [],
-      ['HOW THE OPTIMIZATION WORKS', ''],
-      ['', ''],
-      ['1. Charging Window', `All price slots from plug-in (${String(scenario.plugInTime).padStart(2, '0')}:00) to departure (${String(scenario.departureTime).padStart(2, '0')}:00 next day)`],
-      ['2. Slots Needed', `= CEILING( Energy / Power ) = B${PROFILE_SLOTS_ROW} slots of ${chargePowerKw} kW each`],
-      ['3. Baseline (ASAP)', `Charge in the first B${PROFILE_SLOTS_ROW} slots after plug-in`],
-      ['4. Optimized (Smart)', `Charge in the cheapest B${PROFILE_SLOTS_ROW} slots in the window`],
-      ['5. Savings per session', '= (Baseline avg ct/kWh - Optimized avg ct/kWh) x Energy kWh / 100'],
-      [],
-      ['SHEET GUIDE', ''],
-      ['Prices', 'Source day-ahead prices (SMARD/ENTSO-E). Key column enables lookups.'],
-      ['Window Prices', 'Every slot per session. Price = INDEX+MATCH from Prices. Rank + Baseline/Optimized = formulas.'],
-      ['Daily Sessions', 'Per-day averages via AVERAGEIFS on Window Prices. Savings = formulas.'],
-      ['Monthly Summary', 'SUMIFS/COUNTIFS on Daily Sessions. Cumulative = running SUM.'],
-      [],
-      ['DYNAMIC BEHAVIOR', ''],
-      ['Change B3 (Power)', 'Slots Needed recalculates -> Baseline/Optimized flags update -> all savings update'],
-      ['Change B4 (Energy)', 'Savings EUR recalculates on Daily Sessions + Monthly Summary'],
     ]
+    for (const [label, val] of info) {
+      ws.getCell(`A${row}`).value = label
+      ws.getCell(`A${row}`).font = { size: 10, color: { argb: '6B7280' } }
+      ws.getCell(`B${row}`).value = val
+      ws.getCell(`B${row}`).font = { size: 10 }
+      row++
+    }
 
-    const wsProfile = XLSX.utils.aoa_to_sheet(profileRows)
-    // SlotsNeeded = CEILING(Energy / Power, 1)
-    wsProfile[`B${PROFILE_SLOTS_ROW}`] = { t: 'n', f: `CEILING(B${PROFILE_ENERGY_ROW}/B${PROFILE_POWER_ROW},1)` }
-    wsProfile['!cols'] = [{ wch: 30 }, { wch: 80 }]
-    XLSX.utils.book_append_sheet(wb, wsProfile, 'Profile')
+    // How it works
+    row += 1
+    ws.getCell(`A${row}`).value = 'HOW THE OPTIMIZATION WORKS'
+    ws.getCell(`A${row}`).font = { bold: true, size: 11, color: { argb: '1F2937' } }
+    row += 1
+    const steps: [string, string][] = [
+      ['1. Charging Window', `All price slots from ${String(scenario.plugInTime).padStart(2, '0')}:00 to ${String(scenario.departureTime).padStart(2, '0')}:00 next day`],
+      ['2. Slots Needed', '= CEILING(Energy / Power) — how many hours to charge'],
+      ['3. Baseline (ASAP)', 'Charge in the first N slots after plug-in (immediate charging)'],
+      ['4. Optimized (Smart)', 'Charge in the cheapest N slots within the window'],
+      ['5. Savings', '= (Baseline avg - Optimized avg) x Energy / 100 EUR'],
+    ]
+    for (const [label, desc] of steps) {
+      ws.getCell(`A${row}`).value = label
+      ws.getCell(`A${row}`).font = { bold: true, size: 10 }
+      ws.getCell(`B${row}`).value = desc
+      ws.getCell(`B${row}`).font = { size: 10, color: { argb: '374151' } }
+      row++
+    }
+
+    row += 1
+    ws.getCell(`A${row}`).value = 'SHEET GUIDE'
+    ws.getCell(`A${row}`).font = { bold: true, size: 11, color: { argb: '1F2937' } }
+    row++
+    const guide: [string, string][] = [
+      ['Prices', 'Source day-ahead prices (SMARD/ENTSO-E). Key column enables lookups.'],
+      ['Window Prices', 'Every slot per session. Price = INDEX+MATCH from Prices. Baseline/Optimized = formulas.'],
+      ['Daily Sessions', 'Per-day AVERAGEIFS on Window Prices. Savings = formula chain to Profile.'],
+      ['Monthly Summary', 'SUMIFS on Daily Sessions. Change Power/Energy above to see updates.'],
+    ]
+    for (const [label, desc] of guide) {
+      ws.getCell(`A${row}`).value = label
+      ws.getCell(`A${row}`).font = { bold: true, size: 10, color: { argb: '059669' } }
+      ws.getCell(`B${row}`).value = desc
+      ws.getCell(`B${row}`).font = { size: 9, color: { argb: '6B7280' } }
+      row++
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // Sheet 2: Prices — raw source data + lookup key
+  // Sheet 2: Prices — source data with lookup key (styled)
   // ═══════════════════════════════════════════════════════════════
   let priceRowCount = 0
   if (sheets.prices) {
+    const ws = wb.addWorksheet('Prices', { properties: { tabColor: { argb: '3B82F6' } } })
+    ws.columns = [
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Hour', key: 'hour', width: 6 },
+      { header: 'Minute', key: 'minute', width: 8 },
+      { header: 'Price (ct/kWh)', key: 'priceCt', width: 16 },
+      { header: 'Price (EUR/MWh)', key: 'priceEur', width: 16 },
+      { header: 'Key', key: 'key', width: 22 },
+    ]
+    styleHeader(ws.getRow(1), 6)
+    ws.views = [{ state: 'frozen', ySplit: 1 }]
+
     const priceSource = resolution === '15min' && hourlyQH.length > 0 ? hourlyQH : hourlyPrices
     const filteredPrices = priceSource
       .filter(p => p.date >= cutoffStr && !p.isProjected)
       .sort((a, b) => a.timestamp - b.timestamp)
-
-    const priceRows: (string | number)[][] = [
-      ['Date', 'Hour', 'Minute', 'Price (ct/kWh)', 'Price (EUR/MWh)', 'Key'],
-    ]
-    for (const p of filteredPrices) {
-      priceRows.push([p.date, p.hour, p.minute ?? 0, r2(p.priceCtKwh), r2(p.priceEurMwh), ''])
-    }
     priceRowCount = filteredPrices.length
 
-    const wsPrices = XLSX.utils.aoa_to_sheet(priceRows)
-    // Key column (F): =A{r}&"-"&TEXT(B{r},"00")&"-"&TEXT(C{r},"00")
     for (let i = 0; i < filteredPrices.length; i++) {
+      const p = filteredPrices[i]
       const r = i + 2
-      wsPrices[`F${r}`] = { t: 's', f: `A${r}&"-"&TEXT(B${r},"00")&"-"&TEXT(C${r},"00")` }
+      const row = ws.getRow(r)
+      row.values = [p.date, p.hour, p.minute ?? 0, r2(p.priceCtKwh), r2(p.priceEurMwh), '']
+      row.getCell(4).numFmt = '0.00'
+      row.getCell(5).numFmt = '0.00'
+      // Key formula
+      ws.getCell(`F${r}`).value = { formula: `A${r}&"-"&TEXT(B${r},"00")&"-"&TEXT(C${r},"00")` }
     }
-    wsPrices['!cols'] = [{ wch: 12 }, { wch: 6 }, { wch: 8 }, { wch: 16 }, { wch: 16 }, { wch: 22 }]
-    XLSX.utils.book_append_sheet(wb, wsPrices, 'Prices')
+    styleAltRows(ws, 2, filteredPrices.length + 1, 6)
+
+    // Conditional formatting: color scale on prices (green=cheap, red=expensive)
+    if (filteredPrices.length > 0) {
+      ws.addConditionalFormatting({
+        ref: `D2:D${filteredPrices.length + 1}`,
+        rules: [{
+          type: 'colorScale',
+          priority: 1,
+          cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
+          color: [{ argb: 'D1FAE5' }, { argb: 'FFFDE7' }, { argb: 'FEE2E2' }],
+        }],
+      })
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // Sheet 3: Window Prices — per-slot with ALL formula columns
-  // A: Session Date, B: Slot Date, C: Hour, D: Minute, E: Key (formula),
-  // F: Price ct/kWh (INDEX+MATCH from Prices), G: Chron# (COUNTIFS),
-  // H: Price Rank (COUNTIFS), I: Baseline? (IF), J: Optimized? (IF)
+  // Sheet 3: Window Prices — per-slot with formula columns (styled)
   // ═══════════════════════════════════════════════════════════════
   let wpRowCount = 0
   if (sheets.daily) {
-    const wpHeader = [
-      'Session Date', 'Slot Date', 'Hour', 'Minute',
-      'Key', 'Price (ct/kWh)', 'Chron#', 'Price Rank',
-      'Baseline?', 'Optimized?',
+    const ws = wb.addWorksheet('Window Prices', { properties: { tabColor: { argb: 'F59E0B' } } })
+    ws.columns = [
+      { header: 'Session Date', key: 'session', width: 12 },
+      { header: 'Slot Date', key: 'slotDate', width: 12 },
+      { header: 'Hour', key: 'hour', width: 6 },
+      { header: 'Minute', key: 'minute', width: 7 },
+      { header: 'Key', key: 'key', width: 20 },
+      { header: 'Price (ct/kWh)', key: 'price', width: 16 },
+      { header: 'Chron#', key: 'chron', width: 8 },
+      { header: 'Price Rank', key: 'rank', width: 10 },
+      { header: 'Baseline?', key: 'baseline', width: 10 },
+      { header: 'Optimized?', key: 'optimized', width: 12 },
     ]
-    const wpRows: (string | number)[][] = [wpHeader]
+    styleHeader(ws.getRow(1), 10)
+    ws.views = [{ state: 'frozen', ySplit: 1 }]
 
+    let rowIdx = 2
     for (const w of allWindows) {
       for (const p of w.prices) {
-        wpRows.push([
-          w.date,           // A: session date
-          p.date,           // B: slot date (may differ for overnight)
-          p.hour,           // C: hour
-          p.minute ?? 0,    // D: minute
-          '', '', 0, 0, '', '', // placeholders for formula columns E-J
-        ])
+        const row = ws.getRow(rowIdx)
+        row.values = [w.date, p.date, p.hour, p.minute ?? 0, '', 0, 0, 0, '', '']
+        rowIdx++
       }
     }
-    wpRowCount = wpRows.length - 1
-    const lastR = wpRowCount + 1 // last data row in Excel
+    wpRowCount = rowIdx - 2
+    const lastR = wpRowCount + 1
 
-    const wsWP = XLSX.utils.aoa_to_sheet(wpRows)
-
-    // Inject formulas for every data row
+    // Inject formulas
     for (let i = 0; i < wpRowCount; i++) {
       const r = i + 2
-
-      // E: Key = SlotDate & "-" & TEXT(Hour,"00") & "-" & TEXT(Minute,"00")
-      wsWP[`E${r}`] = { t: 's', f: `B${r}&"-"&TEXT(C${r},"00")&"-"&TEXT(D${r},"00")` }
-
-      // F: Price = INDEX(Prices!D:D, MATCH(Key, Prices!F:F, 0))
+      ws.getCell(`E${r}`).value = { formula: `B${r}&"-"&TEXT(C${r},"00")&"-"&TEXT(D${r},"00")` }
       if (sheets.prices && priceRowCount > 0) {
-        wsWP[`F${r}`] = { t: 'n', f: `INDEX(Prices!D$2:D$${priceRowCount + 1},MATCH(E${r},Prices!F$2:F$${priceRowCount + 1},0))` }
+        ws.getCell(`F${r}`).value = { formula: `INDEX(Prices!D$2:D$${priceRowCount + 1},MATCH(E${r},Prices!F$2:F$${priceRowCount + 1},0))` }
       }
-
-      // G: Chron# = running count within session (cumulative COUNTIF up to this row)
-      wsWP[`G${r}`] = { t: 'n', f: `COUNTIFS($A$2:A${r},A${r})` }
-
-      // H: Price Rank within session (unique via hour+minute tiebreaker)
-      // = COUNTIFS(session=this, price<this) + COUNTIFS(session=this, price=this, hour<this) + COUNTIFS(session=this, price=this, hour=this, min<this) + 1
-      wsWP[`H${r}`] = { t: 'n', f:
+      ws.getCell(`F${r}`).numFmt = '0.00'
+      ws.getCell(`G${r}`).value = { formula: `COUNTIFS($A$2:A${r},A${r})` }
+      ws.getCell(`H${r}`).value = { formula:
         `COUNTIFS($A$2:$A$${lastR},A${r},$F$2:$F$${lastR},"<"&F${r})`
         + `+COUNTIFS($A$2:$A$${lastR},A${r},$F$2:$F$${lastR},F${r},$C$2:$C$${lastR},"<"&C${r})`
         + `+COUNTIFS($A$2:$A$${lastR},A${r},$F$2:$F$${lastR},F${r},$C$2:$C$${lastR},C${r},$D$2:$D$${lastR},"<"&D${r})`
         + `+1`
       }
-
-      // I: Baseline? = IF(Chron# <= Profile!SlotsNeeded, "YES", "")
-      wsWP[`I${r}`] = { t: 's', f: `IF(G${r}<=Profile!$B$${PROFILE_SLOTS_ROW},"YES","")` }
-
-      // J: Optimized? = IF(PriceRank <= Profile!SlotsNeeded, "YES", "")
-      wsWP[`J${r}`] = { t: 's', f: `IF(H${r}<=Profile!$B$${PROFILE_SLOTS_ROW},"YES","")` }
+      ws.getCell(`I${r}`).value = { formula: `IF(G${r}<=Profile!$B$${PROFILE_SLOTS_ROW},"YES","")` }
+      ws.getCell(`J${r}`).value = { formula: `IF(H${r}<=Profile!$B$${PROFILE_SLOTS_ROW},"YES","")` }
     }
 
-    wsWP['!cols'] = [
-      { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 7 },
-      { wch: 20 }, { wch: 16 }, { wch: 8 }, { wch: 10 },
-      { wch: 10 }, { wch: 12 },
-    ]
-    XLSX.utils.book_append_sheet(wb, wsWP, 'Window Prices')
+    // Conditional formatting: highlight Baseline=YES in red-100, Optimized=YES in green-100
+    if (wpRowCount > 0) {
+      ws.addConditionalFormatting({
+        ref: `I2:I${lastR}`,
+        rules: [{ type: 'containsText', operator: 'containsText', text: 'YES', priority: 2,
+          style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: COLORS.baselineBg } }, font: { color: { argb: COLORS.red }, bold: true } } }],
+      })
+      ws.addConditionalFormatting({
+        ref: `J2:J${lastR}`,
+        rules: [{ type: 'containsText', operator: 'containsText', text: 'YES', priority: 3,
+          style: { fill: { type: 'pattern', pattern: 'solid', bgColor: { argb: COLORS.optimizedBg } }, font: { color: { argb: COLORS.emerald }, bold: true } } }],
+      })
+      // Color scale on price column
+      ws.addConditionalFormatting({
+        ref: `F2:F${lastR}`,
+        rules: [{
+          type: 'colorScale',
+          priority: 4,
+          cfvo: [{ type: 'min' }, { type: 'percentile', value: 50 }, { type: 'max' }],
+          color: [{ argb: 'D1FAE5' }, { argb: 'FFFDE7' }, { argb: 'FEE2E2' }],
+        }],
+      })
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // Sheet 4: Daily Sessions — ALL values are formulas from Window Prices
+  // Sheet 4: Daily Sessions — formula-driven summaries (styled)
   // ═══════════════════════════════════════════════════════════════
   if (sheets.daily) {
-    const dailyHeader = [
-      'Date',                       // A
-      'Day',                        // B
-      'Selected?',                  // C
-      'Baseline Avg (ct/kWh)',      // D — AVERAGEIFS formula
-      'Optimized Avg (ct/kWh)',     // E — AVERAGEIFS formula
-      'Savings (ct/kWh)',           // F — formula D-E
-      'Savings (EUR)',              // G — formula F*Energy/100
-      'Energy (kWh)',               // H — from Profile
-      'Window Spread (ct)',         // I — MAXIFS-MINIFS formula
-      'Slots in Window',            // J — COUNTIF formula
+    const ws = wb.addWorksheet('Daily Sessions', { properties: { tabColor: { argb: '10B981' } } })
+    ws.columns = [
+      { header: 'Date', key: 'date', width: 12 },
+      { header: 'Day', key: 'day', width: 5 },
+      { header: 'Selected?', key: 'selected', width: 10 },
+      { header: 'Baseline Avg (ct/kWh)', key: 'bAvg', width: 22 },
+      { header: 'Optimized Avg (ct/kWh)', key: 'oAvg', width: 22 },
+      { header: 'Savings (ct/kWh)', key: 'savCt', width: 16 },
+      { header: 'Savings (EUR)', key: 'savEur', width: 14 },
+      { header: 'Energy (kWh)', key: 'energy', width: 12 },
+      { header: 'Spread (ct)', key: 'spread', width: 14 },
+      { header: 'Slots', key: 'slots', width: 8 },
     ]
-    const dailyRows: (string | number)[][] = [dailyHeader]
+    styleHeader(ws.getRow(1), 10)
+    ws.views = [{ state: 'frozen', ySplit: 1 }]
 
-    for (const w of allWindows) {
-      const dow = new Date(w.date + 'T12:00:00Z').getUTCDay()
-      const isSelected = !plugInDays || plugInDays.includes(dow as DayOfWeek)
-      dailyRows.push([
-        w.date,
-        dowNames[dow],
-        isSelected ? 'YES' : '',
-        0, 0, 0, 0, 0, 0, 0, // all formula placeholders
-      ])
-    }
-
-    const wsDaily = XLSX.utils.aoa_to_sheet(dailyRows)
     const wpLast = wpRowCount + 1
 
     for (let i = 0; i < allWindows.length; i++) {
+      const w = allWindows[i]
       const r = i + 2
-      // D: Baseline Avg = AVERAGEIFS(Window Prices price, session=date, baseline="YES")
-      wsDaily[`D${r}`] = { t: 'n', f: `AVERAGEIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r},'Window Prices'!I$2:I$${wpLast},"YES")` }
-      // E: Optimized Avg
-      wsDaily[`E${r}`] = { t: 'n', f: `AVERAGEIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r},'Window Prices'!J$2:J$${wpLast},"YES")` }
-      // F: Savings ct/kWh
-      wsDaily[`F${r}`] = { t: 'n', f: `D${r}-E${r}` }
-      // G: Savings EUR = savings_ct * energy / 100
-      wsDaily[`G${r}`] = { t: 'n', f: `F${r}*Profile!$B$${PROFILE_ENERGY_ROW}/100` }
-      // H: Energy per Session (from Profile)
-      wsDaily[`H${r}`] = { t: 'n', f: `Profile!$B$${PROFILE_ENERGY_ROW}` }
-      // I: Window Spread = MAX - MIN of prices in this session
-      wsDaily[`I${r}`] = { t: 'n', f: `MAXIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r})-MINIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r})` }
-      // J: Slots in Window = COUNTIF
-      wsDaily[`J${r}`] = { t: 'n', f: `COUNTIF('Window Prices'!A$2:A$${wpLast},A${r})` }
+      const dow = new Date(w.date + 'T12:00:00Z').getUTCDay()
+      const isSelected = !plugInDays || plugInDays.includes(dow as DayOfWeek)
+
+      const row = ws.getRow(r)
+      row.values = [w.date, dowNames[dow], isSelected ? 'YES' : '', 0, 0, 0, 0, 0, 0, 0]
+
+      ws.getCell(`D${r}`).value = { formula: `AVERAGEIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r},'Window Prices'!I$2:I$${wpLast},"YES")` }
+      ws.getCell(`D${r}`).numFmt = '0.00'
+      ws.getCell(`E${r}`).value = { formula: `AVERAGEIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r},'Window Prices'!J$2:J$${wpLast},"YES")` }
+      ws.getCell(`E${r}`).numFmt = '0.00'
+      ws.getCell(`F${r}`).value = { formula: `D${r}-E${r}` }
+      ws.getCell(`F${r}`).numFmt = '0.00'
+      ws.getCell(`G${r}`).value = { formula: `F${r}*Profile!$B$${PROFILE_ENERGY_ROW}/100` }
+      ws.getCell(`G${r}`).numFmt = '0.0000'
+      ws.getCell(`H${r}`).value = { formula: `Profile!$B$${PROFILE_ENERGY_ROW}` }
+      ws.getCell(`H${r}`).numFmt = '0.0'
+      ws.getCell(`I${r}`).value = { formula: `MAXIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r})-MINIFS('Window Prices'!F$2:F$${wpLast},'Window Prices'!A$2:A$${wpLast},A${r})` }
+      ws.getCell(`I${r}`).numFmt = '0.00'
+      ws.getCell(`J${r}`).value = { formula: `COUNTIF('Window Prices'!A$2:A$${wpLast},A${r})` }
+
+      // Green bg for selected days
+      if (isSelected) {
+        for (let c = 1; c <= 10; c++) {
+          row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.selectedBg } }
+        }
+      }
     }
 
-    wsDaily['!cols'] = [
-      { wch: 12 }, { wch: 5 }, { wch: 10 },
-      { wch: 22 }, { wch: 24 }, { wch: 18 },
-      { wch: 14 }, { wch: 12 }, { wch: 18 }, { wch: 14 },
-    ]
-    XLSX.utils.book_append_sheet(wb, wsDaily, 'Daily Sessions')
+    // Data bars on Savings EUR column
+    if (allWindows.length > 0) {
+      const dLast = allWindows.length + 1
+      ws.addConditionalFormatting({
+        ref: `G2:G${dLast}`,
+        rules: [{
+          type: 'dataBar',
+          priority: 5,
+          minLength: 0, maxLength: 100,
+          gradient: true,
+          cfvo: [{ type: 'min' }, { type: 'max' }],
+        }],
+      })
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
-  // Sheet 5: Monthly Summary — SUMIFS/COUNTIFS from Daily Sessions
+  // Sheet 5: Monthly Summary — with chart-like data bars (styled)
   // ═══════════════════════════════════════════════════════════════
   if (sheets.monthly && sheets.daily) {
+    const ws = wb.addWorksheet('Monthly Summary', { properties: { tabColor: { argb: '8B5CF6' } } })
+    ws.columns = [
+      { header: 'Month', key: 'month', width: 10 },
+      { header: 'Total Days', key: 'totalDays', width: 10 },
+      { header: 'Sessions', key: 'sessions', width: 10 },
+      { header: 'Avg Spread (ct)', key: 'spread', width: 16 },
+      { header: 'Avg Savings (ct/kWh)', key: 'savCt', width: 20 },
+      { header: 'Monthly Savings (EUR)', key: 'savEur', width: 20 },
+      { header: 'Cumulative (EUR)', key: 'cumul', width: 18 },
+    ]
+    styleHeader(ws.getRow(1), 7)
+    ws.views = [{ state: 'frozen', ySplit: 1 }]
+
     const monthSet = new Set<string>()
     for (const w of allWindows) monthSet.add(w.month)
     const months = [...monthSet].sort()
@@ -596,45 +740,71 @@ export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
     const dGR = `'Daily Sessions'!G$2:G$${dLast}`
     const dIR = `'Daily Sessions'!I$2:I$${dLast}`
 
-    const monthlyHeader = [
-      'Month', 'Total Days', 'Charging Sessions',
-      'Avg Spread (ct)', 'Avg Savings (ct/kWh)',
-      'Monthly Savings (EUR)', 'Cumulative (EUR)',
-    ]
-    const monthlyRows: (string | number)[][] = [monthlyHeader]
-    for (const month of months) monthlyRows.push([month, 0, 0, 0, 0, 0, 0])
-
-    const wsMonthly = XLSX.utils.aoa_to_sheet(monthlyRows)
-
     for (let i = 0; i < months.length; i++) {
       const r = i + 2
       const crit = `A${r}&"*"`
-      wsMonthly[`B${r}`] = { t: 'n', f: `COUNTIF(${dDateR},${crit})` }
-      wsMonthly[`C${r}`] = { t: 'n', f: `COUNTIFS(${dDateR},${crit},${dSelR},"YES")` }
-      wsMonthly[`D${r}`] = { t: 'n', f: `AVERAGEIFS(${dIR},${dDateR},${crit},${dSelR},"YES")` }
-      wsMonthly[`E${r}`] = { t: 'n', f: `AVERAGEIFS(${dFR},${dDateR},${crit},${dSelR},"YES")` }
-      wsMonthly[`F${r}`] = { t: 'n', f: `SUMIFS(${dGR},${dDateR},${crit},${dSelR},"YES")` }
-      wsMonthly[`G${r}`] = { t: 'n', f: `SUM(F$2:F${r})` }
+      ws.getRow(r).values = [months[i], 0, 0, 0, 0, 0, 0]
+      ws.getCell(`B${r}`).value = { formula: `COUNTIF(${dDateR},${crit})` }
+      ws.getCell(`C${r}`).value = { formula: `COUNTIFS(${dDateR},${crit},${dSelR},"YES")` }
+      ws.getCell(`D${r}`).value = { formula: `AVERAGEIFS(${dIR},${dDateR},${crit},${dSelR},"YES")` }
+      ws.getCell(`D${r}`).numFmt = '0.00'
+      ws.getCell(`E${r}`).value = { formula: `AVERAGEIFS(${dFR},${dDateR},${crit},${dSelR},"YES")` }
+      ws.getCell(`E${r}`).numFmt = '0.00'
+      ws.getCell(`F${r}`).value = { formula: `SUMIFS(${dGR},${dDateR},${crit},${dSelR},"YES")` }
+      ws.getCell(`F${r}`).numFmt = '0.00'
+      ws.getCell(`G${r}`).value = { formula: `SUM(F$2:F${r})` }
+      ws.getCell(`G${r}`).numFmt = '0.00'
     }
 
-    const tRow = months.length + 2
-    monthlyRows.push(['TOTAL', 0, 0, 0, 0, 0, ''])
-    wsMonthly[`A${tRow}`] = { t: 's', v: 'TOTAL' }
-    wsMonthly[`B${tRow}`] = { t: 'n', f: `SUM(B2:B${tRow - 1})` }
-    wsMonthly[`C${tRow}`] = { t: 'n', f: `SUM(C2:C${tRow - 1})` }
-    wsMonthly[`E${tRow}`] = { t: 'n', f: `AVERAGE(E2:E${tRow - 1})` }
-    wsMonthly[`F${tRow}`] = { t: 'n', f: `SUM(F2:F${tRow - 1})` }
+    styleAltRows(ws, 2, months.length + 1, 7)
 
-    wsMonthly['!cols'] = [
-      { wch: 10 }, { wch: 10 }, { wch: 16 },
-      { wch: 16 }, { wch: 22 }, { wch: 22 }, { wch: 18 },
-    ]
-    XLSX.utils.book_append_sheet(wb, wsMonthly, 'Monthly Summary')
+    // Total row
+    const tRow = months.length + 2
+    const totalRow = ws.getRow(tRow)
+    totalRow.values = ['TOTAL', 0, 0, '', 0, 0, '']
+    totalRow.font = { bold: true, size: 11 }
+    totalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F3F4F6' } }
+    ws.getCell(`B${tRow}`).value = { formula: `SUM(B2:B${tRow - 1})` }
+    ws.getCell(`C${tRow}`).value = { formula: `SUM(C2:C${tRow - 1})` }
+    ws.getCell(`E${tRow}`).value = { formula: `AVERAGE(E2:E${tRow - 1})` }
+    ws.getCell(`E${tRow}`).numFmt = '0.00'
+    ws.getCell(`F${tRow}`).value = { formula: `SUM(F2:F${tRow - 1})` }
+    ws.getCell(`F${tRow}`).numFmt = '0.00'
+
+    // Data bars on Monthly Savings EUR column (chart-like visualization)
+    if (months.length > 0) {
+      ws.addConditionalFormatting({
+        ref: `F2:F${months.length + 1}`,
+        rules: [{
+          type: 'dataBar',
+          priority: 6,
+          minLength: 0, maxLength: 100,
+          gradient: true,
+          cfvo: [{ type: 'min' }, { type: 'max' }],
+        }],
+      })
+      // Data bars on Cumulative column too
+      ws.addConditionalFormatting({
+        ref: `G2:G${months.length + 1}`,
+        rules: [{
+          type: 'dataBar',
+          priority: 7,
+          minLength: 0, maxLength: 100,
+          gradient: true,
+          cfvo: [{ type: 'num', value: 0 }, { type: 'max' }],
+        }],
+      })
+    }
   } else if (sheets.monthly && !sheets.daily) {
-    // Fallback: static monthly (no Window Prices to reference)
-    const chargingWindows = plugInDays
-      ? allWindows.filter(w => plugInDays.includes(w.dow as DayOfWeek))
-      : allWindows
+    // Static fallback (no Window Prices)
+    const ws = wb.addWorksheet('Monthly Summary', { properties: { tabColor: { argb: '8B5CF6' } } })
+    ws.columns = [
+      { header: 'Month', width: 10 }, { header: 'Sessions', width: 10 },
+      { header: 'Avg Spread (ct)', width: 16 }, { header: 'Avg Savings (ct/kWh)', width: 22 },
+      { header: 'Monthly Savings (EUR)', width: 22 }, { header: 'Cumulative (EUR)', width: 18 },
+    ]
+    styleHeader(ws.getRow(1), 6)
+    const chargingWindows = plugInDays ? allWindows.filter(w => plugInDays.includes(w.dow as DayOfWeek)) : allWindows
     const monthMap = new Map<string, { sum: number; count: number; spreadSum: number; savingsCtSum: number }>()
     for (const w of chargingWindows) {
       const e = monthMap.get(w.month) || { sum: 0, count: 0, spreadSum: 0, savingsCtSum: 0 }
@@ -644,19 +814,26 @@ export function generateEnhancedExcel(opts: EnhancedExportOptions): void {
       e.count++
       monthMap.set(w.month, e)
     }
-    const monthlyRows: (string | number)[][] = [
-      ['Month', 'Sessions', 'Avg Spread (ct)', 'Avg Savings (ct/kWh)', 'Monthly Savings (EUR)', 'Cumulative (EUR)'],
-    ]
     let cumulative = 0
+    let r = 2
     for (const [month, d] of [...monthMap.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       cumulative += d.sum
-      monthlyRows.push([month, d.count, r2(d.spreadSum / d.count), r2(d.savingsCtSum / d.count), r2(d.sum), r2(cumulative)])
+      ws.getRow(r).values = [month, d.count, r2(d.spreadSum / d.count), r2(d.savingsCtSum / d.count), r2(d.sum), r2(cumulative)]
+      r++
     }
-    const wsMonthly = XLSX.utils.aoa_to_sheet(monthlyRows)
-    wsMonthly['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 16 }, { wch: 22 }, { wch: 22 }, { wch: 18 }]
-    XLSX.utils.book_append_sheet(wb, wsMonthly, 'Monthly Summary')
+    styleAltRows(ws, 2, r - 1, 6)
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Download
+  // ═══════════════════════════════════════════════════════════════
+  const buffer = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
   const mode = showFleet ? 'fleet' : 'single'
-  XLSX.writeFile(wb, `flex-export-${mode}-${country}-${dateRange}d-${new Date().toISOString().slice(0, 10)}.xlsx`)
+  a.href = url
+  a.download = `flex-export-${mode}-${country}-${dateRange}d-${new Date().toISOString().slice(0, 10)}.xlsx`
+  a.click()
+  URL.revokeObjectURL(url)
 }
