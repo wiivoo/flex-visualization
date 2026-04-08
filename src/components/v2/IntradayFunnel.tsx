@@ -226,7 +226,6 @@ function computeFunnelData(
  */
 export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: IntradayFunnelProps) {
   const [stageIndex, setStageIndex] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
 
   const funnelData = useMemo(() => {
     if (!active || intradayFull.length === 0) return new Map<FunnelStage, FunnelPoint[]>()
@@ -275,8 +274,6 @@ export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: Intr
     goToStage,
     nextStage,
     prevStage,
-    isPlaying,
-    setIsPlaying,
     hasFunnelData: funnelData.size > 0 && currentPoints.length > 0,
   }
 }
@@ -289,50 +286,27 @@ export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: Intr
  */
 export function FunnelTimeline({
   stageIndex,
-  totalStages,
   stages,
   currentState,
   goToStage,
-  isPlaying,
-  setIsPlaying,
-  onPlay,
+  nextStage,
+  prevStage,
 }: {
   stageIndex: number
-  totalStages: number
   stages: typeof FUNNEL_STAGES
   currentState: FunnelState
   goToStage: (idx: number) => void
-  isPlaying: boolean
-  setIsPlaying: (v: boolean) => void
-  onPlay?: () => void
+  nextStage: () => void
+  prevStage: () => void
 }) {
   return (
-    <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg">
-      {/* Play button */}
-      <button
-        onClick={() => {
-          if (isPlaying) {
-            setIsPlaying(false)
-          } else {
-            setIsPlaying(true)
-            onPlay?.()
-          }
-        }}
-        className="w-7 h-7 flex items-center justify-center rounded-full bg-white shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors"
-        title={isPlaying ? 'Pause' : 'Play convergence animation'}
-      >
-        {isPlaying ? (
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <rect x="1" y="1" width="3" height="8" fill="#374151" />
-            <rect x="6" y="1" width="3" height="8" fill="#374151" />
-          </svg>
-        ) : (
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <polygon points="2,0 10,5 2,10" fill="#374151" />
-          </svg>
-        )}
-      </button>
-
+    <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight') { e.preventDefault(); nextStage() }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); prevStage() }
+      }}
+    >
       {/* Stage markers */}
       <div className="flex items-center gap-0 flex-1">
         {stages.map((stage, idx) => (

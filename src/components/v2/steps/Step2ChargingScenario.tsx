@@ -656,17 +656,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   // Final chart data: funnel-enriched when active, otherwise enrichedChartData
   const finalChartData = showFunnel && funnel.hasFunnelData ? chartDataWithFunnel : enrichedChartData
 
-  // Auto-play funnel animation
-  useEffect(() => {
-    if (!funnel.isPlaying) return
-    if (funnel.stageIndex >= funnel.totalStages - 1) {
-      funnel.setIsPlaying(false)
-      return
-    }
-    const timer = setTimeout(() => funnel.nextStage(), 1500)
-    return () => clearTimeout(timer)
-  }, [funnel.isPlaying, funnel.stageIndex, funnel.totalStages, funnel.nextStage, funnel.setIsPlaying])
-
   // ── 365-day rolling average — expensive scan over all hourly prices ──
   // Uses deferred plug-in/departure values so it doesn't block drag interactions
   // Mode-aware: builds appropriate windows for overnight/fullday/threeday
@@ -3090,13 +3079,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             <div className="px-3 pb-2">
               <FunnelTimeline
                 stageIndex={funnel.stageIndex}
-                totalStages={funnel.totalStages}
                 stages={funnel.stages}
                 currentState={funnel.currentState}
                 goToStage={funnel.goToStage}
-                isPlaying={funnel.isPlaying}
-                setIsPlaying={funnel.setIsPlaying}
-                onPlay={() => { funnel.goToStage(0); funnel.setIsPlaying(true) }}
+                nextStage={funnel.nextStage}
+                prevStage={funnel.prevStage}
               />
             </div>
           )}
