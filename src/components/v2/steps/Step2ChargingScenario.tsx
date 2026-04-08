@@ -2068,10 +2068,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   )}
                 </p>
               </div>
-              <div className="flex items-center gap-2">
-                {/* Data source toggle: DA / DA+ID / Funnel */}
+              <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
+                {/* Data source toggle: DA / DA+ID / ID Funnel */}
                 {hasIntraday && (
-                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                     <button
                       onClick={() => { setShowIntraday(false); setShowFunnel(false) }}
                       className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!showIntraday && !showFunnel ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
@@ -2092,7 +2092,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     )}
                   </div>
                 )}
-                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                   <button
                     onClick={() => setCountry?.('DE')}
                     title="Germany (DE-LU bidding zone)"
@@ -2110,7 +2110,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </button>
                 </div>
                 {/* Mode toggle */}
-                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                   <button onClick={() => {
                     // Overnight default: plugIn 18:00, departure next day 06:00 (12h window)
                     const newPlugIn = Math.max(PLUGIN_HOUR_MIN, Math.min(PLUGIN_HOUR_MAX, scenario.plugInTime))
@@ -2138,7 +2138,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     72h
                   </button>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-shrink-0">
                 {isQH && isQHSynthesized && (
                   <TooltipProvider delayDuration={100}>
                     <UITooltip>
@@ -2842,8 +2842,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     {totalSavingsCt > 0 && (
                       <div className="absolute pointer-events-none z-10"
                         style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
-                        <div className="flex items-center gap-1.5">
-                          <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
+                        <div className="flex items-center gap-1.5 flex-nowrap">
+                          <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
                             <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
                               {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(1)} ct/kWh
                             </span>
@@ -2851,8 +2851,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                               {totalSavingsEur.toFixed(2)} € {isV2G ? (v2gHasNetCharge ? 'benefit' : 'arbitrage') : 'saved'}
                             </span>
                           </div>
-                          {showIntraday && hasIntraday && intradayUpliftEur > 0 && (
-                            <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 bg-sky-50/80 border-sky-300/50">
+                          {/* Hide ID3 uplift pill when funnel is active (funnel timeline shows its own savings) */}
+                          {showIntraday && !showFunnel && hasIntraday && intradayUpliftEur > 0 && (
+                            <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 bg-sky-50/80 border-sky-300/50 flex-shrink-0">
                               <span className="text-[11px] font-bold tabular-nums whitespace-nowrap text-sky-700">
                                 +{intradayUpliftCt.toFixed(1)} ct
                               </span>
