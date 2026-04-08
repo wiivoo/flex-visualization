@@ -575,9 +575,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   }, [hasIntraday, showIntraday])
 
   // ── Intraday convergence funnel ──
-  const [showFunnel, setShowFunnel] = useState(false)
+  // Always compute when intraday is shown; funnel activates when user clicks a stage
   const funnelDaPrices = useMemo(() => {
-    if (!showFunnel) return []
+    if (!showIntraday) return []
     return chartData
       .filter(d => d.price !== null)
       .map(d => ({
@@ -587,14 +587,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         minute: d.minute,
         priceCtKwh: d.priceVal,
       }))
-  }, [chartData, showFunnel])
+  }, [chartData, showIntraday])
 
   const funnel = useIntradayFunnel({
     intradayFull: prices.intradayFull ?? [],
     daPrices: funnelDaPrices,
-    active: showFunnel && showIntraday,
+    active: showIntraday,
     isQH,
   })
+  // Funnel overlay is active when user has selected a stage (not -1)
+  const showFunnel = funnel.stageIndex >= 0
 
   // Funnel chart data: merge corridor + re-optimized charging slots into chart
   const chartDataWithFunnel = useMemo(() => {
@@ -2058,27 +2060,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 </p>
               </div>
               <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
-                {/* Data source toggle: DA / DA+ID / ID Funnel */}
+                {/* Data source toggle: DA / DA+ID */}
                 {hasIntraday && (
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                     <button
-                      onClick={() => { setShowIntraday(false); setShowFunnel(false) }}
-                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!showIntraday && !showFunnel ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                      onClick={() => setShowIntraday(false)}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!showIntraday ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                       DA
                     </button>
                     <button
-                      onClick={() => { setShowIntraday(true); setShowFunnel(false) }}
-                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showIntraday && !showFunnel ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                      onClick={() => setShowIntraday(true)}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showIntraday ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                       DA+ID
                     </button>
-                    {(prices.intradayFull ?? []).length > 0 && (
-                      <button
-                        onClick={() => { setShowIntraday(true); setShowFunnel(true) }}
-                        title="Show intraday price convergence funnel"
-                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showFunnel ? 'bg-sky-100 text-sky-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                        ID Funnel
-                      </button>
-                    )}
                   </div>
                 )}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
@@ -3074,8 +3068,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
 
-          {/* Intraday convergence funnel timeline */}
-          {showFunnel && funnel.hasFunnelData && (
+          {/* Intraday convergence funnel timeline — shown when DA+ID active */}
+          {showIntraday && funnel.hasFunnelData && (
             <div className="px-3 pb-2">
               <FunnelTimeline
                 stageIndex={funnel.stageIndex}

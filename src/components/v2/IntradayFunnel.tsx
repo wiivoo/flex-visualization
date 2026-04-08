@@ -225,15 +225,15 @@ function computeFunnelData(
  * Used by Step2 to overlay funnel visualization on the chart.
  */
 export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: IntradayFunnelProps) {
-  const [stageIndex, setStageIndex] = useState(0)
+  const [stageIndex, setStageIndex] = useState(-1)  // -1 = no stage selected
 
   const funnelData = useMemo(() => {
     if (!active || intradayFull.length === 0) return new Map<FunnelStage, FunnelPoint[]>()
     return computeFunnelData(intradayFull, daPrices, isQH)
   }, [intradayFull, daPrices, active, isQH])
 
-  const currentStage = FUNNEL_STAGES[stageIndex]
-  const currentPoints = funnelData.get(currentStage.key) ?? []
+  const currentStage = stageIndex >= 0 ? FUNNEL_STAGES[stageIndex] : null
+  const currentPoints = currentStage ? (funnelData.get(currentStage.key) ?? []) : []
 
   // DA stage points for savings comparison
   const daPoints = funnelData.get('da') ?? []
@@ -246,7 +246,7 @@ export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: Intr
     : 0
 
   const currentState: FunnelState = {
-    stage: currentStage.key,
+    stage: currentStage?.key ?? 'da',
     stageIndex,
     points: currentPoints,
     avgPrice: Math.round(currentAvg * 100) / 100,
@@ -254,7 +254,8 @@ export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: Intr
   }
 
   const goToStage = useCallback((idx: number) => {
-    setStageIndex(Math.max(0, Math.min(idx, FUNNEL_STAGES.length - 1)))
+    // Toggle: clicking the active stage deselects it
+    setStageIndex(prev => prev === idx ? -1 : Math.max(0, Math.min(idx, FUNNEL_STAGES.length - 1)))
   }, [])
 
   const nextStage = useCallback(() => {
@@ -262,7 +263,7 @@ export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: Intr
   }, [])
 
   const prevStage = useCallback(() => {
-    setStageIndex(prev => Math.max(prev - 1, 0))
+    setStageIndex(prev => prev <= 0 ? -1 : prev - 1)
   }, [])
 
   return {
