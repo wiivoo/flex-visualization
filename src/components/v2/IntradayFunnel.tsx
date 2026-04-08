@@ -149,38 +149,49 @@ function computeFunnelData(
       const low = p.low_ct ?? daPrice
       const high = p.high_ct ?? daPrice
 
-      // At each stage, the "best known" price converges toward settlement
+      // At each stage, the "best known" price converges toward settlement.
+      //
+      // The corridor [low, high] represents the actual EPEX continuous trading range
+      // for this QH — it's real data, not synthetic. It stays the same across intraday
+      // stages because it's the observed range of all trades.
+      //
+      // What converges is the PRICE LINE: DA → ID3 → ID1 → ID Full → Last.
+      // Each step uses a more refined volume-weighted average closer to delivery.
+      //
+      // At the DA stage there's no intraday data yet, so no corridor is shown.
+      // At the Last stage the corridor collapses to the final trade price.
       let price: number
       let corridorLow: number
       let corridorHigh: number
 
       switch (stage.key) {
         case 'da':
-          // Only DA known — corridor is full Low-High range
+          // DA auction only — no intraday data yet, no corridor
           price = daPrice
+          corridorLow = daPrice
+          corridorHigh = daPrice
+          break
+        case 'id3':
+          // 3h before delivery — show full trading range as context
+          price = p.id3_ct ?? daPrice
           corridorLow = low
           corridorHigh = high
           break
-        case 'id3':
-          // ID3 known — corridor narrows
-          price = p.id3_ct ?? daPrice
-          corridorLow = Math.max(low, Math.min(price - Math.abs(high - low) * 0.35, price))
-          corridorHigh = Math.min(high, Math.max(price + Math.abs(high - low) * 0.35, price))
-          break
         case 'id1':
-          // ID1 known — corridor narrows further
+          // 1h before delivery — same range, more refined price
           price = p.id1_ct ?? p.id3_ct ?? daPrice
-          corridorLow = Math.max(low, Math.min(price - Math.abs(high - low) * 0.2, price))
-          corridorHigh = Math.min(high, Math.max(price + Math.abs(high - low) * 0.2, price))
+          corridorLow = low
+          corridorHigh = high
           break
         case 'id_full':
-          // ID Full — near-final, tight corridor
+          // Full session average — tighten corridor to ID1..ID3 range
+          // (by now most of the trading is done, outliers are less relevant)
           price = p.id_full_ct ?? p.id1_ct ?? daPrice
-          corridorLow = Math.max(low, Math.min(price - Math.abs(high - low) * 0.1, price))
-          corridorHigh = Math.min(high, Math.max(price + Math.abs(high - low) * 0.1, price))
+          corridorLow = Math.min(p.id3_ct ?? low, p.id1_ct ?? low, price)
+          corridorHigh = Math.max(p.id3_ct ?? high, p.id1_ct ?? high, price)
           break
         case 'last':
-          // Last trade — corridor collapses to a point
+          // Final trade — corridor collapses to settlement
           price = p.last_ct ?? p.id_full_ct ?? daPrice
           corridorLow = price
           corridorHigh = price
