@@ -593,6 +593,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     intradayFull: prices.intradayFull ?? [],
     daPrices: funnelDaPrices,
     active: showFunnel && showIntraday,
+    isQH,
   })
 
   // Funnel chart data: merge corridor + re-optimized charging slots into chart

@@ -69,18 +69,65 @@ interface IntradayFunnelProps {
   daPrices: { timestamp: string; date: string; hour: number; minute: number; priceCtKwh: number }[]
   /** Whether the funnel is active/visible */
   active: boolean
+  /** Chart resolution — when 'hour', aggregate QH intraday data to hourly averages */
+  isQH: boolean
 }
 
 /**
  * Compute funnel data for all stages.
  * Returns a map of stage → FunnelPoint[].
  */
+/** Aggregate QH intraday data to hourly: average 4 quarter-hour values per hour */
+function aggregateToHourly(points: IntradayFullPoint[]): IntradayFullPoint[] {
+  const buckets = new Map<string, IntradayFullPoint[]>()
+  for (const p of points) {
+    const key = `${p.date}-${p.hour}`
+    const arr = buckets.get(key) || []
+    arr.push(p)
+    buckets.set(key, arr)
+  }
+
+  const result: IntradayFullPoint[] = []
+  for (const [, group] of buckets) {
+    const avg = (field: keyof IntradayFullPoint) => {
+      const vals = group.map(p => p[field] as number | null).filter((v): v is number => v !== null)
+      return vals.length > 0 ? Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 100) / 100 : null
+    }
+    const sumField = (field: keyof IntradayFullPoint) => {
+      const vals = group.map(p => p[field] as number | null).filter((v): v is number => v !== null)
+      return vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v, 0) * 100) / 100 : null
+    }
+    result.push({
+      timestamp: group[0].timestamp,
+      date: group[0].date,
+      hour: group[0].hour,
+      minute: 0,
+      price_ct_kwh: avg('price_ct_kwh'),
+      id_full_ct: avg('id_full_ct'),
+      id1_ct: avg('id1_ct'),
+      id3_ct: avg('id3_ct'),
+      weight_avg_ct: avg('weight_avg_ct'),
+      low_ct: avg('low_ct'),
+      high_ct: avg('high_ct'),
+      last_ct: avg('last_ct'),
+      buy_vol_mwh: sumField('buy_vol_mwh'),
+      sell_vol_mwh: sumField('sell_vol_mwh'),
+      volume_mwh: sumField('volume_mwh'),
+    })
+  }
+  return result.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : a.hour - b.hour)
+}
+
 function computeFunnelData(
   intradayFull: IntradayFullPoint[],
-  daPrices: { timestamp: string; date: string; hour: number; minute: number; priceCtKwh: number }[]
+  daPrices: { timestamp: string; date: string; hour: number; minute: number; priceCtKwh: number }[],
+  isQH: boolean
 ): Map<FunnelStage, FunnelPoint[]> {
   const result = new Map<FunnelStage, FunnelPoint[]>()
   if (intradayFull.length === 0) return result
+
+  // When chart is hourly, aggregate QH intraday to hourly averages (matching DA+ID behavior)
+  const intraday = isQH ? intradayFull : aggregateToHourly(intradayFull)
 
   // Build DA price lookup by date-hour-minute key
   const daMap = new Map<string, number>()
@@ -89,12 +136,12 @@ function computeFunnelData(
   }
 
   // Find max volume for opacity normalization
-  const maxVol = Math.max(...intradayFull.map(p => p.volume_mwh ?? 0), 1)
+  const maxVol = Math.max(...intraday.map(p => p.volume_mwh ?? 0), 1)
 
   for (const stage of FUNNEL_STAGES) {
     const points: FunnelPoint[] = []
 
-    for (const p of intradayFull) {
+    for (const p of intraday) {
       const key = `${p.date}-${p.hour}-${p.minute}`
       const daPrice = daMap.get(key)
       if (daPrice === undefined) continue // no matching DA price
@@ -166,14 +213,14 @@ function computeFunnelData(
  * Computes funnel data and exposes stage navigation.
  * Used by Step2 to overlay funnel visualization on the chart.
  */
-export function useIntradayFunnel({ intradayFull, daPrices, active }: IntradayFunnelProps) {
+export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: IntradayFunnelProps) {
   const [stageIndex, setStageIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
 
   const funnelData = useMemo(() => {
     if (!active || intradayFull.length === 0) return new Map<FunnelStage, FunnelPoint[]>()
-    return computeFunnelData(intradayFull, daPrices)
-  }, [intradayFull, daPrices, active])
+    return computeFunnelData(intradayFull, daPrices, isQH)
+  }, [intradayFull, daPrices, active, isQH])
 
   const currentStage = FUNNEL_STAGES[stageIndex]
   const currentPoints = funnelData.get(currentStage.key) ?? []
