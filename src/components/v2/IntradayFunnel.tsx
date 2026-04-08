@@ -275,7 +275,7 @@ export function useIntradayFunnel({ intradayFull, daPrices, active, isQH }: Intr
     goToStage,
     nextStage,
     prevStage,
-    hasFunnelData: funnelData.size > 0 && currentPoints.length > 0,
+    hasFunnelData: funnelData.size > 0,
   }
 }
 
