@@ -9,6 +9,25 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { HourlyPrice, DailySummary, MonthlyStats, GenerationData } from '@/lib/v2-config'
 
+/** Full intraday data point with all EPEX fields (ct/kWh for prices, MWh for volumes) */
+export interface IntradayFullPoint {
+  timestamp: string       // ISO timestamp of the delivery QH
+  date: string            // YYYY-MM-DD
+  hour: number
+  minute: number
+  price_ct_kwh: number | null
+  id_full_ct: number | null
+  id1_ct: number | null
+  id3_ct: number | null
+  weight_avg_ct: number | null
+  low_ct: number | null
+  high_ct: number | null
+  last_ct: number | null
+  buy_vol_mwh: number | null
+  sell_vol_mwh: number | null
+  volume_mwh: number | null
+}
+
 export interface PriceData {
   hourly: HourlyPrice[]
   hourlyQH: HourlyPrice[]
@@ -24,6 +43,7 @@ export interface PriceData {
   generationLoading: boolean
   lastRealDate: string  // YYYY-MM-DD boundary between real and projected data
   intradayId3: HourlyPrice[]
+  intradayFull: IntradayFullPoint[]  // all EPEX fields per QH
 }
 
 function isNightHour(hour: number): boolean {
@@ -147,6 +167,7 @@ export function usePrices(country: string = 'DE'): PriceData {
   const [generationLoading, setGenerationLoading] = useState(false)
   const [lastRealDate, setLastRealDate] = useState<string>('')
   const [intradayId3, setIntradayId3] = useState<HourlyPrice[]>([])
+  const [intradayFull, setIntradayFull] = useState<IntradayFullPoint[]>([])
   const fetchedCountry = useRef<string | null>(null)
   const generationCache = useRef<Map<string, GenerationData[]>>(new Map())
   const allGeneration = useRef<CompactGen[]>([])
@@ -514,6 +535,46 @@ export function usePrices(country: string = 'DE'): PriceData {
     return () => controller.abort()
   }, [selectedDate, nextDay, country])
 
+  // Fetch full intraday data (all EPEX fields) for convergence funnel
+  useEffect(() => {
+    if (!selectedDate) return
+    const controller = new AbortController()
+    const d2 = nextDay(selectedDate)
+    const d3 = nextDay(d2)
+    const d4 = nextDay(d3)
+    const nd = nextDay(d4)
+    const countryParam = country !== 'DE' ? `&country=${country}` : ''
+    fetch(`/api/prices/batch?startDate=${selectedDate}&endDate=${nd}&type=intraday${countryParam}`,
+      { signal: controller.signal })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!data?.prices?.length) { setIntradayFull([]); return }
+        const points: IntradayFullPoint[] = data.prices.map((p: Record<string, unknown>) => {
+          const ts = p.timestamp as string
+          return {
+            timestamp: ts,
+            date: ts.slice(0, 10),
+            hour: parseInt(ts.slice(11, 13)),
+            minute: parseInt(ts.slice(14, 16)),
+            price_ct_kwh: (p.price_ct_kwh as number) ?? null,
+            id_full_ct: (p.id_full_ct as number) ?? null,
+            id1_ct: (p.id1_ct as number) ?? null,
+            id3_ct: (p.id3_ct as number) ?? null,
+            weight_avg_ct: (p.weight_avg_ct as number) ?? null,
+            low_ct: (p.low_ct as number) ?? null,
+            high_ct: (p.high_ct as number) ?? null,
+            last_ct: (p.last_ct as number) ?? null,
+            buy_vol_mwh: (p.buy_vol_mwh as number) ?? null,
+            sell_vol_mwh: (p.sell_vol_mwh as number) ?? null,
+            volume_mwh: (p.volume_mwh as number) ?? null,
+          }
+        })
+        setIntradayFull(points)
+      })
+      .catch(() => setIntradayFull([]))
+    return () => controller.abort()
+  }, [selectedDate, nextDay, country])
+
   const selectedDayPrices = useMemo(
     () => hourly.filter(p => p.date === selectedDate),
     [hourly, selectedDate]
@@ -545,5 +606,6 @@ export function usePrices(country: string = 'DE'): PriceData {
     generationLoading,
     lastRealDate,
     intradayId3,
+    intradayFull,
   }
 }

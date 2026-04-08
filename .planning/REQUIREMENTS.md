@@ -54,6 +54,10 @@
 
 ### Intraday
 - [ ] **INTRA-01**: EPEX intraday price display alongside day-ahead — scraper exists
+- [ ] **INTRA-02**: Scraper captures all EPEX fields (low, high, last, wavg, id_full, id1, id3, buy_vol, sell_vol, volume) — Phase 4
+- [ ] **INTRA-03**: Batch API serves full intraday data (all fields per QH) — Phase 4
+- [ ] **INTRA-04**: Convergence funnel visualization showing price narrowing DA → ID3 → ID1 → settlement — Phase 5
+- [ ] **INTRA-05**: Animated re-optimization showing charging blocks shifting at each intraday stage — Phase 5
 
 ## v2 Requirements (Deferred)
 

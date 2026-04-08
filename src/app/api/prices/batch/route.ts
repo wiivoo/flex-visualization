@@ -89,6 +89,22 @@ interface PricePoint {
   price_ct_kwh: number
 }
 
+/** Full intraday data point with all EPEX fields */
+interface IntradayPoint {
+  timestamp: string
+  price_ct_kwh: number | null
+  id_full_ct: number | null
+  id1_ct: number | null
+  id3_ct: number | null
+  weight_avg_ct: number | null
+  low_ct: number | null
+  high_ct: number | null
+  last_ct: number | null
+  buy_vol_mwh: number | null
+  sell_vol_mwh: number | null
+  volume_mwh: number | null
+}
+
 // ─── SMARD Functions ────────────────────────────────────────────────
 
 async function fetchSmardIndex(resolution: 'hour' | 'quarterhour' = 'hour'): Promise<number[]> {
@@ -274,15 +290,89 @@ async function getCachedDays(
         if (Date.now() - cachedAt > ttlH * 3600000) continue // expired
       }
 
-      cachedDays.set(row.date, row.prices_json.map((p: Record<string, unknown>) => ({
+      const prices = row.prices_json.map((p: Record<string, unknown>) => ({
         timestamp: p.timestamp as string,
         price_ct_kwh: indexField
           ? ((p[indexField] as number) ?? (p.price_ct_kwh as number) ?? 0)
           : ((p.price_ct_kwh as number) ?? 0),
-      })))
+      }))
+
+      // Quality gate: day-ahead must have enough unique timestamps to be valid
+      // Hourly = 20+ entries (out of 24), QH = 80+ (out of 96)
+      if (type.includes('day-ahead')) {
+        const uniqueTs = new Set(prices.map((p: PricePoint) => p.timestamp)).size
+        const minRequired = resolution === 'quarterhour' ? 80 : 20
+        if (uniqueTs < minRequired) {
+          console.warn(`Cache quality: ${typeKey} ${row.date} has ${uniqueTs} unique timestamps (need ${minRequired}), treating as uncached`)
+          continue
+        }
+      }
+
+      cachedDays.set(row.date, prices)
     }
   } catch (error) {
     console.error('Bulk cache read error:', error)
+  }
+
+  return cachedDays
+}
+
+/** Fetch full intraday data from cache (all EPEX fields, not just one index) */
+async function getCachedIntradayFull(
+  startDate: Date,
+  endDate: Date,
+  cachePrefix: string
+): Promise<Map<string, IntradayPoint[]>> {
+  const cachedDays = new Map<string, IntradayPoint[]>()
+  const typeKey = `${cachePrefix}intraday`
+  const startStr = format(startDate, 'yyyy-MM-dd')
+  const endStr = format(endDate, 'yyyy-MM-dd')
+  const today = format(new Date(), 'yyyy-MM-dd')
+
+  try {
+    const { data, error } = await supabase
+      .from('price_cache')
+      .select('date, prices_json, cached_at')
+      .eq('type', typeKey)
+      .gte('date', startStr)
+      .lte('date', endStr)
+      .order('date')
+
+    if (error || !data) return cachedDays
+
+    for (const row of data) {
+      const ttlH = row.date < today ? Infinity : row.date === today ? 2 : 1
+      if (ttlH !== Infinity) {
+        const cachedAt = new Date(row.cached_at).getTime()
+        if (Date.now() - cachedAt > ttlH * 3600000) continue
+      }
+
+      const points: IntradayPoint[] = row.prices_json.map((p: Record<string, unknown>) => ({
+        timestamp: p.timestamp as string,
+        price_ct_kwh: (p.price_ct_kwh as number) ?? null,
+        id_full_ct: (p.id_full_ct as number) ?? null,
+        id1_ct: (p.id1_ct as number) ?? null,
+        id3_ct: (p.id3_ct as number) ?? null,
+        weight_avg_ct: (p.weight_avg_ct as number) ?? null,
+        low_ct: (p.low_ct as number) ?? null,
+        high_ct: (p.high_ct as number) ?? null,
+        last_ct: (p.last_ct as number) ?? null,
+        buy_vol_mwh: (p.buy_vol_mwh as number) ?? null,
+        sell_vol_mwh: (p.sell_vol_mwh as number) ?? null,
+        volume_mwh: (p.volume_mwh as number) ?? null,
+      }))
+
+      // Quality gate: need at least 80 unique timestamps with price data
+      const validCount = points.filter(p => p.price_ct_kwh !== null).length
+      if (validCount < 80) {
+        console.warn(`Intraday cache quality: ${typeKey} ${row.date} has ${validCount} valid points (need 80), treating as uncached`)
+        continue
+      }
+
+      cachedDays.set(row.date, points)
+    }
+  } catch (error) {
+    console.error('Intraday cache read error:', error)
   }
 
   return cachedDays
@@ -302,8 +392,20 @@ async function cachePricesByDay(
     if (!byDay.has(dateStr)) byDay.set(dateStr, [])
     byDay.get(dateStr)!.push(price)
   }
+  // Quality gate: skip caching days with too few unique timestamps
+  const minRequired = resolution === 'quarterhour' ? 80 : 20
+  const validDays = Array.from(byDay.entries()).filter(([dateStr, dayPrices]) => {
+    if (!type.includes('day-ahead')) return true // only gate day-ahead
+    const uniqueTs = new Set(dayPrices.map(p => p.timestamp)).size
+    if (uniqueTs < minRequired) {
+      console.warn(`Cache skip: ${typeKey} ${dateStr} has ${uniqueTs} unique timestamps (need ${minRequired})`)
+      return false
+    }
+    return true
+  })
+
   await Promise.allSettled(
-    Array.from(byDay.entries()).map(([dateStr, dayPrices]) =>
+    validDays.map(([dateStr, dayPrices]) =>
       setCachedPrices(dateStr, typeKey, source, dayPrices)
     )
   )
@@ -389,9 +491,31 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Maximum date range: 1600 days' }, { status: 400 })
   }
 
+  // ── Intraday full-field path (no index filter) ──
+  // When type=intraday without index, return all EPEX fields per QH slot
+  const cachePrefix = country !== 'DE' ? `${country.toLowerCase()}:` : ''
+  if (type === 'intraday' && !index) {
+    const intradayDays = await getCachedIntradayFull(startDate, endDate, cachePrefix)
+    const allIntradayPrices: IntradayPoint[] = []
+    const allDays = eachDayOfInterval({ start: startDate, end: endDate })
+    for (const day of allDays) {
+      const dateStr = format(day, 'yyyy-MM-dd')
+      const cached = intradayDays.get(dateStr)
+      if (cached) allIntradayPrices.push(...cached)
+    }
+    return NextResponse.json({
+      type: 'intraday',
+      startDate: startDateStr,
+      endDate: endDateStr,
+      source: intradayDays.size > 0 ? 'cache' : 'none',
+      count: allIntradayPrices.length,
+      prices: allIntradayPrices,
+      fullFields: true,
+    })
+  }
+
   // ── Step 1: Check Supabase cache (resolution-aware, country-aware) ──
   // Non-DE countries use prefixed cache type (e.g., 'nl:day-ahead') for separate cache slots
-  const cachePrefix = country !== 'DE' ? `${country.toLowerCase()}:` : ''
   const effectiveType = `${cachePrefix}${type}` as 'day-ahead' | 'intraday' | 'forward'
   const cachedDays = await getCachedDays(startDate, endDate, effectiveType, resolution, indexField)
   const allDays = eachDayOfInterval({ start: startDate, end: endDate })

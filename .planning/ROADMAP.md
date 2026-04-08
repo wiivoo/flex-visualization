@@ -125,6 +125,78 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 
 ---
 
+## Phase 4: EPEX Scraper — Full Field Capture & Stable Storage
+
+**Goal:** Extend the EPEX intraday scraper to capture all available market data fields (not just ID indices), store them reliably in Supabase, and serve them via the batch API.
+
+**Requirements:** INTRA-02, INTRA-03
+
+**What exists today:**
+- Scraper (`scripts/scrape-epex-intraday.mjs`) extracts 6 of 10 data columns: low, high, weight_avg, id_full, id1, id3
+- Missing fields: `last` (final trade price), `buy_volume`, `sell_volume`, `volume`
+- Supabase `price_cache` stores JSON with partial fields
+- Batch API route serves `id3_ct` only via `?type=intraday&index=id3`
+
+**What needs to be built:**
+- Extend scraper to extract `last`, `buy_volume`, `sell_volume`, `volume` from EPEX table
+- Update Supabase JSON schema to include all fields per QH entry
+- Update `/api/prices/batch` to serve all intraday fields (not just id3)
+- Add `--backfill` CLI flag to re-scrape dates even if cached (force-refresh with new schema)
+- Validate data completeness before writing (reject partial scrapes)
+
+**Key files:**
+- `scripts/scrape-epex-intraday.mjs`
+- `scripts/cron-epex-intraday.sh`
+- `src/app/api/prices/batch/route.ts`
+
+**Success Criteria:**
+1. Scraper extracts all 10 data columns from EPEX table
+2. Supabase entries include `last_ct`, `buy_vol`, `sell_vol`, `volume` per QH
+3. Batch API returns full intraday data when `?type=intraday` (no index filter needed)
+4. `--backfill` flag allows re-scraping cached dates to upgrade schema
+5. Incomplete scrapes (< 80 QH with prices) are rejected, not stored
+
+---
+
+## Phase 5: Intraday Convergence Funnel Visualization
+
+**Goal:** Replace the static ID3 line overlay with an animated convergence funnel that shows how intraday prices narrow from wide uncertainty to settlement, and how the optimizer re-optimizes charging blocks at each stage.
+
+**Requirements:** INTRA-04, INTRA-05
+
+**Depends on:** Phase 4 (needs full EPEX field data)
+
+**What exists today:**
+- ID3 line overlay on the Recharts chart (sky-blue `<Line>`)
+- `id3Map` in Step2 keyed by HH:MM timestamps
+- Optimizer (`runOptimization`) runs once on DA prices
+- Intraday uplift (DA avg vs ID3 avg) shown in session cost card
+
+**What needs to be built:**
+- **Price funnel visualization:** For each QH slot, render a converging corridor from Low–High (widest) through ID3 → ID1 → ID Full → Last (narrowest), using `<ReferenceArea>` or gradient fills
+- **Timeline scrubber/animation:** User can drag a time slider or press play to watch the funnel narrow stage by stage (DA → ID3 → ID1 → settlement)
+- **Re-optimization at each stage:** At each animation step, re-run the optimizer with the current best-known prices for remaining QHs; charging blocks visually shift to cheaper slots
+- **Volume opacity:** Map trade volume to funnel opacity/thickness — high volume = confident price, low volume = uncertain
+- **Cumulative savings counter:** Show running ct/kWh improvement as each re-optimization step plays
+
+**Key files:**
+- `src/components/v2/steps/Step2ChargingScenario.tsx` (chart integration)
+- `src/lib/optimizer.ts` (re-optimization with partial price updates)
+- `src/lib/use-prices.ts` (fetch all intraday fields)
+- New: `src/components/v2/IntradayFunnel.tsx` (funnel rendering logic)
+
+**Success Criteria:**
+1. Price funnel shows Low–High corridor that visibly narrows through ID3 → ID1 → ID Full → Last
+2. Animation/scrubber lets user step through the convergence timeline
+3. Charging blocks re-optimize and shift at each step
+4. Volume maps to visual opacity or thickness
+5. Cumulative savings improvement displayed at each stage
+6. Works only for DE (NL intraday deferred)
+
+**UI hint:** yes
+
+---
+
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -135,7 +207,11 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 | INTL-02 | Phase 2 | Implemented |
 | INTL-03 | Phase 2 | Implemented |
 | INTRA-01 | Phase 2 | Scraper exists |
+| INTRA-02 | Phase 4 | Not started |
+| INTRA-03 | Phase 4 | Not started |
+| INTRA-04 | Phase 5 | Not started |
+| INTRA-05 | Phase 5 | Not started |
 | Tech debt | Phase 3 | Not started |
 
 ---
-*Last updated: 2026-03-26 — initial roadmap*
+*Last updated: 2026-04-08 — added Phase 4 (scraper) and Phase 5 (funnel viz)*

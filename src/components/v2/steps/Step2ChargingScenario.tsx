@@ -22,6 +22,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, ReferenceArea,
 } from 'recharts'
+import { useIntradayFunnel, FunnelTimeline, FUNNEL_STAGES } from '@/components/v2/IntradayFunnel'
+import type { IntradayFullPoint } from '@/lib/use-prices'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
 const MILEAGE_DIST = [
@@ -55,6 +57,7 @@ interface PriceData {
   yearRange: { start: string; end: string }
   lastRealDate: string
   intradayId3?: HourlyPrice[]
+  intradayFull?: IntradayFullPoint[]
 }
 
 interface Props {
@@ -570,6 +573,66 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   useEffect(() => {
     if (showIntraday && !hasIntraday) setShowIntraday(false)
   }, [hasIntraday, showIntraday])
+
+  // ── Intraday convergence funnel ──
+  const [showFunnel, setShowFunnel] = useState(false)
+  const funnelDaPrices = useMemo(() => {
+    if (!showFunnel) return []
+    return chartData
+      .filter(d => d.price !== null)
+      .map(d => ({
+        timestamp: `${d.date}T${d.label}:00Z`,
+        date: d.date,
+        hour: d.hour,
+        minute: d.minute,
+        priceCtKwh: d.priceVal,
+      }))
+  }, [chartData, showFunnel])
+
+  const funnel = useIntradayFunnel({
+    intradayFull: prices.intradayFull ?? [],
+    daPrices: funnelDaPrices,
+    active: showFunnel && showIntraday,
+  })
+
+  // Funnel chart data: merge corridor into enrichedChartData points (after fleet enrichment)
+  const chartDataWithFunnel = useMemo(() => {
+    if (!showFunnel || !funnel.hasFunnelData) return enrichedChartData
+    const pointMap = new Map<string, { corridorLow: number; corridorHigh: number; funnelPrice: number; volumeOpacity: number }>()
+    for (const fp of funnel.currentState.points) {
+      const key = `${fp.date}-${fp.hour}-${fp.minute}`
+      pointMap.set(key, {
+        corridorLow: fp.corridorLow,
+        corridorHigh: fp.corridorHigh,
+        funnelPrice: fp.price,
+        volumeOpacity: fp.volumeOpacity,
+      })
+    }
+    return enrichedChartData.map(d => {
+      const key = `${d.date}-${d.hour}-${d.minute}`
+      const fp = pointMap.get(key)
+      return {
+        ...d,
+        corridorLow: fp?.corridorLow ?? null,
+        corridorHigh: fp?.corridorHigh ?? null,
+        funnelPrice: fp?.funnelPrice ?? null,
+      }
+    })
+  }, [enrichedChartData, showFunnel, funnel.hasFunnelData, funnel.currentState.points])
+
+  // Final chart data: funnel-enriched when active, otherwise enrichedChartData
+  const finalChartData = showFunnel && funnel.hasFunnelData ? chartDataWithFunnel : enrichedChartData
+
+  // Auto-play funnel animation
+  useEffect(() => {
+    if (!funnel.isPlaying) return
+    if (funnel.stageIndex >= funnel.totalStages - 1) {
+      funnel.setIsPlaying(false)
+      return
+    }
+    const timer = setTimeout(() => funnel.nextStage(), 1500)
+    return () => clearTimeout(timer)
+  }, [funnel.isPlaying, funnel.stageIndex, funnel.totalStages, funnel.nextStage, funnel.setIsPlaying])
 
   // ── 365-day rolling average — expensive scan over all hourly prices ──
   // Uses deferred plug-in/departure values so it doesn't block drag interactions
@@ -1973,19 +2036,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {/* Data source toggle: DA / DA+ID */}
+                {/* Data source toggle: DA / DA+ID / Funnel */}
                 {hasIntraday && (
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                     <button
-                      onClick={() => setShowIntraday(false)}
-                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!showIntraday ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                      onClick={() => { setShowIntraday(false); setShowFunnel(false) }}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${!showIntraday && !showFunnel ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                       DA
                     </button>
                     <button
-                      onClick={() => setShowIntraday(true)}
-                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showIntraday ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                      onClick={() => { setShowIntraday(true); setShowFunnel(false) }}
+                      className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showIntraday && !showFunnel ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                       DA+ID
                     </button>
+                    {(prices.intradayFull ?? []).length > 0 && (
+                      <button
+                        onClick={() => { setShowIntraday(true); setShowFunnel(true) }}
+                        title="Show intraday price convergence funnel"
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showFunnel ? 'bg-sky-100 text-sky-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                        Funnel
+                      </button>
+                    )}
                   </div>
                 )}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
@@ -2094,7 +2165,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={enrichedChartData} margin={CHART_MARGIN}>
+                <ComposedChart data={finalChartData} margin={CHART_MARGIN}>
                   <defs>
                     <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#94A3B8" stopOpacity={0.08} />
@@ -2116,7 +2187,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
 
-                  <XAxis dataKey="idx" type="number" domain={[0, Math.max(enrichedChartData.length - 1, 1)]}
+                  <XAxis dataKey="idx" type="number" domain={[0, Math.max(finalChartData.length - 1, 1)]}
                     ticks={xTicks} tick={renderXTick as never} tickLine={false}
                     stroke="#9CA3AF" interval={0} height={midnightIdxSet.size > 0 ? 48 : 32}
                     allowDecimals={false} />
@@ -2136,7 +2207,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   <Tooltip isAnimationActive={!isDragging}
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null
-                      const d = enrichedChartData[Number(label)]
+                      const d = finalChartData[Number(label)]
                       if (!d) return null
                       return (
                         <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px] max-w-[260px]">
@@ -2399,6 +2470,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <Line type="monotone" dataKey="id3OptimizedPrice" yAxisId="left" stroke="#0EA5E9" strokeWidth={0}
                         dot={isQH ? { r: 3, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 1.5 } : { r: 4.5, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 2 }}
                         connectNulls={false} isAnimationActive={!isDragging} />
+                    </>
+                  )}
+
+                  {/* Intraday convergence funnel — corridor area + price line */}
+                  {showFunnel && funnel.hasFunnelData && (
+                    <>
+                      {/* Corridor: shaded area between corridorLow and corridorHigh */}
+                      <Area type="monotone" dataKey="corridorHigh" yAxisId="left"
+                        stroke="none" fill="#0EA5E9" fillOpacity={0.08}
+                        isAnimationActive={false} connectNulls={false} />
+                      <Area type="monotone" dataKey="corridorLow" yAxisId="left"
+                        stroke="none" fill="#ffffff" fillOpacity={1}
+                        isAnimationActive={false} connectNulls={false} />
+                      {/* Funnel price line — current stage best-known price */}
+                      <Line type="monotone" dataKey="funnelPrice" yAxisId="left"
+                        stroke="#0EA5E9" strokeWidth={2}
+                        dot={false} connectNulls={true} name={`ID ${funnel.currentState.stage.toUpperCase()}`}
+                        isAnimationActive={false} />
                     </>
                   )}
 
@@ -2945,6 +3034,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             </div>
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
+
+          {/* Intraday convergence funnel timeline */}
+          {showFunnel && funnel.hasFunnelData && (
+            <div className="px-3 pb-2">
+              <FunnelTimeline
+                stageIndex={funnel.stageIndex}
+                totalStages={funnel.totalStages}
+                stages={funnel.stages}
+                currentState={funnel.currentState}
+                goToStage={funnel.goToStage}
+                isPlaying={funnel.isPlaying}
+                setIsPlaying={funnel.setIsPlaying}
+                onPlay={() => { funnel.goToStage(0); funnel.setIsPlaying(true) }}
+              />
+            </div>
+          )}
 
           {/* Fleet config is in the sidebar (Customer Profile card) */}
           </CardContent>

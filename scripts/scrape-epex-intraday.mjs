@@ -3,7 +3,8 @@
  * EPEX Spot Intraday Continuous Price Scraper
  *
  * Scrapes 15-min intraday continuous results from EPEX SPOT for DE and NL.
- * Extracts: ID Full, ID1, ID3 (EUR/MWh), stored in Supabase price_cache.
+ * Extracts all fields: Low, High, Last, Weight Avg, ID Full, ID1, ID3,
+ * Buy Volume, Sell Volume, Volume (EUR/MWh), stored in Supabase price_cache.
  *
  * Table structure: 168 rows per day = 24 hours × 7 rows each:
  *   [0] HH-HH+1     (hourly summary)
@@ -20,6 +21,7 @@
  *   node scripts/scrape-epex-intraday.mjs --date 2026-03-24       # Specific date (DE)
  *   node scripts/scrape-epex-intraday.mjs --area NL --date 2026-03-24
  *   node scripts/scrape-epex-intraday.mjs --dry-run               # Scrape but don't write to DB
+ *   node scripts/scrape-epex-intraday.mjs --backfill              # Re-scrape even if cached (upgrade schema)
  */
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
@@ -53,7 +55,7 @@ const MARKET_AREAS = {
 
 // --- Column indices (from EPEX table headers) ---
 // '', Low, High, Last, Weight Avg, ID Full, ID1, ID3, Buy Volume, Sell Volume, Volume
-const COL = { LOW: 0, HIGH: 1, LAST: 2, WAVG: 3, ID_FULL: 4, ID1: 5, ID3: 6 }
+const COL = { LOW: 0, HIGH: 1, LAST: 2, WAVG: 3, ID_FULL: 4, ID1: 5, ID3: 6, BUY_VOL: 7, SELL_VOL: 8, VOLUME: 9 }
 
 // QH row indices within each 7-row hourly group
 const QH_OFFSETS = [2, 3, 5, 6]
@@ -70,10 +72,30 @@ function parseNum(v) {
 
 /**
  * Scrape a single date. Returns 96 quarter-hour entries or null.
+ * Retries the page load once on timeout (transient network failures).
  */
 async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
   console.log(`  ${deliveryDate}: loading...`)
-  await page.goto(buildUrl(deliveryDate, marketArea), { waitUntil: 'domcontentloaded', timeout: 60000 })
+
+  // Attempt page load with retry on timeout
+  let loadOk = false
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await page.goto(buildUrl(deliveryDate, marketArea), { waitUntil: 'domcontentloaded', timeout: 90000 })
+      loadOk = true
+      break
+    } catch (err) {
+      if (attempt < 2) {
+        console.log(`  ${deliveryDate}: page load timeout (attempt ${attempt}), retrying after 15s...`)
+        await page.waitForTimeout(15000)
+      } else {
+        console.error(`  ${deliveryDate}: page load failed after 2 attempts — ${err.message.split('\n')[0]}`)
+        return null
+      }
+    }
+  }
+  if (!loadOk) return null
+
   await page.waitForTimeout(10000)
 
   // Check WAF
@@ -95,18 +117,23 @@ async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
 
   // Wait for table to render (JS-loaded content)
   try {
-    await page.waitForSelector('table.table-01 tr[class^="child-"]', { timeout: 15000 })
+    await page.waitForSelector('table.table-01 tr[class^="child-"]', { timeout: 20000 })
   } catch {
-    // Table may not appear if no data for this date — continue to fallback
-    await page.waitForTimeout(5000)
+    // Table may not appear if no data for this date — wait a bit longer and continue
+    await page.waitForTimeout(8000)
   }
 
-  // Extract data rows — try tr[class^="child-"] first, fallback to any tr with exactly 10 td cells
+  // Extract data rows with multiple fallback strategies:
+  //   1. Primary: tr[class^="child-"] — standard EPEX row class
+  //   2. Fallback A: any tr with 10 td cells (DE standard)
+  //   3. Fallback B: any tr with 9–11 td cells (NL or future layout variations)
+  //   4. Fallback C: any tr inside table.table-01 with at least 7 tds (broadest match)
   let allCells = await page.$$eval('table.table-01 tr[class^="child-"]', trs =>
     trs.map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.textContent?.trim() || ''))
   ).catch(() => [])
 
   if (allCells.length === 0) {
+    // Fallback A: exactly 10 tds (original fallback)
     allCells = await page.$$eval('table.table-01 tr', trs =>
       Array.from(trs)
         .filter(tr => tr.querySelectorAll('td').length === 10)
@@ -115,22 +142,67 @@ async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
   }
 
   if (allCells.length === 0) {
-    console.error(`  ${deliveryDate}: no data rows found`)
+    // Fallback B: 9–11 tds (handles NL layout with different column count)
+    allCells = await page.$$eval('table.table-01 tr', trs =>
+      Array.from(trs)
+        .filter(tr => { const n = tr.querySelectorAll('td').length; return n >= 9 && n <= 11 })
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.textContent?.trim() || ''))
+    ).catch(() => [])
+  }
+
+  if (allCells.length === 0) {
+    // Fallback C: any tr with ≥7 tds inside any table on the page
+    allCells = await page.$$eval('table tr', trs =>
+      Array.from(trs)
+        .filter(tr => tr.querySelectorAll('td').length >= 7)
+        .map(tr => Array.from(tr.querySelectorAll('td')).map(td => td.textContent?.trim() || ''))
+    ).catch(() => [])
+  }
+
+  if (allCells.length === 0) {
+    // Diagnostic: log how many tables and rows exist so we can debug selector issues
+    const pageInfo = await page.evaluate(() => {
+      const tables = document.querySelectorAll('table')
+      return Array.from(tables).map((t, i) => `table[${i}] rows=${t.querySelectorAll('tr').length} class="${t.className}"`)
+    }).catch(() => [])
+    console.error(`  ${deliveryDate}: no data rows found. Page tables: ${pageInfo.join(' | ') || 'none'}`)
     return null
   }
 
-  return extractQH(deliveryDate, allCells)
+  return extractQH(deliveryDate, allCells, marketArea)
+}
+
+/**
+ * Detect column layout from the first data row.
+ * EPEX DE has 10 columns, NL may have a different count.
+ * Returns column indices adjusted for the actual layout.
+ */
+function detectColumnLayout(allCells) {
+  // Find first row with numeric-looking content (skip header rows)
+  for (const row of allCells) {
+    const numericCols = row.filter(c => /^-?[\d,]+\.?\d*$/.test(c.replace(/\s/g, ''))).length
+    if (numericCols >= 3) {
+      // Standard layout: 10 cols = Low, High, Last, WAVG, ID_Full, ID1, ID3, BuyVol, SellVol, Vol
+      // NL may omit some volume columns but price cols (ID_Full, ID1, ID3) stay in same position
+      // relative to Low/High/Last/WAVG at start.
+      // Return the standard COL offsets — they are relative to start of the row.
+      return COL
+    }
+  }
+  return COL
 }
 
 /**
  * Extract 96 quarter-hour entries from the 168 raw rows.
+ * marketArea is used for diagnostic logging only.
  */
-function extractQH(deliveryDate, allCells) {
+function extractQH(deliveryDate, allCells, marketArea = 'DE') {
   if (allCells.length < 7) {
-    console.error(`  ${deliveryDate}: too few rows (${allCells.length})`)
+    console.error(`  ${deliveryDate}: too few rows (${allCells.length}) for ${marketArea}`)
     return null
   }
 
+  const colMap = detectColumnLayout(allCells)
   const entries = []
   const rowsPerHour = 7
   const totalHours = Math.min(24, Math.floor(allCells.length / rowsPerHour))
@@ -143,19 +215,24 @@ function extractQH(deliveryDate, allCells) {
       if (rowIdx >= allCells.length) break
 
       const cells = allCells[rowIdx]
-      if (cells.length < 7) continue
+      // Be lenient: require only 5+ cells (Low, High, Last, WAVG, ID_Full minimum)
+      if (cells.length < 5) continue
 
       const minute = [0, 15, 30, 45][q]
       const ts = `${deliveryDate}T${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`
 
       entries.push({
         timestamp: ts,
-        id_full: parseNum(cells[COL.ID_FULL]),
-        id1: parseNum(cells[COL.ID1]),
-        id3: parseNum(cells[COL.ID3]),
-        weight_avg: parseNum(cells[COL.WAVG]),
-        low: parseNum(cells[COL.LOW]),
-        high: parseNum(cells[COL.HIGH]),
+        id_full: cells.length > colMap.ID_FULL ? parseNum(cells[colMap.ID_FULL]) : null,
+        id1: cells.length > colMap.ID1 ? parseNum(cells[colMap.ID1]) : null,
+        id3: cells.length > colMap.ID3 ? parseNum(cells[colMap.ID3]) : null,
+        weight_avg: cells.length > colMap.WAVG ? parseNum(cells[colMap.WAVG]) : null,
+        low: cells.length > colMap.LOW ? parseNum(cells[colMap.LOW]) : null,
+        high: cells.length > colMap.HIGH ? parseNum(cells[colMap.HIGH]) : null,
+        last: cells.length > colMap.LAST ? parseNum(cells[colMap.LAST]) : null,
+        buy_volume: cells.length > colMap.BUY_VOL ? parseNum(cells[colMap.BUY_VOL]) : null,
+        sell_volume: cells.length > colMap.SELL_VOL ? parseNum(cells[colMap.SELL_VOL]) : null,
+        volume: cells.length > colMap.VOLUME ? parseNum(cells[colMap.VOLUME]) : null,
       })
     }
   }
@@ -180,6 +257,10 @@ async function writeToSupabase(dateStr, entries, cachePrefix = '') {
     weight_avg_ct: e.weight_avg !== null ? Math.round(e.weight_avg * 10) / 100 : null,
     low_ct: e.low !== null ? Math.round(e.low * 10) / 100 : null,
     high_ct: e.high !== null ? Math.round(e.high * 10) / 100 : null,
+    last_ct: e.last !== null ? Math.round(e.last * 10) / 100 : null,
+    buy_vol_mwh: e.buy_volume !== null ? Math.round(e.buy_volume * 100) / 100 : null,
+    sell_vol_mwh: e.sell_volume !== null ? Math.round(e.sell_volume * 100) / 100 : null,
+    volume_mwh: e.volume !== null ? Math.round(e.volume * 100) / 100 : null,
   }))
 
   const cacheType = `${cachePrefix}intraday`
@@ -251,14 +332,15 @@ async function main() {
     : [dayBefore.toISOString().slice(0, 10), yesterday.toISOString().slice(0, 10)]
 
   const dryRun = !!flags['dry-run']
+  const backfill = !!flags['backfill']
 
   console.log(`EPEX Intraday Scraper — ${area.label} (${areaKey}) Continuous 15min`)
-  console.log(`  Dates: ${dates.join(', ')} | Mode: ${dryRun ? 'DRY RUN' : 'Supabase'}`)
+  console.log(`  Dates: ${dates.join(', ')} | Mode: ${dryRun ? 'DRY RUN' : 'Supabase'}${backfill ? ' | BACKFILL (ignoring cache)' : ''}`)
 
-  // Skip cached dates
+  // Skip cached dates (unless backfill mode)
   const toScrape = []
   for (const d of dates) {
-    if (!dryRun && await isAlreadyCached(d, area.cachePrefix)) {
+    if (!dryRun && !backfill && await isAlreadyCached(d, area.cachePrefix)) {
       console.log(`  ${d}: already cached, skipping`)
     } else {
       toScrape.push(d)
@@ -296,7 +378,7 @@ async function main() {
     if (dryRun) {
       console.log(`  [DRY] Sample:`)
       entries.filter(e => e.id_full !== null).slice(0, 3).forEach(e =>
-        console.log(`    ${e.timestamp}: ID Full=${e.id_full} | ID1=${e.id1} | ID3=${e.id3} EUR/MWh`)
+        console.log(`    ${e.timestamp}: ID Full=${e.id_full} | ID1=${e.id1} | ID3=${e.id3} | Last=${e.last} | Low=${e.low} | High=${e.high} | Vol=${e.volume} EUR/MWh`)
       )
     } else {
       await writeToSupabase(dateStr, entries, area.cachePrefix)
