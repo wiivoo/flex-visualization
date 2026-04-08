@@ -24,9 +24,9 @@ export type FunnelStage = 'da' | 'id3' | 'id1' | 'id_full' | 'last'
 
 export const FUNNEL_STAGES: { key: FunnelStage; label: string; description: string }[] = [
   { key: 'da', label: 'DA', description: 'Day-ahead auction — initial position' },
-  { key: 'id3', label: 'ID3', description: '3h before delivery — first re-optimization' },
-  { key: 'id1', label: 'ID1', description: '1h before delivery — second re-optimization' },
-  { key: 'id_full', label: 'ID Full', description: 'Full intraday average — near-final view' },
+  { key: 'id_full', label: 'ID Full', description: 'Full session average — all intraday trades' },
+  { key: 'id3', label: 'ID3', description: 'Last 3h average — closer to delivery' },
+  { key: 'id1', label: 'ID1', description: 'Last 1h average — near delivery' },
   { key: 'last', label: 'Last', description: 'Final traded price — settlement' },
 ]
 
@@ -171,28 +171,28 @@ function computeFunnelData(
           corridorLow = daPrice
           corridorHigh = daPrice
           break
-        case 'id3':
-          // 3h before delivery — show full trading range as context
-          price = p.id3_ct ?? daPrice
+        case 'id_full':
+          // Full session VWAP (all trades) — broadest intraday view
+          // Show full [low, high] trading range as context
+          price = p.id_full_ct ?? daPrice
           corridorLow = low
           corridorHigh = high
+          break
+        case 'id3':
+          // Last 3h VWAP — corridor narrows to range between ID indices
+          price = p.id3_ct ?? p.id_full_ct ?? daPrice
+          corridorLow = Math.min(p.id_full_ct ?? low, p.id3_ct ?? low, price)
+          corridorHigh = Math.max(p.id_full_ct ?? high, p.id3_ct ?? high, price)
           break
         case 'id1':
-          // 1h before delivery — same range, more refined price
+          // Last 1h VWAP — corridor tightens further around recent trades
           price = p.id1_ct ?? p.id3_ct ?? daPrice
-          corridorLow = low
-          corridorHigh = high
-          break
-        case 'id_full':
-          // Full session average — tighten corridor to ID1..ID3 range
-          // (by now most of the trading is done, outliers are less relevant)
-          price = p.id_full_ct ?? p.id1_ct ?? daPrice
           corridorLow = Math.min(p.id3_ct ?? low, p.id1_ct ?? low, price)
           corridorHigh = Math.max(p.id3_ct ?? high, p.id1_ct ?? high, price)
           break
         case 'last':
           // Final trade — corridor collapses to settlement
-          price = p.last_ct ?? p.id_full_ct ?? daPrice
+          price = p.last_ct ?? p.id1_ct ?? daPrice
           corridorLow = price
           corridorHigh = price
           break
