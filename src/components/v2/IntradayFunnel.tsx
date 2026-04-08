@@ -292,6 +292,8 @@ export function FunnelTimeline({
   goToStage,
   nextStage,
   prevStage,
+  reoptSavingsCt = 0,
+  reoptSavingsEur = 0,
 }: {
   stageIndex: number
   stages: typeof FUNNEL_STAGES
@@ -299,6 +301,8 @@ export function FunnelTimeline({
   goToStage: (idx: number) => void
   nextStage: () => void
   prevStage: () => void
+  reoptSavingsCt?: number
+  reoptSavingsEur?: number
 }) {
   return (
     <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg"
@@ -343,13 +347,13 @@ export function FunnelTimeline({
         ))}
       </div>
 
-      {/* Savings indicator */}
-      {currentState.savingsVsDa !== 0 && stageIndex > 0 && (
-        <div className="text-right">
-          <div className={`text-[11px] font-bold tabular-nums ${currentState.savingsVsDa > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-            {currentState.savingsVsDa > 0 ? '+' : ''}{currentState.savingsVsDa.toFixed(2)} ct
+      {/* Re-optimization savings indicator */}
+      {reoptSavingsCt !== 0 && stageIndex > 0 && (
+        <div className="text-right flex-shrink-0">
+          <div className={`text-[11px] font-bold tabular-nums ${reoptSavingsCt > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+            +{reoptSavingsCt.toFixed(2)} ct
           </div>
-          <div className="text-[9px] text-gray-400">vs DA</div>
+          <div className="text-[9px] text-gray-400 tabular-nums">{reoptSavingsEur.toFixed(2)} € reopt</div>
         </div>
       )}
     </div>

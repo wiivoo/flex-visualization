@@ -599,8 +599,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const showFunnel = funnel.stageIndex >= 0
 
   // Funnel chart data: merge corridor + re-optimized charging slots into chart
-  const chartDataWithFunnel = useMemo(() => {
-    if (!showFunnel || !funnel.hasFunnelData) return enrichedChartData
+  const { chartDataFunnel: chartDataWithFunnel, funnelReoptSavingsCt, funnelReoptSavingsEur } = useMemo(() => {
+    if (!showFunnel || !funnel.hasFunnelData) return { chartDataFunnel: enrichedChartData, funnelReoptSavingsCt: 0, funnelReoptSavingsEur: 0 }
 
     // Build funnel price map for current stage
     const funnelPriceMap = new Map<string, { corridorLow: number; corridorHigh: number; price: number }>()
@@ -613,6 +613,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     }
 
     // Re-optimize: sort window slots by funnel stage price, pick cheapest slotsNeeded
+    let savingsCt = 0
+    let savingsEur = 0
     const windowSlots = enrichedChartData.filter(d => d.isInWindow)
     const funnelOptKeys = new Set<string>()
     if (windowSlots.length > 0 && funnel.currentState.stageIndex > 0) {
@@ -636,7 +638,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       enrichedChartData.filter(d => d.optimizedPrice !== null).map(d => `${d.date}-${d.hour}-${d.minute}`)
     )
 
-    return enrichedChartData.map(d => {
+    // Compute re-optimization savings: DA schedule avg at funnel prices vs funnel-optimized avg
+    // This matches the ID3 pill logic but works for any stage
+    if (funnelOptKeys.size > 0) {
+      const daScheduleFunnelAvg = [...daOptKeys].reduce((s, key) => {
+        return s + (funnelPriceMap.get(key)?.price ?? 0)
+      }, 0) / daOptKeys.size
+      const funnelOptAvg = [...funnelOptKeys].reduce((s, key) => {
+        return s + (funnelPriceMap.get(key)?.price ?? 0)
+      }, 0) / funnelOptKeys.size
+      savingsCt = Math.round((daScheduleFunnelAvg - funnelOptAvg) * 100) / 100
+      savingsEur = Math.round(savingsCt * energyPerSession) / 100
+    }
+
+    const chartDataFunnel = enrichedChartData.map(d => {
       const key = `${d.date}-${d.hour}-${d.minute}`
       const fp = funnelPriceMap.get(key)
       const isFunnelOpt = funnelOptKeys.has(key)
@@ -645,14 +660,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         ...d,
         corridorBand: fp ? [fp.corridorLow, fp.corridorHigh] : null,
         funnelPrice: fp?.price ?? null,
-        // Funnel re-optimized slot: show dot at funnel price
         funnelOptPrice: isFunnelOpt ? (fp?.price ?? d.priceVal) : null,
-        // Slot sold: was in DA schedule but dropped in funnel re-optimization
         funnelSoldPrice: (wasDaOpt && !isFunnelOpt && funnel.currentState.stageIndex > 0) ? (fp?.price ?? d.priceVal) : null,
-        // Slot bought: new in funnel schedule, wasn't in DA schedule
         funnelBoughtPrice: (isFunnelOpt && !wasDaOpt && funnel.currentState.stageIndex > 0) ? (fp?.price ?? d.priceVal) : null,
       }
     })
+    return { chartDataFunnel, funnelReoptSavingsCt: savingsCt, funnelReoptSavingsEur: savingsEur }
   }, [enrichedChartData, showFunnel, funnel.hasFunnelData, funnel.currentState.points, funnel.currentState.stageIndex, energyPerSession, isQH, chargePowerKw])
 
   // Final chart data: funnel-enriched when active, otherwise enrichedChartData
@@ -3078,6 +3091,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 goToStage={funnel.goToStage}
                 nextStage={funnel.nextStage}
                 prevStage={funnel.prevStage}
+                reoptSavingsCt={funnelReoptSavingsCt}
+                reoptSavingsEur={funnelReoptSavingsEur}
               />
             </div>
           )}
