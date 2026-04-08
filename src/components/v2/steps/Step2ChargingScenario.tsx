@@ -613,8 +613,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       const fp = pointMap.get(key)
       return {
         ...d,
-        corridorLow: fp?.corridorLow ?? null,
-        corridorHigh: fp?.corridorHigh ?? null,
+        corridorBand: fp ? [fp.corridorLow, fp.corridorHigh] : null,
         funnelPrice: fp?.funnelPrice ?? null,
       }
     })
@@ -2473,15 +2472,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </>
                   )}
 
-                  {/* Intraday convergence funnel — corridor area + price line */}
+                  {/* Intraday convergence funnel — corridor band + price line */}
                   {showFunnel && funnel.hasFunnelData && (
                     <>
-                      {/* Corridor: shaded area between corridorLow and corridorHigh */}
-                      <Area type="monotone" dataKey="corridorHigh" yAxisId="left"
-                        stroke="none" fill="#0EA5E9" fillOpacity={0.08}
-                        isAnimationActive={false} connectNulls={false} />
-                      <Area type="monotone" dataKey="corridorLow" yAxisId="left"
-                        stroke="none" fill="#ffffff" fillOpacity={1}
+                      {/* Corridor band: Recharts range area using [low, high] array */}
+                      <Area type="monotone" dataKey="corridorBand" yAxisId="left"
+                        stroke="#0EA5E9" strokeWidth={0.5} strokeOpacity={0.3}
+                        fill="#0EA5E9" fillOpacity={0.10}
                         isAnimationActive={false} connectNulls={false} />
                       {/* Funnel price line — current stage best-known price */}
                       <Line type="monotone" dataKey="funnelPrice" yAxisId="left"
