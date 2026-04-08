@@ -595,29 +595,62 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     active: showFunnel && showIntraday,
   })
 
-  // Funnel chart data: merge corridor into enrichedChartData points (after fleet enrichment)
+  // Funnel chart data: merge corridor + re-optimized charging slots into chart
   const chartDataWithFunnel = useMemo(() => {
     if (!showFunnel || !funnel.hasFunnelData) return enrichedChartData
-    const pointMap = new Map<string, { corridorLow: number; corridorHigh: number; funnelPrice: number; volumeOpacity: number }>()
+
+    // Build funnel price map for current stage
+    const funnelPriceMap = new Map<string, { corridorLow: number; corridorHigh: number; price: number }>()
     for (const fp of funnel.currentState.points) {
-      const key = `${fp.date}-${fp.hour}-${fp.minute}`
-      pointMap.set(key, {
+      funnelPriceMap.set(`${fp.date}-${fp.hour}-${fp.minute}`, {
         corridorLow: fp.corridorLow,
         corridorHigh: fp.corridorHigh,
-        funnelPrice: fp.price,
-        volumeOpacity: fp.volumeOpacity,
+        price: fp.price,
       })
     }
+
+    // Re-optimize: sort window slots by funnel stage price, pick cheapest slotsNeeded
+    const windowSlots = enrichedChartData.filter(d => d.isInWindow)
+    const funnelOptKeys = new Set<string>()
+    if (windowSlots.length > 0 && funnel.currentState.stageIndex > 0) {
+      const kwPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
+      const slotsNeeded = Math.ceil(energyPerSession / kwPerSlot)
+      // For each window slot, get the best-known price at this funnel stage
+      const slotsWithFunnelPrice = windowSlots.map(d => {
+        const key = `${d.date}-${d.hour}-${d.minute}`
+        const fp = funnelPriceMap.get(key)
+        return { key, funnelPrice: fp?.price ?? d.priceVal }
+      })
+      // Sort by funnel price (cheapest first) and pick slotsNeeded
+      slotsWithFunnelPrice.sort((a, b) => a.funnelPrice - b.funnelPrice)
+      for (const s of slotsWithFunnelPrice.slice(0, slotsNeeded)) {
+        funnelOptKeys.add(s.key)
+      }
+    }
+
+    // DA optimized keys (stage 0 baseline) — reuse existing optimizedPrice
+    const daOptKeys = new Set(
+      enrichedChartData.filter(d => d.optimizedPrice !== null).map(d => `${d.date}-${d.hour}-${d.minute}`)
+    )
+
     return enrichedChartData.map(d => {
       const key = `${d.date}-${d.hour}-${d.minute}`
-      const fp = pointMap.get(key)
+      const fp = funnelPriceMap.get(key)
+      const isFunnelOpt = funnelOptKeys.has(key)
+      const wasDaOpt = daOptKeys.has(key)
       return {
         ...d,
         corridorBand: fp ? [fp.corridorLow, fp.corridorHigh] : null,
-        funnelPrice: fp?.funnelPrice ?? null,
+        funnelPrice: fp?.price ?? null,
+        // Funnel re-optimized slot: show dot at funnel price
+        funnelOptPrice: isFunnelOpt ? (fp?.price ?? d.priceVal) : null,
+        // Slot sold: was in DA schedule but dropped in funnel re-optimization
+        funnelSoldPrice: (wasDaOpt && !isFunnelOpt && funnel.currentState.stageIndex > 0) ? (fp?.price ?? d.priceVal) : null,
+        // Slot bought: new in funnel schedule, wasn't in DA schedule
+        funnelBoughtPrice: (isFunnelOpt && !wasDaOpt && funnel.currentState.stageIndex > 0) ? (fp?.price ?? d.priceVal) : null,
       }
     })
-  }, [enrichedChartData, showFunnel, funnel.hasFunnelData, funnel.currentState.points])
+  }, [enrichedChartData, showFunnel, funnel.hasFunnelData, funnel.currentState.points, funnel.currentState.stageIndex, energyPerSession, isQH, chargePowerKw])
 
   // Final chart data: funnel-enriched when active, otherwise enrichedChartData
   const finalChartData = showFunnel && funnel.hasFunnelData ? chartDataWithFunnel : enrichedChartData
@@ -2053,7 +2086,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         onClick={() => { setShowIntraday(true); setShowFunnel(true) }}
                         title="Show intraday price convergence funnel"
                         className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showFunnel ? 'bg-sky-100 text-sky-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
-                        Funnel
+                        ID Funnel
                       </button>
                     )}
                   </div>
@@ -2472,7 +2505,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </>
                   )}
 
-                  {/* Intraday convergence funnel — corridor band + price line */}
+                  {/* Intraday convergence funnel — corridor + price line + re-optimized dots */}
                   {showFunnel && funnel.hasFunnelData && (
                     <>
                       {/* Corridor band: Recharts range area using [low, high] array */}
@@ -2483,8 +2516,26 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       {/* Funnel price line — current stage best-known price */}
                       <Line type="monotone" dataKey="funnelPrice" yAxisId="left"
                         stroke="#0EA5E9" strokeWidth={2}
-                        dot={false} connectNulls={true} name={`ID ${funnel.currentState.stage.toUpperCase()}`}
+                        dot={false} connectNulls={true} name={`${funnel.stages[funnel.stageIndex].label}`}
                         isAnimationActive={false} />
+                      {/* Re-optimized charging slots at current stage — sky dots */}
+                      <Line type="monotone" dataKey="funnelOptPrice" yAxisId="left" stroke="none" strokeWidth={0}
+                        dot={isQH
+                          ? { r: 3, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 1.5 }
+                          : { r: 4.5, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 2 }}
+                        connectNulls={false} isAnimationActive={false} />
+                      {/* Sold positions: were in DA schedule, dropped after re-opt — faded with red outline */}
+                      <Line type="monotone" dataKey="funnelSoldPrice" yAxisId="left" stroke="none" strokeWidth={0}
+                        dot={isQH
+                          ? { r: 2.5, fill: '#3B82F6', stroke: '#EF4444', strokeWidth: 1.5, fillOpacity: 0.25 }
+                          : { r: 4, fill: '#3B82F6', stroke: '#EF4444', strokeWidth: 2, fillOpacity: 0.25 }}
+                        connectNulls={false} isAnimationActive={false} />
+                      {/* Bought positions: new in funnel schedule — green outline */}
+                      <Line type="monotone" dataKey="funnelBoughtPrice" yAxisId="left" stroke="none" strokeWidth={0}
+                        dot={isQH
+                          ? { r: 3, fill: '#10B981', stroke: '#fff', strokeWidth: 1.5 }
+                          : { r: 4.5, fill: '#10B981', stroke: '#fff', strokeWidth: 2 }}
+                        connectNulls={false} isAnimationActive={false} />
                     </>
                   )}
 
