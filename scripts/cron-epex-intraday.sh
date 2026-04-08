@@ -72,8 +72,15 @@ run_scraper() {
         echo "WAF blocked. Waiting ${delay}s before retry..."
         sleep "$delay"
       fi
+    elif echo "$output" | grep -qE "(page load (timeout|failed)|Timeout [0-9]+ms exceeded|no data rows found)"; then
+      # Transient failures (network timeout, EPEX page not ready) — retry with short delay
+      if [ $attempt -lt $MAX_RETRIES ]; then
+        delay=60
+        echo "Transient error (timeout/no rows). Waiting ${delay}s before retry..."
+        sleep "$delay"
+      fi
     else
-      echo "Non-WAF error, not retrying"
+      echo "Non-retryable error, stopping"
       break
     fi
   done

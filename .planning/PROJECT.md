@@ -4,7 +4,9 @@
 
 **FlexMon** (EV Flex Charging Dashboard) is a B2C interactive visualization tool that demonstrates the value of smart EV charging through load shifting. It uses real German (and European) day-ahead electricity prices to show how shifting charging sessions to the cheapest hours saves money compared to immediate/"dumb" charging.
 
-**Core Value:** Make the financial benefit of flexible EV charging tangible and easy to understand for end consumers, fleet managers, and business stakeholders.
+## Core Value
+
+Make the financial benefit of flexible EV charging tangible and easy to understand for end consumers, fleet managers, and business stakeholders.
 
 ## Context
 
