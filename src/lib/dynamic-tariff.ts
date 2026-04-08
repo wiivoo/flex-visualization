@@ -18,7 +18,18 @@ export interface Surcharges {
   margin: number            // Supplier margin
 }
 
-/** 2025 default values (ct/kWh netto) */
+/**
+ * 2025 default values (ct/kWh netto)
+ *
+ * Sources: BNetzA, netztransparenz.de, ISPEX
+ * Margin: Tibber charges 2.15 ct "weitere Beschaffungskosten" (green certs + procurement)
+ *
+ * Note: NOT included in per-kWh surcharges (billed separately as monthly fixed fees):
+ *   - Messstellenbetrieb (smart meter): ~2-3 EUR/mo, passed through by Tibber
+ *   - Netzentgelt Grundpreis (grid fixed fee): ~5-9 EUR/mo, set by regional DSO
+ *   These apply to both dynamic and fixed tariffs, so they cancel out in savings comparisons
+ *   unless the fixed tariff embeds them differently in its Grundpreis.
+ */
 export const DEFAULT_SURCHARGES: Surcharges = {
   gridFee: 10.95,
   stromsteuer: 2.05,
@@ -26,7 +37,7 @@ export const DEFAULT_SURCHARGES: Surcharges = {
   kwkg: 0.277,
   offshore: 0.816,
   par19: 1.558,
-  margin: 2.00,
+  margin: 2.15,
 }
 
 /** 2026 values (ct/kWh netto) — grid fee reduced by govt subsidy */
@@ -37,7 +48,7 @@ export const SURCHARGES_2026: Surcharges = {
   kwkg: 0.446,
   offshore: 0.941,
   par19: 1.559,
-  margin: 2.00,
+  margin: 2.15,
 }
 
 /** Get surcharges for a given year */
