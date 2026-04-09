@@ -62,7 +62,7 @@ All values inherited from the existing v2 component pattern. Source: `SessionCos
 | Display | 16px | 700 bold | 1.2 | `text-base font-bold` | Primary savings figure in waterfall totals |
 
 Additional micro-typography (inherited from scrubber pattern):
-- Stage dot labels: `text-[9px] font-semibold tabular-nums` — exact clone of FunnelTimeline stage labels
+- Stage dot labels: `text-[10px] font-bold tabular-nums` — uses Label size (10px); absorbed from FunnelTimeline's text-[9px] pattern (1px imperceptible at this scale)
 - Re-optimization savings indicator: `text-[11px] font-bold tabular-nums` — exact clone of FunnelTimeline savings badge
 - All numeric displays: `tabular-nums` class required, no exceptions
 
@@ -115,7 +115,7 @@ Stage scrubber visual contract:
 - Active dot: `bg-sky-500 border-sky-500 scale-125 rounded-full`
 - Completed dots: `bg-sky-300 border-sky-300`
 - Pending dots: `bg-white border-gray-300`
-- Stage labels: `text-[9px] font-semibold tabular-nums`, teal for active, gray for pending
+- Stage labels: `text-[10px] font-bold tabular-nums`, teal for active, gray for pending
 - Keyboard: ArrowLeft / ArrowRight navigate stages (same as FunnelTimeline)
 
 Scenario selector visual contract:
@@ -224,8 +224,8 @@ The chart must visually communicate information availability at each stage:
 When `showFleet === true` in Step2 (process view inherits this state):
 
 - Flex band overlays: semi-transparent blue `fill="#DBEAFE"` `fillOpacity={0.3}` spanning greedy/lazy bounds per slot
-- Flex band upper bound label: `text-[9px] text-blue-500` "Max"
-- Flex band lower bound label: `text-[9px] text-blue-500` "Min"
+- Flex band upper bound label: `text-[10px] text-blue-500` "Max"
+- Flex band lower bound label: `text-[10px] text-blue-500` "Min"
 - Waterfall: two bars per bucket — "Single EV" (gray-400 fill) and "Fleet/car" (blue-400 fill) — fleet bar always shorter than single-EV drag bars
 - Portfolio effect note below chart: `text-[10px] text-blue-600` "√N portfolio effect reduces uncertainty per car"
 
