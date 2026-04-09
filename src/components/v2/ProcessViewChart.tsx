@@ -433,32 +433,31 @@ export const ProcessViewChart = ({
           </div>
         )}
 
-        {/* Savings pill — top center */}
-        {plotArea && (
+        {/* Savings pill — top center: always anchored to perfect (= savings card value) */}
+        {plotArea && processResult.perfectSavingsCtKwh > 0 && (
           <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
-            {currentStage === 'forecast' && forecastSavings > 0 && (
-              <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-amber-50/80 border-amber-300/50">
-                <span className="text-[11px] font-bold tabular-nums text-amber-700">
-                  Forecast: ▼ {forecastSavings.toFixed(1)} ct/kWh
+            <div className="flex items-center gap-1.5 flex-nowrap">
+              {/* Perfect savings — always shown, matches savings card */}
+              <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
+                <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
+                  ▼ {processResult.perfectSavingsCtKwh.toFixed(1)} ct/kWh
+                </span>
+                <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
+                  perfect
                 </span>
               </div>
-            )}
-            {currentStage === 'da_nomination' && processResult.perfectSavingsCtKwh > 0 && (
-              <div className="flex items-center gap-1.5">
-                <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50">
-                  <span className="text-[11px] font-bold tabular-nums text-emerald-700">
-                    ▼ {processResult.realizedSavingsCtKwh.toFixed(1)} ct/kWh realized
+              {/* Forecast error delta — shown when scenario != perfect */}
+              {(processResult.daForecastDragCtKwh > 0.01 || processResult.availabilityDragCtKwh > 0.01) && (
+                <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50 flex-shrink-0">
+                  <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-red-600">
+                    {currentStage === 'forecast'
+                      ? `Forecast error: -${(processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh).toFixed(1)} ct`
+                      : `DA error: -${processResult.daForecastDragCtKwh.toFixed(1)} ct`
+                    }
                   </span>
                 </div>
-                {processResult.daForecastDragCtKwh > 0.01 && (
-                  <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50">
-                    <span className="text-[10px] font-bold tabular-nums text-red-600">
-                      DA Error: -{processResult.daForecastDragCtKwh.toFixed(2)} ct
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
       </div>
