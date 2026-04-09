@@ -142,15 +142,14 @@ export const ProcessViewChart = ({
         }
       }
 
-      // Orange dots: forecast-nominated slots on the forecast curve (both stages)
-      extra.pvForecastNomPrice = isForecastNominated && fp ? fp.priceCtKwh : null
-
       if (currentStage === 'forecast') {
-        // Forecast stage: no blue dots — only orange (forecast) + red (baseline)
-        extra.optimizedPrice = null
+        // Forecast stage: red baseline dots and blue optimized dots both sit on the forecast curve
+        extra.baselinePrice = isForecastNominated ? null : (d.baselinePrice != null ? (fp ? fp.priceCtKwh : d.baselinePrice) : null)
+        extra.optimizedPrice = isForecastNominated && fp ? fp.priceCtKwh : null
       } else {
-        // DA stage: blue dots on perfect slots (actual DA optimal)
+        // DA stage: blue dots on perfect slots (actual DA optimal), red dots on DA curve (from mainChartData)
         extra.optimizedPrice = isPerfectSlot ? d.priceVal ?? d.price : null
+        // baselinePrice stays from mainChartData (already on DA curve)
       }
 
       return { ...d, ...extra }
@@ -304,48 +303,41 @@ export const ProcessViewChart = ({
           />
         )}
 
-        {/* DA price curve — same as main chart (dimmed at forecast stage) */}
+        {/* DA price curve — primary on DA stage, dimmed/dashed on forecast stage */}
         <Area yAxisId="left" type="monotone" dataKey="price"
           fill="url(#priceGrad)" stroke="none"
-          fillOpacity={currentStage === 'forecast' && uncertaintyScenario !== 'perfect' ? 0.3 : 1}
+          fillOpacity={currentStage === 'forecast' ? 0.15 : 1}
           isAnimationActive={false}
         />
         <Line yAxisId="left" type="monotone" dataKey="price"
-          stroke="#94A3B8" strokeWidth={1.5}
-          strokeOpacity={currentStage === 'forecast' && uncertaintyScenario !== 'perfect' ? 0.35 : 1}
+          stroke="#94A3B8"
+          strokeWidth={currentStage === 'forecast' ? 1.2 : 1.5}
+          strokeOpacity={currentStage === 'forecast' ? 0.35 : 1}
+          strokeDasharray={currentStage === 'forecast' ? '6 3' : undefined}
           dot={isQH ? { r: 1.5, fill: '#94A3B8', stroke: 'none', fillOpacity: currentStage === 'forecast' ? 0.3 : 1 } : false}
           connectNulls isAnimationActive={false}
         />
 
-        {/* Baseline dots — red */}
+        {/* Baseline dots — red (on forecast curve in forecast stage, DA curve in DA stage) */}
         <Line yAxisId="left" type="monotone" dataKey="baselinePrice"
           stroke="#EF4444" strokeWidth={0}
           dot={{ r: isQH ? 2.5 : 4, fill: '#EF4444', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
           connectNulls={false} isAnimationActive={false}
         />
 
-        {/* Optimized dots — blue (DA stage only, hidden on forecast) */}
-        {currentStage === 'da_nomination' && (
-          <Line yAxisId="left" type="monotone" dataKey="optimizedPrice"
-            stroke="#3B82F6" strokeWidth={0}
-            dot={{ r: isQH ? 2.5 : 4, fill: '#3B82F6', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
-            connectNulls={false} isAnimationActive={false}
-          />
-        )}
+        {/* Optimized dots — blue (on forecast curve in forecast stage, DA curve in DA stage) */}
+        <Line yAxisId="left" type="monotone" dataKey="optimizedPrice"
+          stroke="#3B82F6" strokeWidth={0}
+          dot={{ r: isQH ? 2.5 : 4, fill: '#3B82F6', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
+          connectNulls={false} isAnimationActive={false}
+        />
 
-        {/* Forecast-nominated dots — orange, on forecast curve (both stages) */}
-        {uncertaintyScenario !== 'perfect' && (
-          <Line yAxisId="left" type="monotone" dataKey="pvForecastNomPrice"
-            stroke="#D97706" strokeWidth={0}
-            dot={{ r: isQH ? 2.5 : 4, fill: '#D97706', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
-            connectNulls={false} isAnimationActive={false}
-          />
-        )}
-
-        {/* Forecast price curve — dashed amber */}
+        {/* Forecast price curve — solid/prominent on forecast stage, dashed on DA stage */}
         {(currentStage === 'forecast' || currentStage === 'da_nomination') && uncertaintyScenario !== 'perfect' && (
           <Line yAxisId="left" type="monotone" dataKey="pvForecastPrice"
-            stroke="#D97706" strokeWidth={1.5} strokeDasharray="6 3"
+            stroke="#D97706"
+            strokeWidth={currentStage === 'forecast' ? 2 : 1.5}
+            strokeDasharray={currentStage === 'forecast' ? undefined : '6 3'}
             dot={false} isAnimationActive={false} connectNulls={false}
           />
         )}
