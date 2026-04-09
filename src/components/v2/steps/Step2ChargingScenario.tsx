@@ -508,13 +508,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     return { flexBand: band, fleetOptResult: optResult }
   }, [isFleetActive, chartData, fleetConfig, isQH, scenario.chargingMode])
 
-  // ── Process view computation (Phase 6 Plan 02) ──
+  // ── Process view: filter prices to overnight window (same as main chart) ──
+  const pvWindowPrices = useMemo(() => {
+    if (!date1 || chartPrices.length === 0) return []
+    const CHART_START_HOUR = 14
+    const endHour = isFullDay ? 24 : 10
+    const lastDate = isThreeDay ? date4 : date2
+    const allDates = isThreeDay ? [date1, date2, date3, date4] : [date1, date2]
+    return chartPrices.filter(p => {
+      if (!allDates.includes(p.date)) return false
+      if (p.date === date1 && p.hour < CHART_START_HOUR) return false
+      if (p.date === lastDate && p.hour >= endHour) return false
+      return true
+    })
+  }, [chartPrices, date1, date2, date3, date4, isFullDay, isThreeDay])
+
   // Stabilize scenario fields used by process view to avoid recomputation on unrelated changes
   const pvScenarioKey = useDeferredValue(`${scenario.vehicleId}-${scenario.plugInTime}-${scenario.departureTime}-${scenario.startLevel}-${scenario.targetLevel}-${scenario.chargePowerKw}-${scenario.chargingMode}`)
   const processResult = useMemo(() => {
     if (!showProcessView || !date1 || chartData.length === 0) return null
     return computeProcessViewResults({
-      prices: chartPrices,
+      prices: pvWindowPrices,
       intradayPrices: prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null,
       scenario,
       uncertaintyScenario,
@@ -523,7 +537,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       dateSeed: prices.selectedDate,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showProcessView, date1, chartData.length, chartPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate])
+  }, [showProcessView, date1, chartData.length, pvWindowPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
@@ -2233,7 +2247,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
               {showProcessView && processResult ? (
                 <ProcessViewChart
-                  prices={chartPrices}
+                  prices={pvWindowPrices}
                   intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
                   scenario={scenario}
                   showFleet={showFleet}
