@@ -67,20 +67,66 @@ export const ProcessViewChart = ({
 
   const forecastPrices = processResult.stages.forecast?.pricesUsed ?? null
 
+  // Forecast-nominated slot indices
+  const forecastCheapestSet = useMemo(() => {
+    return new Set(processResult.stages.forecast?.cheapestHours ?? [])
+  }, [processResult])
+
+  // Perfect (DA-based) slot indices
+  const perfectCheapestSet = useMemo(() => {
+    return new Set(processResult.stages.da_nomination?.cheapestHours ?? [])
+  }, [processResult])
+
+  // Forecast stage: slots nominated based on forecast
+  // DA stage: show perfect slots (blue) + forecast-wrong slots (amber = missed, red = unnecessary)
+  const forecastRanges = useMemo(() => {
+    return [...forecastCheapestSet].map(idx => ({ x1: idx, x2: Math.min(idx + 1, N - 1) }))
+  }, [forecastCheapestSet, N])
+
+  // On DA stage: slots that forecast nominated but weren't optimal (unnecessary)
+  const unnecessaryRanges = useMemo(() => {
+    if (currentStage !== 'da_nomination') return []
+    return [...forecastCheapestSet]
+      .filter(idx => !perfectCheapestSet.has(idx))
+      .map(idx => ({ x1: idx, x2: Math.min(idx + 1, N - 1) }))
+  }, [forecastCheapestSet, perfectCheapestSet, currentStage, N])
+
+  // On DA stage: slots that were optimal but forecast missed
+  const missedRanges = useMemo(() => {
+    if (currentStage !== 'da_nomination') return []
+    return [...perfectCheapestSet]
+      .filter(idx => !forecastCheapestSet.has(idx))
+      .map(idx => ({ x1: idx, x2: Math.min(idx + 1, N - 1) }))
+  }, [forecastCheapestSet, perfectCheapestSet, currentStage, N])
+
   const enrichedData = useMemo(() => {
     if (!forecastPrices) return mainChartData
     return mainChartData.map((d, i) => {
       const fp = forecastPrices[i]
-      if (!fp) return d
-      return {
-        ...d,
-        pvForecastPrice: fp.priceCtKwh,
-        pvConfidenceBand: currentStage === 'forecast'
-          ? [Math.max(0, fp.priceCtKwh - bandWidth), fp.priceCtKwh + bandWidth]
-          : undefined,
+      // On forecast stage: show forecast-nominated slots as optimized (blue dots)
+      // Replace optimizedPrice with forecast-based slot selection
+      const isForecastNominated = forecastCheapestSet.has(i)
+      const isPerfectSlot = perfectCheapestSet.has(i)
+
+      const extra: Record<string, unknown> = {}
+      if (fp) {
+        extra.pvForecastPrice = fp.priceCtKwh
+        if (currentStage === 'forecast') {
+          extra.pvConfidenceBand = [Math.max(0, fp.priceCtKwh - bandWidth), fp.priceCtKwh + bandWidth]
+        }
       }
+
+      if (currentStage === 'forecast') {
+        // Show forecast-nominated slots as the "optimized" dots
+        extra.optimizedPrice = isForecastNominated ? d.priceVal ?? d.price : null
+      } else {
+        // DA stage: show perfect slots as blue, keep baseline as-is
+        extra.optimizedPrice = isPerfectSlot ? d.priceVal ?? d.price : null
+      }
+
+      return { ...d, ...extra }
     })
-  }, [mainChartData, forecastPrices, bandWidth, currentStage])
+  }, [mainChartData, forecastPrices, bandWidth, currentStage, forecastCheapestSet, perfectCheapestSet])
 
   if (N === 0) {
     return (
@@ -171,9 +217,24 @@ export const ProcessViewChart = ({
           <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
         ))}
 
-        {/* Optimized slots — blue bands */}
-        {optimizedRanges.map((r, i) => (
+        {/* Forecast stage: forecast-nominated slots — blue bands */}
+        {currentStage === 'forecast' && forecastRanges.map((r, i) => (
+          <ReferenceArea key={`fo-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+        ))}
+
+        {/* DA stage: perfect slots — blue bands */}
+        {currentStage === 'da_nomination' && optimizedRanges.map((r, i) => (
           <ReferenceArea key={`o-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#3B82F6" fillOpacity={0.08} ifOverflow="hidden" />
+        ))}
+
+        {/* DA stage: forecast nominated but not optimal — amber (unnecessary) */}
+        {unnecessaryRanges.map((r, i) => (
+          <ReferenceArea key={`un-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#F59E0B" fillOpacity={0.12} ifOverflow="hidden" />
+        ))}
+
+        {/* DA stage: optimal but forecast missed — red outline */}
+        {missedRanges.map((r, i) => (
+          <ReferenceArea key={`mi-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.12} ifOverflow="hidden" />
         ))}
 
         {/* Forecast confidence band (forecast stage only) */}
