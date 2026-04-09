@@ -2216,20 +2216,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </button>
                   </div>
                 )}
-                {/* Scenario view toggle */}
-                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-                  <button
-                    onClick={() => setShowProcessView(v => { if (!v) setProcessStage('forecast'); return !v })}
-                    title="Show forecast uncertainty scenarios: how price and availability errors affect optimization"
-                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
-                      showProcessView
-                        ? 'bg-white text-[#313131] shadow-sm'
-                        : 'text-gray-400 hover:text-gray-600'
-                    }`}
-                  >
-                    Scenario
-                  </button>
-                </div>
+                {/* Scenario view toggle — disabled for now */}
                 {/* Fleet toggle is in Customer Profile sidebar — no chart toolbar pill */}
               </div>
             </div>
