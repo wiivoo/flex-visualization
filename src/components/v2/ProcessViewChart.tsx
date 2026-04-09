@@ -1,16 +1,11 @@
 'use client'
 
 import { useMemo, useCallback } from 'react'
-import {
-  ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea,
-} from 'recharts'
-import type { HourlyPrice, ChargingScenario, FleetConfig } from '@/lib/v2-config'
+import type { HourlyPrice, ChargingScenario } from '@/lib/v2-config'
 import {
   PROCESS_STAGES, UNCERTAINTY_SCENARIOS,
   type ProcessStage, type UncertaintyScenario, type ProcessViewResult,
 } from '@/lib/process-view'
-import { computeFlexBand } from '@/lib/fleet-optimizer'
 
 /* ── Props ── */
 
@@ -19,7 +14,6 @@ interface Props {
   intradayPrices: HourlyPrice[] | null
   scenario: ChargingScenario
   showFleet: boolean
-  fleetConfig: FleetConfig
   isQH: boolean
   chartWidth: number
   chartHeight: number
@@ -30,54 +24,76 @@ interface Props {
   onUncertaintyChange: (s: UncertaintyScenario) => void
   currentStage: ProcessStage
   onStageChange: (s: ProcessStage) => void
+  // fleetConfig kept in parent interface but not used here after simplification
+  fleetConfig?: unknown
 }
 
-/* ── Chart data builder ── */
+/* ── Hourly aggregation for lightweight rendering ── */
 
-interface ChartDatum {
-  idx: number
+interface HourBar {
+  hour: number
   label: string
   daPrice: number
-  chargingKw: number | null
   forecastPrice?: number
   intradayPrice?: number
+  isCharging: boolean
+  isWindow: boolean
 }
 
-function buildChartData(
+function buildHourlyBars(
   prices: HourlyPrice[],
   result: ProcessViewResult,
   activeStage: ProcessStage,
-): ChartDatum[] {
+): HourBar[] {
   const stageResult = result.stages[activeStage]
-  const forecastResult = result.stages.forecast
   const cheapestSet = stageResult ? new Set(stageResult.cheapestHours) : new Set<number>()
 
-  return prices.map((p, i) => {
-    const hourLabel = `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`
+  // Determine charging window
+  const windowStartH = stageResult ? parseInt(stageResult.windowStart.split(':')[0], 10) : -1
+  const windowEndH = stageResult ? parseInt(stageResult.windowEnd.split(':')[0], 10) : -1
+  const wrapsWindow = windowEndH <= windowStartH
 
-    // Mark hours selected for charging at the active stage
-    const chargingKw = cheapestSet.has(i) ? 1 : null
+  // Aggregate to hourly: group by hour, take average price
+  const hourMap = new Map<number, { prices: number[]; forecastPrices: number[]; intradayPrices: number[]; isCharging: boolean }>()
 
-    const datum: ChartDatum = {
-      idx: i,
-      label: hourLabel,
-      daPrice: p.priceCtKwh,
-      chargingKw,
+  prices.forEach((p, i) => {
+    const entry = hourMap.get(p.hour) ?? { prices: [], forecastPrices: [], intradayPrices: [], isCharging: false }
+    entry.prices.push(p.priceCtKwh)
+    if (cheapestSet.has(i)) entry.isCharging = true
+
+    // Forecast stage: show perturbed prices
+    if (activeStage === 'forecast' && result.stages.forecast) {
+      const fp = result.stages.forecast.pricesUsed[i]
+      if (fp) entry.forecastPrices.push(fp.priceCtKwh)
     }
 
-    // At forecast stage, show perturbed prices as a line
-    if (activeStage === 'forecast' && forecastResult) {
-      const fp = forecastResult.pricesUsed[i]
-      if (fp) datum.forecastPrice = fp.priceCtKwh
-    }
-
-    // At intraday stage, show intraday prices
+    // Intraday stage: show intraday prices
     if (activeStage === 'intraday_adjustment' && result.stages.intraday_adjustment) {
       const ip = result.stages.intraday_adjustment.pricesUsed[i]
-      if (ip) datum.intradayPrice = ip.priceCtKwh
+      if (ip) entry.intradayPrices.push(ip.priceCtKwh)
     }
 
-    return datum
+    hourMap.set(p.hour, entry)
+  })
+
+  const hours = Array.from(hourMap.entries()).sort((a, b) => a[0] - b[0])
+
+  return hours.map(([hour, data]) => {
+    const avg = (arr: number[]) => arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0
+    const inWindow = wrapsWindow
+      ? (hour >= windowStartH || hour < windowEndH)
+      : (hour >= windowStartH && hour < windowEndH)
+
+    const bar: HourBar = {
+      hour,
+      label: `${String(hour).padStart(2, '0')}`,
+      daPrice: avg(data.prices),
+      isCharging: data.isCharging,
+      isWindow: inWindow,
+    }
+    if (data.forecastPrices.length > 0) bar.forecastPrice = avg(data.forecastPrices)
+    if (data.intradayPrices.length > 0) bar.intradayPrice = avg(data.intradayPrices)
+    return bar
   })
 }
 
@@ -85,11 +101,6 @@ function buildChartData(
 
 export const ProcessViewChart = ({
   prices,
-  scenario,
-  showFleet,
-  fleetConfig,
-  isQH,
-  chartHeight,
   hasIntraday,
   processResult,
   uncertaintyScenario,
@@ -98,9 +109,7 @@ export const ProcessViewChart = ({
   onStageChange,
 }: Props) => {
   const stageIndex = PROCESS_STAGES.findIndex(s => s.key === currentStage)
-  const activeStage = currentStage
 
-  // Prevent navigating to intraday when unavailable
   const goToStage = useCallback((idx: number) => {
     if (idx === 2 && !hasIntraday) return
     const clamped = Math.max(0, Math.min(idx, PROCESS_STAGES.length - 1))
@@ -122,44 +131,26 @@ export const ProcessViewChart = ({
     if (e.key === 'ArrowLeft') { e.preventDefault(); prevStage() }
   }, [nextStage, prevStage])
 
-  // Chart data from externally-provided processResult
-  const chartData = useMemo(() => buildChartData(prices, processResult, activeStage), [prices, processResult, activeStage])
+  // Always 24 bars max — aggregate QH to hourly
+  const bars = useMemo(() => buildHourlyBars(prices, processResult, currentStage), [prices, processResult, currentStage])
 
-  // Fleet flex band (for overlay)
-  const flexBand = useMemo(() => {
-    if (!showFleet) return null
-    return computeFlexBand(fleetConfig, prices, isQH, scenario.chargingMode)
-  }, [showFleet, fleetConfig, prices, isQH, scenario.chargingMode])
+  const maxPrice = useMemo(() => Math.max(...bars.map(b => Math.max(b.daPrice, b.forecastPrice ?? 0, b.intradayPrice ?? 0)), 1), [bars])
 
-  // Determine charging window indices for ReferenceArea overlays
-  const windowIndices = useMemo(() => {
-    const stageResult = processResult.stages[activeStage]
-    if (!stageResult) return { start: -1, end: -1 }
-    const startHour = parseInt(stageResult.windowStart.split(':')[0], 10)
-    const endHour = parseInt(stageResult.windowEnd.split(':')[0], 10)
-    let startIdx = prices.findIndex(p => p.hour === startHour)
-    let endIdx = prices.findIndex(p => p.hour === endHour)
-    if (startIdx < 0) startIdx = 0
-    if (endIdx < 0) endIdx = prices.length - 1
-    return { start: startIdx, end: endIdx }
-  }, [processResult, activeStage, prices])
-
-  // Stage badge configuration
+  // Stage badge
   const stageBadge = useMemo(() => {
-    switch (activeStage) {
-      case 'forecast': return { text: 'D-2 to D-1 12:00', className: 'text-[10px] text-amber-600' }
-      case 'da_nomination': return { text: 'D-1 12:00', className: 'text-[10px] text-emerald-600' }
-      case 'intraday_adjustment': return { text: 'Day D', className: 'text-[10px] text-sky-600' }
+    switch (currentStage) {
+      case 'forecast': return { text: 'D-2 to D-1 12:00', className: 'text-amber-600' }
+      case 'da_nomination': return { text: 'D-1 12:00', className: 'text-emerald-600' }
+      case 'intraday_adjustment': return { text: 'Day D', className: 'text-sky-600' }
     }
-  }, [activeStage])
+  }, [currentStage])
 
-  // DA bar opacity depends on stage
-  const daBarOpacity = activeStage === 'forecast' ? 0.4 : 1.0
+  const daBarOpacity = currentStage === 'forecast' ? 0.4 : 1.0
 
   if (prices.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400 text-[11px]">
-        No price data for selected date. Select a different date to run the process view.
+        No price data for selected date.
       </div>
     )
   }
@@ -209,9 +200,7 @@ export const ProcessViewChart = ({
             )
           })}
         </div>
-
-        {/* Stage badge */}
-        <span className={stageBadge.className + ' font-bold'}>{stageBadge.text}</span>
+        <span className={`text-[10px] font-bold ${stageBadge.className}`}>{stageBadge.text}</span>
       </div>
 
       {/* Scenario selector */}
@@ -231,185 +220,117 @@ export const ProcessViewChart = ({
         ))}
       </div>
 
-      {/* Chart */}
-      <div className="relative" style={{ height: chartHeight > 0 ? chartHeight : 350 }}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 10 }}
-              tickLine={false}
-              axisLine={{ stroke: '#E5E7EB' }}
-              interval={isQH ? 7 : 1}
-            />
-            <YAxis
-              yAxisId="left"
-              tick={{ fontSize: 10 }}
-              tickLine={false}
-              axisLine={false}
-              label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }}
-            />
-            <Tooltip
-              contentStyle={{ fontSize: 11 }}
-              labelFormatter={(label) => `${label}`}
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              formatter={((value: any, name: any) => {
-                const v = typeof value === 'number' ? value : 0
-                const n = String(name ?? '')
-                if (n === 'daPrice') return [`${v.toFixed(2)} ct/kWh`, 'DA Price']
-                if (n === 'forecastPrice') return [`${v.toFixed(2)} ct/kWh`, 'Forecast']
-                if (n === 'intradayPrice') return [`${v.toFixed(2)} ct/kWh`, 'Intraday']
-                return [`${v}`, n]
-              }) as never}
-            />
+      {/* Lightweight HTML bar chart — 24 bars, no Recharts */}
+      <div className="relative px-1" style={{ height: 280 }}>
+        {/* Y axis labels */}
+        <div className="absolute left-0 top-0 bottom-4 w-8 flex flex-col justify-between text-[9px] text-gray-400 tabular-nums">
+          <span>{maxPrice.toFixed(0)}</span>
+          <span>{(maxPrice / 2).toFixed(0)}</span>
+          <span>0</span>
+        </div>
 
-            {/* Forecast stage: yellow uncertainty corridor */}
-            {activeStage === 'forecast' && windowIndices.start >= 0 && (
-              <ReferenceArea
-                x1={windowIndices.start}
-                x2={windowIndices.end > windowIndices.start ? windowIndices.end : chartData.length - 1}
-                yAxisId="left"
-                fill="#FEF9C3"
-                fillOpacity={0.35}
-                stroke="none"
-              />
-            )}
+        {/* Bars container */}
+        <div className="ml-9 flex items-end gap-[2px] h-[248px]">
+          {bars.map((bar) => {
+            const heightPct = (bar.daPrice / maxPrice) * 100
+            const forecastPct = bar.forecastPrice !== undefined ? (bar.forecastPrice / maxPrice) * 100 : undefined
+            const intradayPct = bar.intradayPrice !== undefined ? (bar.intradayPrice / maxPrice) * 100 : undefined
 
-            {/* DA Nomination stage: emerald optimized blocks (cheapest hours) */}
-            {activeStage === 'da_nomination' && processResult.stages.da_nomination && (
-              processResult.stages.da_nomination.cheapestHours.map(idx => (
-                <ReferenceArea
-                  key={`da-cheap-${idx}`}
-                  x1={idx}
-                  x2={idx + 1 < chartData.length ? idx + 1 : idx}
-                  yAxisId="left"
-                  fill="#D1FAE5"
-                  fillOpacity={0.5}
-                  stroke="none"
-                />
-              ))
-            )}
+            return (
+              <div key={bar.hour} className="flex-1 flex flex-col items-center gap-0" style={{ minWidth: 0 }}>
+                <div className="relative w-full flex items-end justify-center" style={{ height: 228 }}>
+                  {/* Window background */}
+                  {bar.isWindow && currentStage === 'forecast' && (
+                    <div className="absolute inset-0 bg-amber-100/40 rounded-sm" />
+                  )}
 
-            {/* Intraday stage: red correction zones */}
-            {activeStage === 'intraday_adjustment' && processResult.stages.intraday_adjustment && processResult.stages.forecast && (() => {
-              const forecastStart = parseInt(processResult.stages.forecast.windowStart.split(':')[0], 10)
-              const realStart = parseInt(processResult.stages.intraday_adjustment.windowStart.split(':')[0], 10)
-              if (forecastStart !== realStart) {
-                const minH = Math.min(forecastStart, realStart)
-                const maxH = Math.max(forecastStart, realStart)
-                const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === minH)
-                const endIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === maxH)
-                if (startIdx >= 0 && endIdx >= 0) {
-                  return (
-                    <ReferenceArea
-                      x1={startIdx}
-                      x2={endIdx}
-                      yAxisId="left"
-                      fill="#FEE2E2"
-                      fillOpacity={0.4}
-                      stroke="none"
-                    />
-                  )
-                }
-              }
-              return null
-            })()}
-
-            {/* Intraday stage: emerald re-optimized blocks (cheapest hours) */}
-            {activeStage === 'intraday_adjustment' && processResult.stages.intraday_adjustment && (
-              processResult.stages.intraday_adjustment.cheapestHours.map(idx => (
-                <ReferenceArea
-                  key={`id-cheap-${idx}`}
-                  x1={idx}
-                  x2={idx + 1 < chartData.length ? idx + 1 : idx}
-                  yAxisId="left"
-                  fill="#D1FAE5"
-                  fillOpacity={0.5}
-                  stroke="none"
-                />
-              ))
-            )}
-
-            {/* Fleet flex band overlay */}
-            {showFleet && flexBand && flexBand.length > 0 && (() => {
-              // Simplified: show band as a single reference area per contiguous segment
-              const firstBand = flexBand[0]
-              const lastBand = flexBand[flexBand.length - 1]
-              const startIdx = chartData.findIndex(d => {
-                const h = parseInt(d.label.split(':')[0], 10)
-                return h === firstBand.hour
-              })
-              const endIdx = chartData.findIndex(d => {
-                const h = parseInt(d.label.split(':')[0], 10)
-                return h === lastBand.hour
-              })
-              if (startIdx >= 0 && endIdx >= 0) {
-                return (
-                  <ReferenceArea
-                    x1={startIdx}
-                    x2={endIdx}
-                    yAxisId="left"
-                    fill="#DBEAFE"
-                    fillOpacity={0.3}
-                    stroke="none"
+                  {/* DA price bar */}
+                  <div
+                    className={`w-full rounded-t-sm transition-all duration-150 ${
+                      bar.isCharging ? 'bg-emerald-400' : 'bg-slate-400'
+                    }`}
+                    style={{
+                      height: `${Math.max(1, heightPct)}%`,
+                      opacity: bar.isCharging ? 1 : daBarOpacity,
+                    }}
+                    title={`${bar.label}:00 — ${bar.daPrice.toFixed(1)} ct/kWh${bar.isCharging ? ' (charging)' : ''}`}
                   />
-                )
-              }
-              return null
-            })()}
 
-            {/* DA price bars */}
-            <Bar
-              yAxisId="left"
-              dataKey="daPrice"
-              fill="#94A3B8"
-              fillOpacity={daBarOpacity}
-              radius={[2, 2, 0, 0]}
-              isAnimationActive={false}
-            />
+                  {/* Forecast price marker */}
+                  {forecastPct !== undefined && (
+                    <div
+                      className="absolute w-full border-t-2 border-dashed border-amber-500"
+                      style={{ bottom: `${Math.max(0, forecastPct)}%` }}
+                    />
+                  )}
 
-            {/* Forecast price line (at forecast stage) */}
-            {activeStage === 'forecast' && (
-              <Line
-                yAxisId="left"
-                dataKey="forecastPrice"
-                stroke="#D97706"
-                strokeWidth={1.5}
-                strokeDasharray="4 2"
-                dot={false}
-                isAnimationActive={false}
-              />
-            )}
+                  {/* Intraday price marker */}
+                  {intradayPct !== undefined && (
+                    <div
+                      className="absolute w-full border-t-2 border-sky-500"
+                      style={{ bottom: `${Math.max(0, intradayPct)}%` }}
+                    />
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
 
-            {/* Intraday price line (at intraday stage) */}
-            {activeStage === 'intraday_adjustment' && hasIntraday && (
-              <Line
-                yAxisId="left"
-                dataKey="intradayPrice"
-                stroke="#0EA5E9"
-                strokeWidth={1.5}
-                dot={false}
-                isAnimationActive={false}
-              />
-            )}
-          </ComposedChart>
-        </ResponsiveContainer>
+        {/* X axis labels */}
+        <div className="ml-9 flex gap-[2px] mt-0.5">
+          {bars.map((bar, i) => (
+            <div key={bar.hour} className="flex-1 text-center" style={{ minWidth: 0 }}>
+              <span className={`text-[8px] tabular-nums ${i % 3 === 0 ? 'text-gray-500' : 'text-transparent'}`}>
+                {bar.label}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* ct/kWh label */}
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 -rotate-90 text-[9px] text-gray-400 origin-center" style={{ left: -4 }}>
+          ct/kWh
+        </div>
       </div>
 
-      {/* Waterfall summary */}
+      {/* Legend */}
+      <div className="flex items-center gap-4 px-2 text-[10px] text-gray-500">
+        <div className="flex items-center gap-1">
+          <div className="w-2.5 h-2.5 rounded-sm bg-emerald-400" />
+          <span>Charging</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-2.5 h-2.5 rounded-sm bg-slate-400" style={{ opacity: daBarOpacity }} />
+          <span>DA Price</span>
+        </div>
+        {currentStage === 'forecast' && (
+          <div className="flex items-center gap-1">
+            <div className="w-4 border-t-2 border-dashed border-amber-500" />
+            <span>Forecast</span>
+          </div>
+        )}
+        {currentStage === 'intraday_adjustment' && hasIntraday && (
+          <div className="flex items-center gap-1">
+            <div className="w-4 border-t-2 border-sky-500" />
+            <span>Intraday</span>
+          </div>
+        )}
+      </div>
+
+      {/* Savings summary strip */}
       <div className="flex items-center gap-3 px-2">
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-bold text-gray-400">Perfect:</span>
           <span className="text-[11px] font-bold tabular-nums text-emerald-600">{processResult.perfectSavingsCtKwh.toFixed(2)} ct/kWh</span>
         </div>
-        {processResult.daForecastDragCtKwh > 0 && (
+        {processResult.daForecastDragCtKwh > 0.01 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-gray-400">DA Error:</span>
             <span className="text-[11px] font-bold tabular-nums text-red-500">-{processResult.daForecastDragCtKwh.toFixed(2)}</span>
           </div>
         )}
-        {processResult.availabilityDragCtKwh > 0 && (
+        {processResult.availabilityDragCtKwh > 0.01 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-gray-400">Avail.:</span>
             <span className="text-[11px] font-bold tabular-nums text-red-500">-{processResult.availabilityDragCtKwh.toFixed(2)}</span>
