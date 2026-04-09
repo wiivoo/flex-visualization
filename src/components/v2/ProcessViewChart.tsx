@@ -67,6 +67,32 @@ export const ProcessViewChart = ({
 
   const forecastPrices = processResult.stages.forecast?.pricesUsed ?? null
 
+  // Forecast arrival/departure — perturbed window from processResult
+  const forecastWindow = useMemo(() => {
+    const fc = processResult.stages.forecast
+    if (!fc) return null
+    const fcStartH = parseInt(fc.windowStart.split(':')[0], 10)
+    const fcEndH = parseInt(fc.windowEnd.split(':')[0], 10)
+    // Find indices in mainChartData
+    const firstDate = mainChartData[0]?.date
+    const depDate = mainChartData.find((d: { date: string }) => d.date !== firstDate)?.date ?? firstDate
+    const fcArrIdx = mainChartData.findIndex((d: { date: string; hour: number }) => d.date === firstDate && d.hour === fcStartH)
+    const fcDepIdx = mainChartData.findIndex((d: { date: string; hour: number }) => d.date === depDate && d.hour === fcEndH)
+    return { arrIdx: fcArrIdx, depIdx: fcDepIdx, startH: fcStartH, endH: fcEndH }
+  }, [processResult, mainChartData])
+
+  // Uncertainty range for arrival (in QH slots): ±variance from UNCERTAINTY_CONFIG
+  const arrivalUncertainty = useMemo(() => {
+    if (uncertaintyScenario === 'perfect' || !forecastWindow || forecastWindow.arrIdx < 0) return null
+    const varianceHours = UNCERTAINTY_CONFIG[uncertaintyScenario].plugInVarianceHours
+    const slotsPerHour = isQH ? 4 : 1
+    const slots = varianceHours * slotsPerHour
+    return {
+      low: Math.max(0, forecastWindow.arrIdx - slots),
+      high: Math.min(N - 1, forecastWindow.arrIdx + slots),
+    }
+  }, [uncertaintyScenario, forecastWindow, isQH, N])
+
   // Forecast-nominated slot indices
   const forecastCheapestSet = useMemo(() => {
     return new Set(processResult.stages.forecast?.cheapestHours ?? [])
@@ -236,6 +262,35 @@ export const ProcessViewChart = ({
         {missedRanges.map((r, i) => (
           <ReferenceArea key={`mi-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#10B981" fillOpacity={0.12} ifOverflow="hidden" />
         ))}
+
+        {/* Forecast arrival uncertainty band — amber zone around expected plug-in */}
+        {currentStage === 'forecast' && arrivalUncertainty && forecastWindow && forecastWindow.arrIdx >= 0 && (
+          <ReferenceArea
+            x1={arrivalUncertainty.low} x2={arrivalUncertainty.high}
+            yAxisId="left" fill="#F59E0B" fillOpacity={0.08} stroke="none" ifOverflow="hidden"
+          />
+        )}
+
+        {/* Forecast arrival line — dashed amber (where we expect plug-in) */}
+        {currentStage === 'forecast' && forecastWindow && forecastWindow.arrIdx >= 0 && forecastWindow.arrIdx !== arrivalIdx && (
+          <ReferenceLine x={forecastWindow.arrIdx} yAxisId="left"
+            stroke="#D97706" strokeWidth={1.5} strokeOpacity={0.6} strokeDasharray="4 4"
+          />
+        )}
+
+        {/* DA stage: show forecast arrival vs actual — red zone for the gap */}
+        {currentStage === 'da_nomination' && forecastWindow && forecastWindow.arrIdx >= 0 && forecastWindow.arrIdx !== arrivalIdx && (
+          <>
+            <ReferenceArea
+              x1={Math.min(arrivalIdx, forecastWindow.arrIdx)}
+              x2={Math.max(arrivalIdx, forecastWindow.arrIdx)}
+              yAxisId="left" fill="#EF4444" fillOpacity={0.06} stroke="none" ifOverflow="hidden"
+            />
+            <ReferenceLine x={forecastWindow.arrIdx} yAxisId="left"
+              stroke="#D97706" strokeWidth={1} strokeOpacity={0.4} strokeDasharray="4 4"
+            />
+          </>
+        )}
 
         {/* Forecast confidence band (forecast stage only) */}
         {currentStage === 'forecast' && uncertaintyScenario !== 'perfect' && (
