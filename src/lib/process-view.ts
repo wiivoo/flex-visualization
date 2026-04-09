@@ -239,8 +239,11 @@ export function computeProcessViewResults(params: {
   showFleet: boolean
   fleetConfig: FleetConfig | null
   dateSeed: string
+  /** Optional ground-truth baseline/optimized from the main chart's computation.
+   *  When provided, perfectSavings is anchored to this instead of the approximate engine. */
+  perfectBaseline?: { baselineAvgCt: number; optimizedAvgCt: number } | null
 }): ProcessViewResult {
-  const { prices, intradayPrices, scenario, uncertaintyScenario, showFleet, fleetConfig, dateSeed } = params
+  const { prices, intradayPrices, scenario, uncertaintyScenario, showFleet, fleetConfig, dateSeed, perfectBaseline } = params
 
   const startH = scenario.plugInTime
   const endH = scenario.departureTime
@@ -275,9 +278,11 @@ export function computeProcessViewResults(params: {
   const perfectCheapest = findCheapestHours(prices, startH, endH, slotsNeeded)
   const perfectAvg = avgPrice(prices, perfectCheapest)
 
-  // Baseline: first N slots chronologically (charge-now) — matches computeWindowSavings
-  const baselineAvg = baselineAvgPrice(prices, startH, endH, slotsNeeded)
-  const perfectSavingsCtKwh = Math.max(0, baselineAvg - perfectAvg)
+  // Baseline: use ground-truth from main chart when available, fall back to approximate
+  const approxBaselineAvg = baselineAvgPrice(prices, startH, endH, slotsNeeded)
+  const baselineAvg = perfectBaseline ? perfectBaseline.baselineAvgCt : approxBaselineAvg
+  const optimizedAvg = perfectBaseline ? perfectBaseline.optimizedAvgCt : perfectAvg
+  const perfectSavingsCtKwh = Math.max(0, baselineAvg - optimizedAvg)
 
   // Stage 1 — Forecast: perturbed prices + perturbed window
   const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, endH, slotsNeeded)

@@ -534,9 +534,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       showFleet,
       fleetConfig: showFleet ? deferredFleetConfig : null,
       dateSeed: prices.selectedDate,
+      perfectBaseline: sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt } : null,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showProcessView, date1, chartData.length, pvWindowPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate])
+  }, [showProcessView, date1, chartData.length, pvWindowPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate, sessionCost?.baselineAvgCt, sessionCost?.optimizedAvgCt])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
