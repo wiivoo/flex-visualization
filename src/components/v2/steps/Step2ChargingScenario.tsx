@@ -2210,7 +2210,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${showRenewable ? 'bg-white text-emerald-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                       title="Toggle renewable generation overlay (solar + wind)"
                     >
-                      {'\u2600\uFE0E'} Renew.
+                      Renew.
                     </button>
                   </div>
                 )}
