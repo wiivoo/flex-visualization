@@ -3014,7 +3014,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {/* ── Process view savings pill ── */}
               {showProcessView && processResult && plotArea && (() => {
                 // Both stages use processResult as single source of truth
-                const pvError = processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh
+                const pvError = processResult.availabilityDragCtKwh + processResult.priceForecastDragCtKwh
                 // Forecast stage: perfect savings minus forecast error (what forecast achieves)
                 // DA stage: perfect savings (real optimization)
                 // Perfect scenario: pvError=0, so both stages show the same value

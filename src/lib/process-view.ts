@@ -50,8 +50,8 @@ export interface ProcessViewResult {
   fleetWaterfall: WaterfallBar[] | null
   perfectSavingsCtKwh: number
   realizedSavingsCtKwh: number
-  daForecastDragCtKwh: number
   availabilityDragCtKwh: number
+  priceForecastDragCtKwh: number
   intradayCorrectionCtKwh: number
 }
 
@@ -258,7 +258,7 @@ export function computeProcessViewResults(params: {
       da_nomination: { windowStart, windowEnd, pricesUsed: prices, avgPriceCtKwh: 0, cheapestHours: [] },
       intraday_adjustment: null,
     }
-    return { stages: emptyStages, waterfall: [], fleetWaterfall: null, perfectSavingsCtKwh: 0, realizedSavingsCtKwh: 0, daForecastDragCtKwh: 0, availabilityDragCtKwh: 0, intradayCorrectionCtKwh: 0 }
+    return { stages: emptyStages, waterfall: [], fleetWaterfall: null, perfectSavingsCtKwh: 0, realizedSavingsCtKwh: 0, availabilityDragCtKwh: 0, priceForecastDragCtKwh: 0, intradayCorrectionCtKwh: 0 }
   }
 
   // Perturbed values
@@ -324,24 +324,26 @@ export function computeProcessViewResults(params: {
   }
 
   // Waterfall: express drags as ct/kWh
-  const daErrorCtKwh = Math.max(0, perfectSavingsCtKwh - daSavingsCtKwh)
-  const availErrorCtKwh = Math.max(0, daSavingsCtKwh - forecastSavingsCtKwh)
+  // Availability drag: cost of not knowing exact arrival time (perfect window vs perturbed window, both with real prices)
+  const availabilityErrorCtKwh = Math.max(0, perfectSavingsCtKwh - daSavingsCtKwh)
+  // Price forecast drag: cost of using forecast prices instead of real prices (both with perturbed window)
+  const priceForecastErrorCtKwh = Math.max(0, daSavingsCtKwh - forecastSavingsCtKwh)
   const idCostCtKwh = intradaySavingsCtKwh !== null ? Math.max(0, forecastSavingsCtKwh - intradaySavingsCtKwh) : 0
 
   const realizedSavingsCtKwh = intradaySavingsCtKwh ?? forecastSavingsCtKwh
 
-  const { bars } = buildWaterfallFromCtKwh(perfectSavingsCtKwh, daErrorCtKwh, availErrorCtKwh, idCostCtKwh, realizedSavingsCtKwh, intradaySavingsCtKwh !== null)
+  const { bars } = buildWaterfallFromCtKwh(perfectSavingsCtKwh, availabilityErrorCtKwh, priceForecastErrorCtKwh, idCostCtKwh, realizedSavingsCtKwh, intradaySavingsCtKwh !== null)
 
   // Fleet waterfall: scale drag by 1/sqrt(N)
   let fleetWaterfall: WaterfallBar[] | null = null
   if (showFleet && fleetConfig) {
     const effectiveFleetSize = fleetConfig.fleetSize * Math.min(1, (fleetConfig.plugInsPerWeek ?? 3) / 7)
     const sqrtN = Math.sqrt(Math.max(1, effectiveFleetSize))
-    const fDa = daErrorCtKwh / sqrtN
-    const fAvail = availErrorCtKwh / sqrtN
+    const fAvail = availabilityErrorCtKwh / sqrtN
+    const fPrice = priceForecastErrorCtKwh / sqrtN
     const fId = idCostCtKwh / sqrtN
-    const fRealized = perfectSavingsCtKwh - fDa - fAvail - fId
-    const { bars: fBars } = buildWaterfallFromCtKwh(perfectSavingsCtKwh, fDa, fAvail, fId, Math.max(0, fRealized), intradaySavingsCtKwh !== null, 'blue')
+    const fRealized = perfectSavingsCtKwh - fAvail - fPrice - fId
+    const { bars: fBars } = buildWaterfallFromCtKwh(perfectSavingsCtKwh, fAvail, fPrice, fId, Math.max(0, fRealized), intradaySavingsCtKwh !== null, 'blue')
     fleetWaterfall = fBars
   }
 
@@ -351,8 +353,8 @@ export function computeProcessViewResults(params: {
     fleetWaterfall,
     perfectSavingsCtKwh,
     realizedSavingsCtKwh,
-    daForecastDragCtKwh: daErrorCtKwh,
-    availabilityDragCtKwh: availErrorCtKwh,
+    availabilityDragCtKwh: availabilityErrorCtKwh,
+    priceForecastDragCtKwh: priceForecastErrorCtKwh,
     intradayCorrectionCtKwh: idCostCtKwh,
   }
 }
