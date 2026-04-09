@@ -509,6 +509,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   }, [isFleetActive, chartData, fleetConfig, isQH, scenario.chargingMode])
 
   // ── Process view computation (Phase 6 Plan 02) ──
+  // Stabilize scenario fields used by process view to avoid recomputation on unrelated changes
+  const pvScenarioKey = useDeferredValue(`${scenario.vehicleId}-${scenario.plugInTime}-${scenario.departureTime}-${scenario.startLevel}-${scenario.targetLevel}-${scenario.chargePowerKw}-${scenario.chargingMode}`)
   const processResult = useMemo(() => {
     if (!showProcessView || !date1 || chartData.length === 0) return null
     return computeProcessViewResults({
@@ -520,7 +522,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       fleetConfig: showFleet ? deferredFleetConfig : null,
       dateSeed: prices.selectedDate,
     })
-  }, [showProcessView, date1, chartData.length, chartPrices, prices.intradayId3, scenario, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showProcessView, date1, chartData.length, chartPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
@@ -2198,17 +2201,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </div>
                 )}
                 {/* Process view toggle */}
-                <button
-                  onClick={() => setShowProcessView(v => { if (!v) setProcessStage('forecast'); return !v })}
-                  title="Walk through the chronological optimization timeline: Forecast → DA → Intraday"
-                  className={`px-2.5 py-1 text-[11px] font-bold rounded transition-colors ${
-                    showProcessView
-                      ? 'bg-white text-sky-700 shadow-sm'
-                      : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                >
-                  Process
-                </button>
+                <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+                  <button
+                    onClick={() => setShowProcessView(v => { if (!v) setProcessStage('forecast'); return !v })}
+                    title="Walk through the chronological optimization timeline: Forecast → DA → Intraday"
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                      showProcessView
+                        ? 'bg-white text-[#313131] shadow-sm'
+                        : 'text-gray-400 hover:text-gray-600'
+                    }`}
+                  >
+                    Process
+                  </button>
+                </div>
                 {/* Fleet toggle is in Customer Profile sidebar — no chart toolbar pill */}
               </div>
             </div>
