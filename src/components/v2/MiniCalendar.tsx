@@ -14,6 +14,8 @@ interface MiniCalendarProps {
 const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = true, compact = false }: MiniCalendarProps) {
+  const [hoveredDay, setHoveredDay] = useState<DailySummary | null>(null)
+  const [hoverPos, setHoverPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const dataRange = useMemo(() => {
     if (daily.length === 0) return { firstMonth: '', lastMonth: '', firstYear: 0, lastYear: 0 }
     const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
@@ -220,12 +222,18 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
               key={day.date}
               onClick={() => hasNextDay && onSelect(day.date)}
               disabled={!hasNextDay}
+              onMouseEnter={(e) => {
+                if (!hasNextDay) return
+                const rect = e.currentTarget.getBoundingClientRect()
+                setHoveredDay(day)
+                setHoverPos({ x: rect.left + rect.width / 2, y: rect.top })
+              }}
+              onMouseLeave={() => setHoveredDay(null)}
               className={`relative ${compact ? 'p-0.5' : 'p-1'} rounded text-center transition-all ${
                 !hasNextDay
                   ? 'opacity-30 cursor-not-allowed'
                   : `hover:ring-2 hover:ring-[#EA1C0A]/50 ${isSelected ? 'ring-2 ring-[#EA1C0A] bg-[#EA1C0A]/5' : ''}`
               } ${(() => { const dow = new Date(day.date + 'T12:00:00Z').getUTCDay(); return dow === 0 || dow === 6 ? 'bg-gray-50' : '' })()}`}
-              title={hasNextDay ? `${day.date}: Spread ${day.spread.toFixed(0)} EUR/MWh` : `${day.date}: no next-day data`}
             >
               <div className={`${compact ? 'text-[9px]' : 'text-[10px]'} text-gray-600`}>{dayNum}</div>
               <div className={`w-full ${compact ? 'h-1' : 'h-1.5'} rounded-full mt-0.5 ${hasNextDay ? spreadColor(day.spread) : 'bg-gray-200'}`} />
@@ -241,6 +249,46 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
         <span className="flex items-center gap-1"><span className="w-3 h-2 bg-yellow-400 rounded" />Med</span>
         <span className="flex items-center gap-1"><span className="w-3 h-2 bg-red-500 rounded" />High</span>
       </div>
+
+      {/* Day hover tooltip */}
+      {hoveredDay && (
+        <div
+          className="fixed z-50 pointer-events-none"
+          style={{ left: hoverPos.x, top: hoverPos.y - 4, transform: 'translate(-50%, -100%)' }}
+        >
+          <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[11px] tabular-nums whitespace-nowrap">
+            <p className="text-gray-500 text-[10px] font-medium mb-1">{hoveredDay.date}</p>
+            <div className="space-y-0.5">
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-400">24h Spread</span>
+                <span className="font-semibold text-gray-700">{(hoveredDay.spread / 10).toFixed(1)} ct/kWh</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-400">Window Spread</span>
+                <span className="font-semibold text-gray-700">{(hoveredDay.nightSpread / 10).toFixed(1)} ct/kWh</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-400">Avg. Price</span>
+                <span className="font-semibold text-gray-700">{hoveredDay.avgPrice.toFixed(1)} ct/kWh</span>
+              </div>
+              <div className="flex justify-between gap-4 border-t border-gray-100 pt-0.5 mt-0.5">
+                <span className="text-gray-400">Day avg (6–22h)</span>
+                <span className="font-medium text-gray-600">{(hoveredDay.dayAvgPrice / 10).toFixed(1)} ct</span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-400">Night avg (22–6h)</span>
+                <span className="font-medium text-gray-600">{(hoveredDay.nightAvgPrice / 10).toFixed(1)} ct</span>
+              </div>
+              {hoveredDay.negativeHours > 0 && (
+                <div className="flex justify-between gap-4">
+                  <span className="text-gray-400">Negative hours</span>
+                  <span className="font-medium text-red-500">{hoveredDay.negativeHours}h</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
