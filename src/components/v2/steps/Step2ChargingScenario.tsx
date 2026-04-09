@@ -2234,8 +2234,28 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           </div>
           </CardHeader>
           <CardContent className="pb-1">
+            {/* ── Process view chart (rendered outside fixed-height container) ── */}
+            {showProcessView && processResult && (
+              <ProcessViewChart
+                prices={pvWindowPrices}
+                intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
+                scenario={scenario}
+                showFleet={showFleet}
+                fleetConfig={fleetConfig}
+                isQH={isQH}
+                chartWidth={plotArea?.width ?? 800}
+                chartHeight={plotArea?.height ?? 350}
+                hasIntraday={hasIntraday ?? false}
+                dateSeed={prices.selectedDate}
+                processResult={processResult}
+                uncertaintyScenario={uncertaintyScenario}
+                onUncertaintyChange={setUncertaintyScenario}
+                currentStage={processStage}
+                onStageChange={setProcessStage}
+              />
+            )}
             {/* ── Chart container ── */}
-            <div className="relative h-[400px] select-none outline-none"
+            {!showProcessView && <div className="relative h-[400px] select-none outline-none"
               ref={chartRef}
               tabIndex={0}
               onKeyDown={(e) => {
@@ -2245,25 +2265,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onMouseMove={isDragging ? handleDrag : undefined}
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
-              {showProcessView && processResult ? (
-                <ProcessViewChart
-                  prices={pvWindowPrices}
-                  intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
-                  scenario={scenario}
-                  showFleet={showFleet}
-                  fleetConfig={fleetConfig}
-                  isQH={isQH}
-                  chartWidth={plotArea?.width ?? 800}
-                  chartHeight={plotArea?.height ?? 350}
-                  hasIntraday={hasIntraday ?? false}
-                  dateSeed={prices.selectedDate}
-                  processResult={processResult}
-                  uncertaintyScenario={uncertaintyScenario}
-                  onUncertaintyChange={setUncertaintyScenario}
-                  currentStage={processStage}
-                  onStageChange={setProcessStage}
-                />
-              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={finalChartData} margin={CHART_MARGIN}>
                   <defs>
@@ -2615,10 +2616,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Arrival/departure/midnight lines rendered as HTML overlays below for guaranteed visibility */}
                 </ComposedChart>
               </ResponsiveContainer>
-              )}
 
-              {/* ── Normal chart overlays — hidden when process view is active ── */}
-              {!showProcessView && <>
+              {/* ── Normal chart overlays ── */}
+              {<>
               {/* ── Date labels — positioned between midnight boundaries ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
@@ -3120,7 +3120,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
               </>}
               {/* ── Edge-scroll zones — press & hold to scrub through days ── */}
-              {!showProcessView && !isDragging && (
+              {!isDragging && (
                 <>
                   <div
                     className="absolute left-0 top-0 w-12 h-full z-30 flex items-center justify-start pl-1 cursor-w-resize group"
@@ -3152,7 +3152,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </div>
                 </>
               )}
-            </div>
+            </div>}
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
 
