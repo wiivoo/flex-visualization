@@ -243,6 +243,19 @@ export const ProcessViewChart = ({
   const perfectSavings = actualSavingsCtKwh ?? processResult.perfectSavingsCtKwh
   const forecastError = processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh
 
+  // Baseline slots: first N slots chronologically from arrival (charge-now)
+  const baselineSlots = useMemo(() => {
+    if (arrivalIdx < 0) return []
+    const slotsNeeded = stageResult?.cheapestHours.length ?? 0
+    if (slotsNeeded === 0) return []
+    const endIdx = departureIdx >= 0 ? departureIdx : N
+    const slots: number[] = []
+    for (let i = arrivalIdx; i < endIdx && slots.length < slotsNeeded; i++) {
+      slots.push(i)
+    }
+    return slots
+  }, [arrivalIdx, departureIdx, N, stageResult])
+
   if (prices.length === 0) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400 text-[11px]">
@@ -311,7 +324,16 @@ export const ProcessViewChart = ({
               <ReferenceArea x1={departureIdx} x2={N - 1} yAxisId="left" fill="#94A3B8" fillOpacity={0.10} stroke="none" />
             )}
 
-            {/* Charging slot highlights — green bands for nominated cheapest hours */}
+            {/* Baseline (charge-now) slots — red bands, first N slots from arrival */}
+            {baselineSlots.map(idx => (
+              <ReferenceArea
+                key={`baseline-${idx}`}
+                x1={idx} x2={Math.min(idx + 1, N - 1)}
+                yAxisId="left" fill="#EF4444" fillOpacity={0.08} stroke="none"
+              />
+            ))}
+
+            {/* Optimized slot highlights — blue bands for nominated cheapest hours */}
             {stageResult && stageResult.cheapestHours.map(idx => (
               <ReferenceArea
                 key={`charge-${idx}`}

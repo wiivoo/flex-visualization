@@ -3203,7 +3203,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {(['forecast', 'da_nomination'] as const).map((stageKey, idx) => {
                     const labels = ['Forecast', 'DA Nom.']
                     const descs = ['D-2 to D-1 12:00 — estimate availability and energy need', 'D-1 12:00 — day-ahead auction prices revealed, nominate cheapest slots']
-                    const si = stageKey === processStage ? idx : ((['forecast', 'da_nomination'] as const).indexOf(processStage))
+                    const stageIdx = processStage === 'forecast' ? 0 : 1
+                    const si = stageIdx
                     const isActive = idx === si
                     const isCompleted = idx < si
                     return (
