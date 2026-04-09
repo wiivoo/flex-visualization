@@ -50,26 +50,13 @@ function buildChartData(
 ): ChartDatum[] {
   const stageResult = result.stages[activeStage]
   const forecastResult = result.stages.forecast
+  const cheapestSet = stageResult ? new Set(stageResult.cheapestHours) : new Set<number>()
 
   return prices.map((p, i) => {
     const hourLabel = `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`
 
-    // Mark hours where charging is happening at the active stage
-    let chargingKw: number | null = null
-    if (stageResult) {
-      const schedule = stageResult.optimizeResult.charging_schedule
-      for (const block of schedule) {
-        const startH = parseInt(block.start.split(':')[0], 10)
-        const endH = parseInt(block.end.split(':')[0], 10)
-        const wraps = endH <= startH
-        const inBlock = wraps
-          ? (p.hour >= startH || p.hour < endH)
-          : (p.hour >= startH && p.hour < endH)
-        if (inBlock) {
-          chargingKw = stageResult.optimizeResult.energy_charged_kwh > 0 ? 1 : null
-        }
-      }
-    }
+    // Mark hours selected for charging at the active stage
+    const chargingKw = cheapestSet.has(i) ? 1 : null
 
     const datum: ChartDatum = {
       idx: i,
@@ -289,36 +276,19 @@ export const ProcessViewChart = ({
               />
             )}
 
-            {/* DA Nomination stage: emerald optimized blocks */}
+            {/* DA Nomination stage: emerald optimized blocks (cheapest hours) */}
             {activeStage === 'da_nomination' && processResult.stages.da_nomination && (
-              processResult.stages.da_nomination.optimizeResult.charging_schedule.flatMap((block, bi) => {
-                const startH = parseInt(block.start.split(':')[0], 10)
-                const endH = parseInt(block.end.split(':')[0], 10)
-                const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === startH)
-                const endIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === endH)
-                if (startIdx < 0) return []
-                // Handle overnight wrap: split into two ReferenceAreas
-                if (endH <= startH && endIdx <= startIdx) {
-                  const areas = [
-                    <ReferenceArea key={`da-block-${bi}-a`} x1={startIdx} x2={chartData.length - 1} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />,
-                  ]
-                  if (endIdx > 0) {
-                    areas.push(<ReferenceArea key={`da-block-${bi}-b`} x1={0} x2={endIdx} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />)
-                  }
-                  return areas
-                }
-                return [
-                  <ReferenceArea
-                    key={`da-block-${bi}`}
-                    x1={startIdx}
-                    x2={endIdx > startIdx ? endIdx : startIdx + 1}
-                    yAxisId="left"
-                    fill="#D1FAE5"
-                    fillOpacity={0.5}
-                    stroke="none"
-                  />,
-                ]
-              })
+              processResult.stages.da_nomination.cheapestHours.map(idx => (
+                <ReferenceArea
+                  key={`da-cheap-${idx}`}
+                  x1={idx}
+                  x2={idx + 1 < chartData.length ? idx + 1 : idx}
+                  yAxisId="left"
+                  fill="#D1FAE5"
+                  fillOpacity={0.5}
+                  stroke="none"
+                />
+              ))
             )}
 
             {/* Intraday stage: red correction zones */}
@@ -346,36 +316,19 @@ export const ProcessViewChart = ({
               return null
             })()}
 
-            {/* Intraday stage: emerald re-optimized blocks */}
+            {/* Intraday stage: emerald re-optimized blocks (cheapest hours) */}
             {activeStage === 'intraday_adjustment' && processResult.stages.intraday_adjustment && (
-              processResult.stages.intraday_adjustment.optimizeResult.charging_schedule.flatMap((block, bi) => {
-                const startH = parseInt(block.start.split(':')[0], 10)
-                const endH = parseInt(block.end.split(':')[0], 10)
-                const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === startH)
-                const endIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === endH)
-                if (startIdx < 0) return []
-                // Handle overnight wrap: split into two ReferenceAreas
-                if (endH <= startH && endIdx <= startIdx) {
-                  const areas = [
-                    <ReferenceArea key={`id-block-${bi}-a`} x1={startIdx} x2={chartData.length - 1} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />,
-                  ]
-                  if (endIdx > 0) {
-                    areas.push(<ReferenceArea key={`id-block-${bi}-b`} x1={0} x2={endIdx} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />)
-                  }
-                  return areas
-                }
-                return [
-                  <ReferenceArea
-                    key={`id-block-${bi}`}
-                    x1={startIdx}
-                    x2={endIdx > startIdx ? endIdx : startIdx + 1}
-                    yAxisId="left"
-                    fill="#D1FAE5"
-                    fillOpacity={0.5}
-                    stroke="none"
-                  />,
-                ]
-              })
+              processResult.stages.intraday_adjustment.cheapestHours.map(idx => (
+                <ReferenceArea
+                  key={`id-cheap-${idx}`}
+                  x1={idx}
+                  x2={idx + 1 < chartData.length ? idx + 1 : idx}
+                  yAxisId="left"
+                  fill="#D1FAE5"
+                  fillOpacity={0.5}
+                  stroke="none"
+                />
+              ))
             )}
 
             {/* Fleet flex band overlay */}

@@ -8,8 +8,6 @@
  * No React, no DOM — pure functions only.
  */
 
-import type { OptimizeResult } from '@/lib/optimizer'
-import { runOptimization } from '@/lib/optimizer'
 import type { HourlyPrice, ChargingScenario, FleetConfig } from '@/lib/v2-config'
 import { VEHICLE_PRESETS } from '@/lib/v2-config'
 
@@ -31,10 +29,11 @@ export const UNCERTAINTY_SCENARIOS: { key: UncertaintyScenario; label: string }[
 ]
 
 export interface StageResult {
-  optimizeResult: OptimizeResult
   windowStart: string
   windowEnd: string
   pricesUsed: HourlyPrice[]
+  avgPriceCtKwh: number      // average price in the charging window
+  cheapestHours: number[]    // indices of cheapest hours picked for charging
 }
 
 export interface WaterfallBar {
@@ -145,80 +144,70 @@ export function perturbWindow(
   return `${String(newHour).padStart(2, '0')}:00`
 }
 
-/* ── Helper: Build OptimizeInput from ChargingScenario ── */
+/* ── Lightweight price analysis (no optimizer calls) ── */
 
-function buildOptimizeInput(
-  prices: HourlyPrice[],
-  scenario: ChargingScenario,
-  windowStart: string,
-  windowEnd: string,
-) {
-  const vehicle = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId) ?? VEHICLE_PRESETS[1]
-
-  // Convert HourlyPrice[] to PricePoint[] for the optimizer
-  const pricePoints = prices.map(p => ({
-    timestamp: new Date(p.timestamp).toISOString(),
-    price_ct_kwh: p.priceCtKwh,
-  }))
-
-  return {
-    prices: pricePoints,
-    battery_kwh: vehicle.battery_kwh,
-    charge_power_kw: scenario.chargePowerKw,
-    start_level_percent: scenario.startLevel,
-    target_level_percent: scenario.targetLevel,
-    window_start: windowStart,
-    window_end: windowEnd,
-    base_price_ct_kwh: 5.0,
-    margin_ct_kwh: 2.15,
-    customer_discount_ct_kwh: 1.0,
-  }
+/**
+ * Find cheapest N hours in a price window. Returns indices into `prices`.
+ * This approximates what the optimizer does without running the full engine.
+ */
+function findCheapestHours(prices: HourlyPrice[], startH: number, endH: number, hoursNeeded: number): number[] {
+  const windowPrices = prices
+    .map((p, i) => ({ i, h: p.hour, price: p.priceCtKwh }))
+    .filter(p => {
+      const wraps = endH <= startH
+      return wraps ? (p.h >= startH || p.h < endH) : (p.h >= startH && p.h < endH)
+    })
+    .sort((a, b) => a.price - b.price)
+  return windowPrices.slice(0, Math.max(1, hoursNeeded)).map(p => p.i)
 }
 
-/* ── Waterfall Builder ── */
+function avgPrice(prices: HourlyPrice[], indices: number[]): number {
+  if (indices.length === 0) return 0
+  return indices.reduce((s, i) => s + (prices[i]?.priceCtKwh ?? 0), 0) / indices.length
+}
 
-function buildWaterfall(
-  perfectSavingsEur: number,
-  daSavingsEur: number,
-  forecastSavingsEur: number,
-  intradaySavingsEur: number | null,
-  energyKwh: number,
-): { bars: WaterfallBar[]; perfectCtKwh: number; realizedCtKwh: number; daErrorCtKwh: number; availErrorCtKwh: number; idCostCtKwh: number } {
-  const toCtKwh = (eur: number) => energyKwh > 0 ? (eur / energyKwh) * 100 : 0
+function windowAvgPrice(prices: HourlyPrice[], startH: number, endH: number): number {
+  const inWindow = prices.filter(p => {
+    const wraps = endH <= startH
+    return wraps ? (p.hour >= startH || p.hour < endH) : (p.hour >= startH && p.hour < endH)
+  })
+  if (inWindow.length === 0) return 0
+  return inWindow.reduce((s, p) => s + p.priceCtKwh, 0) / inWindow.length
+}
 
-  const perfectCtKwh = toCtKwh(perfectSavingsEur)
-  // If perturbation accidentally improves on perfect, clamp to zero
-  const daErrorCtKwh = Math.max(0, toCtKwh(perfectSavingsEur - daSavingsEur))
-  const availErrorCtKwh = Math.max(0, toCtKwh(daSavingsEur - forecastSavingsEur))
-  const idCostCtKwh = intradaySavingsEur !== null ? toCtKwh(forecastSavingsEur - intradaySavingsEur) : 0
+/* ── Waterfall Builder (from pre-computed ct/kWh values) ── */
 
-  const realizedSavings = intradaySavingsEur ?? forecastSavingsEur
-  const realizedCtKwh = toCtKwh(realizedSavings)
-
+function buildWaterfallFromCtKwh(
+  perfectCtKwh: number,
+  daErrorCtKwh: number,
+  availErrorCtKwh: number,
+  idCostCtKwh: number,
+  realizedCtKwh: number,
+  hasIntraday: boolean,
+  dragColor: string = 'red',
+): { bars: WaterfallBar[] } {
   let runningBase = perfectCtKwh
-
   const bars: WaterfallBar[] = [
     { label: 'Perfect', base: 0, value: perfectCtKwh, color: 'emerald', isTotal: true },
   ]
 
-  if (daErrorCtKwh > 0) {
+  if (daErrorCtKwh > 0.001) {
     runningBase -= daErrorCtKwh
-    bars.push({ label: 'DA Error', base: runningBase, value: -daErrorCtKwh, color: 'red' })
+    bars.push({ label: 'DA Error', base: runningBase, value: -daErrorCtKwh, color: dragColor })
   }
 
-  if (availErrorCtKwh > 0) {
+  if (availErrorCtKwh > 0.001) {
     runningBase -= availErrorCtKwh
-    bars.push({ label: 'Avail. Error', base: runningBase, value: -availErrorCtKwh, color: 'red' })
+    bars.push({ label: 'Avail. Error', base: runningBase, value: -availErrorCtKwh, color: dragColor })
   }
 
-  if (intradaySavingsEur !== null && idCostCtKwh > 0) {
+  if (hasIntraday && idCostCtKwh > 0.001) {
     runningBase -= idCostCtKwh
-    bars.push({ label: 'ID Cost', base: runningBase, value: -idCostCtKwh, color: 'red' })
+    bars.push({ label: 'ID Cost', base: runningBase, value: -idCostCtKwh, color: dragColor })
   }
 
   bars.push({ label: 'Realized', base: 0, value: realizedCtKwh, color: 'emerald', isTotal: true })
-
-  return { bars, perfectCtKwh, realizedCtKwh, daErrorCtKwh, availErrorCtKwh, idCostCtKwh }
+  return { bars }
 }
 
 /* ── Main Computation ── */
@@ -243,121 +232,110 @@ export function computeProcessViewResults(params: {
 }): ProcessViewResult {
   const { prices, intradayPrices, scenario, uncertaintyScenario, showFleet, fleetConfig, dateSeed } = params
 
-  const windowStart = `${String(scenario.plugInTime).padStart(2, '0')}:00`
-  const windowEnd = `${String(scenario.departureTime).padStart(2, '0')}:00`
+  const startH = scenario.plugInTime
+  const endH = scenario.departureTime
+  const windowStart = `${String(startH).padStart(2, '0')}:00`
+  const windowEnd = `${String(endH).padStart(2, '0')}:00`
 
-  // Perfect reference: real prices + real window
-  const perfectInput = buildOptimizeInput(prices, scenario, windowStart, windowEnd)
-  const perfectResult = runOptimization(perfectInput)
+  // Estimate charging hours needed from vehicle + scenario
+  const vehicle = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId) ?? VEHICLE_PRESETS[1]
+  const energyNeeded = vehicle.battery_kwh * (scenario.targetLevel - scenario.startLevel) / 100
+  const hoursNeeded = Math.ceil(energyNeeded / scenario.chargePowerKw)
+
+  if (energyNeeded <= 0) {
+    const emptyStages: Record<ProcessStage, StageResult | null> = {
+      forecast: { windowStart, windowEnd, pricesUsed: prices, avgPriceCtKwh: 0, cheapestHours: [] },
+      da_nomination: { windowStart, windowEnd, pricesUsed: prices, avgPriceCtKwh: 0, cheapestHours: [] },
+      intraday_adjustment: null,
+    }
+    return { stages: emptyStages, waterfall: [], fleetWaterfall: null, perfectSavingsCtKwh: 0, realizedSavingsCtKwh: 0, daForecastDragCtKwh: 0, availabilityDragCtKwh: 0, intradayCorrectionCtKwh: 0 }
+  }
 
   // Perturbed values
   const perturbedPrices = perturbPrices(prices, uncertaintyScenario, dateSeed)
   const perturbedWindowStart = perturbWindow(windowStart, uncertaintyScenario, dateSeed)
+  const perturbedStartH = parseInt(perturbedWindowStart.split(':')[0], 10)
+
+  // Perfect: cheapest hours with real prices + real window
+  const perfectCheapest = findCheapestHours(prices, startH, endH, hoursNeeded)
+  const perfectAvg = avgPrice(prices, perfectCheapest)
+
+  // Baseline: average window price (what you pay without optimization)
+  const baselineAvg = windowAvgPrice(prices, startH, endH)
+  const perfectSavingsCtKwh = Math.max(0, baselineAvg - perfectAvg)
 
   // Stage 1 — Forecast: perturbed prices + perturbed window
-  const forecastInput = buildOptimizeInput(perturbedPrices, scenario, perturbedWindowStart, windowEnd)
-  const forecastResult = runOptimization(forecastInput)
+  const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, endH, hoursNeeded)
+  const forecastActualAvg = avgPrice(prices, forecastCheapest) // what those hours actually cost
+  const forecastSavingsCtKwh = Math.max(0, baselineAvg - forecastActualAvg)
 
   // Stage 2 — DA Nomination: real prices + perturbed window
-  const daInput = buildOptimizeInput(prices, scenario, perturbedWindowStart, windowEnd)
-  const daResult = runOptimization(daInput)
+  const daCheapest = findCheapestHours(prices, perturbedStartH, endH, hoursNeeded)
+  const daAvg = avgPrice(prices, daCheapest)
+  const daSavingsCtKwh = Math.max(0, baselineAvg - daAvg)
 
-  // Stage 3 — Intraday: intraday prices + real window (if available)
-  let intradayResult: OptimizeResult | null = null
+  // Stage 3 — Intraday: intraday prices + real window
+  let intradaySavingsCtKwh: number | null = null
+  let intradayCheapest: number[] = []
   if (intradayPrices && intradayPrices.length > 0) {
-    const idInput = buildOptimizeInput(intradayPrices, scenario, windowStart, windowEnd)
-    intradayResult = runOptimization(idInput)
+    intradayCheapest = findCheapestHours(intradayPrices, startH, endH, hoursNeeded)
+    const idAvg = avgPrice(intradayPrices, intradayCheapest)
+    const idBaseline = windowAvgPrice(intradayPrices, startH, endH)
+    intradaySavingsCtKwh = Math.max(0, idBaseline - idAvg)
   }
 
   const stages: Record<ProcessStage, StageResult | null> = {
     forecast: {
-      optimizeResult: forecastResult,
       windowStart: perturbedWindowStart,
       windowEnd,
       pricesUsed: perturbedPrices,
+      avgPriceCtKwh: forecastActualAvg,
+      cheapestHours: forecastCheapest,
     },
     da_nomination: {
-      optimizeResult: daResult,
       windowStart: perturbedWindowStart,
       windowEnd,
       pricesUsed: prices,
+      avgPriceCtKwh: daAvg,
+      cheapestHours: daCheapest,
     },
-    intraday_adjustment: intradayResult ? {
-      optimizeResult: intradayResult,
+    intraday_adjustment: intradayPrices && intradayPrices.length > 0 ? {
       windowStart,
       windowEnd,
-      pricesUsed: intradayPrices!,
+      pricesUsed: intradayPrices,
+      avgPriceCtKwh: avgPrice(intradayPrices, intradayCheapest),
+      cheapestHours: intradayCheapest,
     } : null,
   }
 
-  // Waterfall computation — if no energy charged, return all-zero waterfall
-  if (perfectResult.energy_charged_kwh === 0) {
-    return {
-      stages,
-      waterfall: [],
-      fleetWaterfall: null,
-      perfectSavingsCtKwh: 0,
-      realizedSavingsCtKwh: 0,
-      daForecastDragCtKwh: 0,
-      availabilityDragCtKwh: 0,
-      intradayCorrectionCtKwh: 0,
-    }
-  }
+  // Waterfall: express drags as ct/kWh
+  const daErrorCtKwh = Math.max(0, perfectSavingsCtKwh - daSavingsCtKwh)
+  const availErrorCtKwh = Math.max(0, daSavingsCtKwh - forecastSavingsCtKwh)
+  const idCostCtKwh = intradaySavingsCtKwh !== null ? Math.max(0, forecastSavingsCtKwh - intradaySavingsCtKwh) : 0
 
-  const energyKwh = perfectResult.energy_charged_kwh
-  const intradaySavingsEur = intradayResult ? intradayResult.savings_eur : null
+  const realizedSavingsCtKwh = intradaySavingsCtKwh ?? forecastSavingsCtKwh
 
-  const { bars, perfectCtKwh, realizedCtKwh, daErrorCtKwh, availErrorCtKwh, idCostCtKwh } = buildWaterfall(
-    perfectResult.savings_eur,
-    daResult.savings_eur,
-    forecastResult.savings_eur,
-    intradaySavingsEur,
-    energyKwh,
-  )
+  const { bars } = buildWaterfallFromCtKwh(perfectSavingsCtKwh, daErrorCtKwh, availErrorCtKwh, idCostCtKwh, realizedSavingsCtKwh, intradaySavingsCtKwh !== null)
 
-  // Fleet waterfall: scale perturbation noise by 1/sqrt(effectiveFleetSize)
+  // Fleet waterfall: scale drag by 1/sqrt(N)
   let fleetWaterfall: WaterfallBar[] | null = null
   if (showFleet && fleetConfig) {
     const effectiveFleetSize = fleetConfig.fleetSize * Math.min(1, (fleetConfig.plugInsPerWeek ?? 3) / 7)
     const sqrtN = Math.sqrt(Math.max(1, effectiveFleetSize))
-
-    // Fleet reduces uncertainty drag bars by sqrt(N) factor
-    const fleetDaErrorCtKwh = daErrorCtKwh / sqrtN
-    const fleetAvailErrorCtKwh = availErrorCtKwh / sqrtN
-    const fleetIdCostCtKwh = idCostCtKwh / sqrtN
-
-    const fleetRealizedCtKwh = perfectCtKwh - fleetDaErrorCtKwh - fleetAvailErrorCtKwh - fleetIdCostCtKwh
-
-    let fleetRunningBase = perfectCtKwh
-    const fleetBars: WaterfallBar[] = [
-      { label: 'Perfect', base: 0, value: perfectCtKwh, color: 'emerald', isTotal: true },
-    ]
-
-    if (fleetDaErrorCtKwh > 0.001) {
-      fleetRunningBase -= fleetDaErrorCtKwh
-      fleetBars.push({ label: 'DA Error', base: fleetRunningBase, value: -fleetDaErrorCtKwh, color: 'blue' })
-    }
-
-    if (fleetAvailErrorCtKwh > 0.001) {
-      fleetRunningBase -= fleetAvailErrorCtKwh
-      fleetBars.push({ label: 'Avail. Error', base: fleetRunningBase, value: -fleetAvailErrorCtKwh, color: 'blue' })
-    }
-
-    if (intradaySavingsEur !== null && fleetIdCostCtKwh > 0.001) {
-      fleetRunningBase -= fleetIdCostCtKwh
-      fleetBars.push({ label: 'ID Cost', base: fleetRunningBase, value: -fleetIdCostCtKwh, color: 'blue' })
-    }
-
-    fleetBars.push({ label: 'Realized', base: 0, value: Math.max(0, fleetRealizedCtKwh), color: 'emerald', isTotal: true })
-    fleetWaterfall = fleetBars
+    const fDa = daErrorCtKwh / sqrtN
+    const fAvail = availErrorCtKwh / sqrtN
+    const fId = idCostCtKwh / sqrtN
+    const fRealized = perfectSavingsCtKwh - fDa - fAvail - fId
+    const { bars: fBars } = buildWaterfallFromCtKwh(perfectSavingsCtKwh, fDa, fAvail, fId, Math.max(0, fRealized), intradaySavingsCtKwh !== null, 'blue')
+    fleetWaterfall = fBars
   }
 
   return {
     stages,
     waterfall: bars,
     fleetWaterfall,
-    perfectSavingsCtKwh: perfectCtKwh,
-    realizedSavingsCtKwh: realizedCtKwh,
+    perfectSavingsCtKwh,
+    realizedSavingsCtKwh,
     daForecastDragCtKwh: daErrorCtKwh,
     availabilityDragCtKwh: availErrorCtKwh,
     intradayCorrectionCtKwh: idCostCtKwh,
