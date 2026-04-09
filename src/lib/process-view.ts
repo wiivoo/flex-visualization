@@ -166,13 +166,23 @@ function avgPrice(prices: HourlyPrice[], indices: number[]): number {
   return indices.reduce((s, i) => s + (prices[i]?.priceCtKwh ?? 0), 0) / indices.length
 }
 
-function windowAvgPrice(prices: HourlyPrice[], startH: number, endH: number): number {
-  const inWindow = prices.filter(p => {
+/**
+ * Baseline avg: first N slots chronologically in the window (charge-now).
+ * Matches computeWindowSavings logic from charging-helpers.ts.
+ */
+function baselineAvgPrice(prices: HourlyPrice[], startH: number, endH: number, slotsNeeded: number): number {
+  const windowPrices = prices.filter(p => {
     const wraps = endH <= startH
     return wraps ? (p.hour >= startH || p.hour < endH) : (p.hour >= startH && p.hour < endH)
   })
-  if (inWindow.length === 0) return 0
-  return inWindow.reduce((s, p) => s + p.priceCtKwh, 0) / inWindow.length
+  if (windowPrices.length === 0 || slotsNeeded <= 0) return 0
+  let sum = 0, count = 0
+  for (const p of windowPrices) {
+    if (count >= slotsNeeded) break
+    sum += p.priceCtKwh
+    count++
+  }
+  return count > 0 ? sum / count : 0
 }
 
 /* ── Waterfall Builder (from pre-computed ct/kWh values) ── */
@@ -256,21 +266,26 @@ export function computeProcessViewResults(params: {
   const perturbedWindowStart = perturbWindow(windowStart, uncertaintyScenario, dateSeed)
   const perturbedStartH = parseInt(perturbedWindowStart.split(':')[0], 10)
 
-  // Perfect: cheapest hours with real prices + real window
-  const perfectCheapest = findCheapestHours(prices, startH, endH, hoursNeeded)
+  // Determine slots needed (QH-aware: if prices have minute data, use QH slots)
+  const isQH = prices.some(p => (p.minute ?? 0) !== 0)
+  const slotsPerHour = isQH ? 4 : 1
+  const slotsNeeded = Math.ceil(energyNeeded / (scenario.chargePowerKw * (isQH ? 0.25 : 1)))
+
+  // Perfect: cheapest slots with real prices + real window
+  const perfectCheapest = findCheapestHours(prices, startH, endH, slotsNeeded)
   const perfectAvg = avgPrice(prices, perfectCheapest)
 
-  // Baseline: average window price (what you pay without optimization)
-  const baselineAvg = windowAvgPrice(prices, startH, endH)
+  // Baseline: first N slots chronologically (charge-now) — matches computeWindowSavings
+  const baselineAvg = baselineAvgPrice(prices, startH, endH, slotsNeeded)
   const perfectSavingsCtKwh = Math.max(0, baselineAvg - perfectAvg)
 
   // Stage 1 — Forecast: perturbed prices + perturbed window
-  const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, endH, hoursNeeded)
+  const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, endH, slotsNeeded)
   const forecastActualAvg = avgPrice(prices, forecastCheapest) // what those hours actually cost
   const forecastSavingsCtKwh = Math.max(0, baselineAvg - forecastActualAvg)
 
   // Stage 2 — DA Nomination: real prices + perturbed window
-  const daCheapest = findCheapestHours(prices, perturbedStartH, endH, hoursNeeded)
+  const daCheapest = findCheapestHours(prices, perturbedStartH, endH, slotsNeeded)
   const daAvg = avgPrice(prices, daCheapest)
   const daSavingsCtKwh = Math.max(0, baselineAvg - daAvg)
 
@@ -278,9 +293,9 @@ export function computeProcessViewResults(params: {
   let intradaySavingsCtKwh: number | null = null
   let intradayCheapest: number[] = []
   if (intradayPrices && intradayPrices.length > 0) {
-    intradayCheapest = findCheapestHours(intradayPrices, startH, endH, hoursNeeded)
+    intradayCheapest = findCheapestHours(intradayPrices, startH, endH, slotsNeeded)
     const idAvg = avgPrice(intradayPrices, intradayCheapest)
-    const idBaseline = windowAvgPrice(intradayPrices, startH, endH)
+    const idBaseline = baselineAvgPrice(intradayPrices, startH, endH, slotsNeeded)
     intradaySavingsCtKwh = Math.max(0, idBaseline - idAvg)
   }
 
