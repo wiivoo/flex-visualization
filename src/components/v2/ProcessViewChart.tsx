@@ -142,11 +142,14 @@ export const ProcessViewChart = ({
         }
       }
 
+      // Orange dots: forecast-nominated slots on the forecast curve (both stages)
+      extra.pvForecastNomPrice = isForecastNominated && fp ? fp.priceCtKwh : null
+
       if (currentStage === 'forecast') {
-        // Show forecast-nominated slots on the FORECAST curve (amber), not DA
-        extra.optimizedPrice = isForecastNominated && fp ? fp.priceCtKwh : null
+        // Forecast stage: no blue dots — only orange (forecast) + red (baseline)
+        extra.optimizedPrice = null
       } else {
-        // DA stage: show perfect slots as blue, keep baseline as-is
+        // DA stage: blue dots on perfect slots (actual DA optimal)
         extra.optimizedPrice = isPerfectSlot ? d.priceVal ?? d.price : null
       }
 
@@ -321,12 +324,23 @@ export const ProcessViewChart = ({
           connectNulls={false} isAnimationActive={false}
         />
 
-        {/* Optimized dots — blue */}
-        <Line yAxisId="left" type="monotone" dataKey="optimizedPrice"
-          stroke="#3B82F6" strokeWidth={0}
-          dot={{ r: isQH ? 2.5 : 4, fill: '#3B82F6', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
-          connectNulls={false} isAnimationActive={false}
-        />
+        {/* Optimized dots — blue (DA stage only, hidden on forecast) */}
+        {currentStage === 'da_nomination' && (
+          <Line yAxisId="left" type="monotone" dataKey="optimizedPrice"
+            stroke="#3B82F6" strokeWidth={0}
+            dot={{ r: isQH ? 2.5 : 4, fill: '#3B82F6', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
+            connectNulls={false} isAnimationActive={false}
+          />
+        )}
+
+        {/* Forecast-nominated dots — orange, on forecast curve (both stages) */}
+        {uncertaintyScenario !== 'perfect' && (
+          <Line yAxisId="left" type="monotone" dataKey="pvForecastNomPrice"
+            stroke="#D97706" strokeWidth={0}
+            dot={{ r: isQH ? 2.5 : 4, fill: '#D97706', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
+            connectNulls={false} isAnimationActive={false}
+          />
+        )}
 
         {/* Forecast price curve — dashed amber */}
         {(currentStage === 'forecast' || currentStage === 'da_nomination') && uncertaintyScenario !== 'perfect' && (
