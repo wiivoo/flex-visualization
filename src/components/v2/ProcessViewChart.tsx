@@ -117,8 +117,8 @@ export const ProcessViewChart = ({
       }
 
       if (currentStage === 'forecast') {
-        // Show forecast-nominated slots as the "optimized" dots
-        extra.optimizedPrice = isForecastNominated ? d.priceVal ?? d.price : null
+        // Show forecast-nominated slots on the FORECAST curve (amber), not DA
+        extra.optimizedPrice = isForecastNominated && fp ? fp.priceCtKwh : null
       } else {
         // DA stage: show perfect slots as blue, keep baseline as-is
         extra.optimizedPrice = isPerfectSlot ? d.priceVal ?? d.price : null
