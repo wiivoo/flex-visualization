@@ -61,7 +61,11 @@ function buildChartData(
       for (const block of schedule) {
         const startH = parseInt(block.start.split(':')[0], 10)
         const endH = parseInt(block.end.split(':')[0], 10)
-        if (p.hour >= startH && p.hour < endH) {
+        const wraps = endH <= startH
+        const inBlock = wraps
+          ? (p.hour >= startH || p.hour < endH)
+          : (p.hour >= startH && p.hour < endH)
+        if (inBlock) {
           chargingKw = stageResult.optimizeResult.energy_charged_kwh > 0 ? 1 : null
         }
       }
@@ -287,13 +291,23 @@ export const ProcessViewChart = ({
 
             {/* DA Nomination stage: emerald optimized blocks */}
             {activeStage === 'da_nomination' && processResult.stages.da_nomination && (
-              processResult.stages.da_nomination.optimizeResult.charging_schedule.map((block, bi) => {
+              processResult.stages.da_nomination.optimizeResult.charging_schedule.flatMap((block, bi) => {
                 const startH = parseInt(block.start.split(':')[0], 10)
                 const endH = parseInt(block.end.split(':')[0], 10)
                 const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === startH)
                 const endIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === endH)
-                if (startIdx < 0) return null
-                return (
+                if (startIdx < 0) return []
+                // Handle overnight wrap: split into two ReferenceAreas
+                if (endH <= startH && endIdx <= startIdx) {
+                  const areas = [
+                    <ReferenceArea key={`da-block-${bi}-a`} x1={startIdx} x2={chartData.length - 1} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />,
+                  ]
+                  if (endIdx > 0) {
+                    areas.push(<ReferenceArea key={`da-block-${bi}-b`} x1={0} x2={endIdx} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />)
+                  }
+                  return areas
+                }
+                return [
                   <ReferenceArea
                     key={`da-block-${bi}`}
                     x1={startIdx}
@@ -302,8 +316,8 @@ export const ProcessViewChart = ({
                     fill="#D1FAE5"
                     fillOpacity={0.5}
                     stroke="none"
-                  />
-                )
+                  />,
+                ]
               })
             )}
 
@@ -334,13 +348,23 @@ export const ProcessViewChart = ({
 
             {/* Intraday stage: emerald re-optimized blocks */}
             {activeStage === 'intraday_adjustment' && processResult.stages.intraday_adjustment && (
-              processResult.stages.intraday_adjustment.optimizeResult.charging_schedule.map((block, bi) => {
+              processResult.stages.intraday_adjustment.optimizeResult.charging_schedule.flatMap((block, bi) => {
                 const startH = parseInt(block.start.split(':')[0], 10)
                 const endH = parseInt(block.end.split(':')[0], 10)
                 const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === startH)
                 const endIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === endH)
-                if (startIdx < 0) return null
-                return (
+                if (startIdx < 0) return []
+                // Handle overnight wrap: split into two ReferenceAreas
+                if (endH <= startH && endIdx <= startIdx) {
+                  const areas = [
+                    <ReferenceArea key={`id-block-${bi}-a`} x1={startIdx} x2={chartData.length - 1} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />,
+                  ]
+                  if (endIdx > 0) {
+                    areas.push(<ReferenceArea key={`id-block-${bi}-b`} x1={0} x2={endIdx} yAxisId="left" fill="#D1FAE5" fillOpacity={0.5} stroke="none" />)
+                  }
+                  return areas
+                }
+                return [
                   <ReferenceArea
                     key={`id-block-${bi}`}
                     x1={startIdx}
@@ -349,8 +373,8 @@ export const ProcessViewChart = ({
                     fill="#D1FAE5"
                     fillOpacity={0.5}
                     stroke="none"
-                  />
-                )
+                  />,
+                ]
               })
             )}
 
