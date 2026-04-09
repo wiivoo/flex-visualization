@@ -114,6 +114,32 @@ export const ProcessViewChart = ({
     return new Set(processResult.stages.forecast?.cheapestHours ?? [])
   }, [processResult])
 
+  // Perturbed baseline: first N slots from perturbed arrival (charge-now shifts with plug-in)
+  const perturbedBaselineSet = useMemo(() => {
+    if (!forecastWindow || forecastWindow.arrIdx < 0) return null
+    const fcArr = forecastWindow.arrIdx
+    const fcDep = forecastWindow.depIdx >= 0 ? forecastWindow.depIdx : N
+    // Count how many slots the original baseline had
+    const baselineCount = baselineRanges.length > 0
+      ? baselineRanges.reduce((sum, r) => sum + Math.max(1, r.x2 - r.x1), 0)
+      : 0
+    if (baselineCount === 0) return null
+    // Collect slot indices in the perturbed window, take first N chronologically
+    const windowSlots: number[] = []
+    for (let i = fcArr; i < N && i < fcDep; i++) {
+      windowSlots.push(i)
+    }
+    // Handle wrapping (overnight): if fcDep < fcArr, include 0..fcDep too
+    if (fcDep <= fcArr) {
+      for (let i = 0; i < fcDep && i < N; i++) windowSlots.push(i)
+      // Also add fcArr..N
+      for (let i = fcArr; i < N; i++) {
+        if (!windowSlots.includes(i)) windowSlots.push(i)
+      }
+    }
+    return new Set(windowSlots.slice(0, baselineCount))
+  }, [forecastWindow, N, baselineRanges])
+
   // Perfect (DA-based) slot indices
   const perfectCheapestSet = useMemo(() => {
     return new Set(processResult.stages.da_nomination?.cheapestHours ?? [])
@@ -159,8 +185,9 @@ export const ProcessViewChart = ({
       }
 
       if (currentStage === 'forecast') {
-        // Forecast stage: red baseline dots and blue optimized dots both sit on the forecast curve
-        extra.baselinePrice = isForecastNominated ? null : (d.baselinePrice != null ? (fp ? fp.priceCtKwh : d.baselinePrice) : null)
+        // Forecast stage: red baseline dots start from perturbed arrival, blue optimized on forecast curve
+        const isInPerturbedBaseline = perturbedBaselineSet ? perturbedBaselineSet.has(i) : d.baselinePrice != null
+        extra.baselinePrice = (isInPerturbedBaseline && !isForecastNominated) ? (fp ? fp.priceCtKwh : d.priceVal ?? d.price) : null
         extra.optimizedPrice = isForecastNominated && fp ? fp.priceCtKwh : null
       } else {
         // DA stage: blue dots on perfect slots (actual DA optimal), red dots on DA curve (from mainChartData)
@@ -264,9 +291,17 @@ export const ProcessViewChart = ({
           <ReferenceArea x1={departureIdx} x2={N - 1} yAxisId="left" fill="#94A3B8" fillOpacity={0.13} stroke="none" ifOverflow="hidden" />
         )}
 
-        {/* Baseline (charge-now) slots — red bands */}
-        {baselineRanges.map((r, i) => (
-          <ReferenceArea key={`b-${i}`} x1={r.x1} x2={r.x2} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
+        {/* Baseline (charge-now) slots — red bands (use perturbed ranges when available) */}
+        {(perturbedBaselineSet && currentStage === 'forecast'
+          ? [...perturbedBaselineSet].sort((a, b) => a - b).reduce<{ x1: number; x2: number }[]>((acc, idx) => {
+              const last = acc[acc.length - 1]
+              if (last && idx === last.x2) { last.x2 = idx + 1; return acc }
+              acc.push({ x1: idx, x2: idx + 1 })
+              return acc
+            }, [])
+          : baselineRanges
+        ).map((r, i) => (
+          <ReferenceArea key={`b-${i}`} x1={r.x1} x2={Math.min(r.x2, N - 1)} yAxisId="left" fill="#EF4444" fillOpacity={0.08} ifOverflow="hidden" />
         ))}
 
         {/* Forecast stage: forecast-nominated slots — blue bands */}
