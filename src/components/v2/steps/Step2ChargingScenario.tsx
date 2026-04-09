@@ -2990,9 +2990,35 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
               </>}
 
+              {/* ── Process view overlays — vertical plug-in/departure lines ── */}
+              {showProcessView && plotArea && N > 1 && (() => {
+                const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
+                const aX = arrivalIdx >= 0 ? idxToPx(arrivalIdx) : plotArea.left
+                const dX = departureIdx >= 0 ? idxToPx(departureIdx) : plotArea.left + plotArea.width
+                return (
+                  <>
+                    {/* Plug-in line — red */}
+                    {arrivalIdx >= 0 && (
+                      <div className="absolute pointer-events-none z-[8]"
+                        style={{ left: aX - 0.75, top: plotArea.top, width: 1.5, height: plotArea.height, background: '#EA1C0A', opacity: 0.6 }} />
+                    )}
+                    {/* Departure line — blue */}
+                    {departureIdx >= 0 && (
+                      <div className="absolute pointer-events-none z-[8]"
+                        style={{ left: dX - 0.75, top: plotArea.top, width: 1.5, height: plotArea.height, background: '#2563EB', opacity: 0.6 }} />
+                    )}
+                  </>
+                )
+              })()}
+
               {/* ── Process view savings pill ── */}
               {showProcessView && processResult && plotArea && (() => {
-                const pvSavings = sessionCost ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt) : processResult.perfectSavingsCtKwh
+                // Use forecast-based savings on forecast stage, perfect savings on DA stage
+                const forecastAvg = processResult.stages.forecast?.avgPriceCtKwh ?? 0
+                const baselineAvg = sessionCost ? sessionCost.baselineAvgCt : (processResult.perfectSavingsCtKwh + forecastAvg)
+                const pvSavings = processStage === 'forecast'
+                  ? Math.max(0, baselineAvg - forecastAvg)
+                  : processResult.perfectSavingsCtKwh
                 const pvError = processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh
                 return (
                   <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
