@@ -197,6 +197,46 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 
 ---
 
+## Phase 6: Process View — Chronological Optimization Timeline
+
+**Goal:** Add a dedicated "process view" mode to the price chart that walks the user through the optimization timeline chronologically (forecast → DA nomination → intraday adjustment), using real price data, with uncertainty modeling and a waterfall value-drag visualization.
+
+**Depends on:** Phase 5 (needs intraday convergence data for full experience; DA stages work standalone)
+
+**What exists today:**
+- `TheoryOverlay.tsx` — 5-step educational walkthrough with synthetic data (Shape → DA → Intraday → Portfolio → Flex Band)
+- `IntradayFunnel.tsx` — convergence funnel with DA → ID3 → ID1 → ID Full → Last stages
+- `optimizer.ts` — single-pass optimization on DA prices
+- Dashboard shows "perfect foresight" only — no uncertainty representation
+
+**What needs to be built:**
+- **Process view mode:** Dedicated chart mode (replaces normal chart temporarily) with time-axis scrubber or scroll-driven progressive reveal through 3 stages: Forecast → DA Nomination → Intraday Adjustment
+- **Uncertainty scenarios:** User-selectable: Perfect foresight / Realistic forecast / Worst case — each shows different DA price error, car availability variance, and intraday correction costs
+- **Waterfall value-drag card:** Decomposes value loss: perfect savings → minus DA forecast error → minus car availability error → minus intraday spread cost = realized value. Updates per selected scenario.
+- **Re-optimization at each stage:** Show how the charging schedule changes as information is progressively revealed (forecast → actual DA → actual intraday)
+
+**Key files:**
+- `src/components/v2/TheoryOverlay.tsx` (navigation pattern reference)
+- `src/components/v2/IntradayFunnel.tsx` (funnel data model reference)
+- `src/components/v2/steps/Step2ChargingScenario.tsx` (chart integration)
+- `src/lib/optimizer.ts` (re-optimization with staged price inputs)
+- New: `src/components/v2/ProcessView.tsx` (process view mode)
+- New: `src/components/v2/ValueWaterfall.tsx` (waterfall value-drag card)
+
+**Canonical refs:** `src/components/v2/TheoryOverlay.tsx`, `src/components/v2/IntradayFunnel.tsx`
+
+**Success Criteria:**
+1. Process view mode accessible from chart controls, replaces normal chart temporarily
+2. Three chronological stages revealed progressively via scrubber/scroll: Forecast → DA Nomination → Intraday Adjustment
+3. Three uncertainty scenarios selectable: Perfect foresight / Realistic / Worst case
+4. Waterfall card decomposes value drag per uncertainty factor, updates per scenario
+5. Chart shows re-optimized charging blocks at each stage with real price data
+6. Uses actual DA and intraday prices for the selected date (graceful fallback when intraday unavailable)
+
+**UI hint:** yes
+
+---
+
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -212,6 +252,9 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 | INTRA-04 | Phase 5 | Not started |
 | INTRA-05 | Phase 5 | Not started |
 | Tech debt | Phase 3 | Not started |
+| PROC-01 | Phase 6 | Not started |
+| PROC-02 | Phase 6 | Not started |
+| PROC-03 | Phase 6 | Not started |
 
 ---
-*Last updated: 2026-04-08 — added Phase 4 (scraper) and Phase 5 (funnel viz)*
+*Last updated: 2026-04-09 — added Phase 6 (process view with uncertainty modeling)*
