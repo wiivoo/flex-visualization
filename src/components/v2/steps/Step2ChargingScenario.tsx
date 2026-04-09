@@ -2603,6 +2603,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               </ResponsiveContainer>
               )}
 
+              {/* ── Normal chart overlays — hidden when process view is active ── */}
+              {!showProcessView && <>
               {/* ── Date labels — positioned between midnight boundaries ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
@@ -3102,8 +3104,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
+              </>}
               {/* ── Edge-scroll zones — press & hold to scrub through days ── */}
-              {!isDragging && (
+              {!showProcessView && !isDragging && (
                 <>
                   <div
                     className="absolute left-0 top-0 w-12 h-full z-30 flex items-center justify-start pl-1 cursor-w-resize group"
