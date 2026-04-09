@@ -218,7 +218,7 @@ export const ProcessViewChart = ({
                 {d.baselinePrice !== null && d.baselinePrice !== undefined && (
                   <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
                     <span className="w-2 h-2 bg-red-500 rounded-full inline-block flex-shrink-0" />
-                    Charge now
+                    Baseline
                   </p>
                 )}
                 {d.optimizedPrice !== null && d.optimizedPrice !== undefined && (

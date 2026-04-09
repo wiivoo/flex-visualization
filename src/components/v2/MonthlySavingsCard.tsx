@@ -136,8 +136,8 @@ export function MonthlySavingsCard({
                   <tr className="text-gray-400 text-left">
                     <th className="font-semibold pb-1 pl-1 pr-2">Date</th>
                     <th className="font-semibold pb-1 pr-2">Day</th>
-                    <th className="font-semibold pb-1 pr-2 text-right">24h Spread</th>
-                    <th className="font-semibold pb-1 pr-2 text-right">Win. Spread</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">Avg. 24h Spread</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">Avg. Window Spread</th>
                     <th className="font-semibold pb-1 text-right pr-1">Savings</th>
                   </tr>
                 </thead>
@@ -243,7 +243,28 @@ export function MonthlySavingsCard({
         </div>
 
         {/* Spread & savings breakdown table */}
-        {last12.some(d => d.avgDailySpreadCt != null) && (
+        {last12.some(d => d.avgDailySpreadCt != null) && (() => {
+          // Detect partial months: compare day count vs expected days in month
+          const daysInMonth = (ym: string) => new Date(parseInt(ym.slice(0, 4)), parseInt(ym.slice(5, 7)), 0).getDate()
+          // Quarter grouping
+          const quarters = new Map<string, { label: string; spread24: number[]; spreadWin: number[]; savings: number[]; savingsEur: number }>()
+          last12.forEach(d => {
+            const q = `Q${Math.ceil(parseInt(d.month.slice(5, 7)) / 3)} ${d.month.slice(0, 4)}`
+            if (!quarters.has(q)) quarters.set(q, { label: q, spread24: [], spreadWin: [], savings: [], savingsEur: 0 })
+            const qd = quarters.get(q)!
+            if (d.avgDailySpreadCt != null) qd.spread24.push(d.avgDailySpreadCt)
+            if (d.avgWindowSpreadCt != null) qd.spreadWin.push(d.avgWindowSpreadCt)
+            if (d.avgSavingsCtKwh != null) qd.savings.push(d.avgSavingsCtKwh)
+            qd.savingsEur += d.savings
+          })
+          const quarterRows = [...quarters.entries()].map(([, v]) => ({
+            label: v.label,
+            spread24: v.spread24.length > 0 ? v.spread24.reduce((a, b) => a + b, 0) / v.spread24.length : null,
+            spreadWin: v.spreadWin.length > 0 ? v.spreadWin.reduce((a, b) => a + b, 0) / v.spreadWin.length : null,
+            savingsCtKwh: v.savings.length > 0 ? v.savings.reduce((a, b) => a + b, 0) / v.savings.length : null,
+            savingsEur: v.savingsEur,
+          }))
+          return (
           <div className="border-t border-gray-100 pt-3 mt-1">
             <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Spread &amp; Savings Breakdown</p>
             <div className="overflow-x-auto">
@@ -251,25 +272,47 @@ export function MonthlySavingsCard({
                 <thead>
                   <tr className="text-gray-400 text-left">
                     <th className="font-semibold pb-1 pr-2">Month</th>
-                    <th className="font-semibold pb-1 pr-2 text-right">24h Spread</th>
-                    <th className="font-semibold pb-1 pr-2 text-right">Window Spread</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">Avg. 24h Spread</th>
+                    <th className="font-semibold pb-1 pr-2 text-right">Avg. Window Spread</th>
                     <th className="font-semibold pb-1 text-right">Savings</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {last12.map(d => (
+                  {last12.map(d => {
+                    const totalDays = daysInMonth(d.month)
+                    const dataDays = d.dayDetails?.length ?? totalDays
+                    const isPartial = dataDays < totalDays
+                    return (
                     <tr key={d.month} className={`border-t border-gray-50 ${d.month === selectedMonth ? 'bg-emerald-50/30' : ''}`}>
-                      <td className="py-0.5 pr-2 text-gray-500">{d.displayLabel}</td>
+                      <td className="py-0.5 pr-2 text-gray-500">
+                        {d.displayLabel}
+                        {isPartial && <span className="text-[8px] text-amber-500 ml-0.5" title={`${dataDays}/${totalDays} days`}>({dataDays}d)</span>}
+                      </td>
                       <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgDailySpreadCt?.toFixed(1) ?? '–'} ct</td>
                       <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgWindowSpreadCt?.toFixed(1) ?? '–'} ct</td>
                       <td className="py-0.5 text-right font-semibold text-emerald-600">{d.avgSavingsCtKwh?.toFixed(2) ?? '–'} ct/kWh</td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
+                {quarterRows.length > 1 && (
+                  <tfoot>
+                    <tr><td colSpan={4} className="pt-2 pb-1"><span className="text-[8px] font-semibold text-gray-400 uppercase tracking-wider">Quarterly</span></td></tr>
+                    {quarterRows.map(q => (
+                      <tr key={q.label} className="border-t border-gray-100 bg-gray-50/40">
+                        <td className="py-0.5 pr-2 font-semibold text-gray-600">{q.label}</td>
+                        <td className="py-0.5 pr-2 text-right text-gray-500">{q.spread24?.toFixed(1) ?? '–'} ct</td>
+                        <td className="py-0.5 pr-2 text-right text-gray-500">{q.spreadWin?.toFixed(1) ?? '–'} ct</td>
+                        <td className="py-0.5 text-right font-semibold text-emerald-600">{q.savingsCtKwh?.toFixed(2) ?? '–'} ct/kWh</td>
+                      </tr>
+                    ))}
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
-        )}
+          )
+        })()}
         </>
         )}
 

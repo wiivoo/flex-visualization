@@ -24,7 +24,6 @@ import {
 } from 'recharts'
 import { useIntradayFunnel, FunnelTimeline, FUNNEL_STAGES } from '@/components/v2/IntradayFunnel'
 import { ProcessViewChart } from '@/components/v2/ProcessViewChart'
-import { WaterfallCard } from '@/components/v2/WaterfallCard'
 import { computeProcessViewResults, type UncertaintyScenario, type ProcessStage } from '@/lib/process-view'
 import type { IntradayFullPoint } from '@/lib/use-prices'
 
@@ -3005,14 +3004,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
                           {processStage === 'forecast' ? 'forecast' : 'perfect'}
                         </span>
-                      </div>
-                      {processStage === 'da_nomination' && pvError > 0.01 && (
-                        <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50 flex-shrink-0">
-                          <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-red-600">
-                            DA error: -{pvError.toFixed(1)} ct
+                        {processStage === 'da_nomination' && pvError > 0.01 && (
+                          <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-amber-600 ml-1.5">
+                            · DA error: −{pvError.toFixed(1)} ct
                           </span>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   </div>
                 )
@@ -3268,7 +3265,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
       {/* ── Spread Indicators — horizontal row below chart ── */}
       {(() => {
-        if (!date1 || chartData.length === 0) return null
+        if (!date1 || chartData.length === 0 || showProcessView) return null
 
         const fmtHour = (h: number) => `${String(h).padStart(2, '0')}:00`
         const mode = scenario.chargingMode
@@ -3534,7 +3531,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       })()}
 
       {/* ── Session Cost Detail Panel ── */}
-      {costDetailMode && (() => {
+      {costDetailMode && !showProcessView && (() => {
         const modeD = scenario.chargingMode
         const overnightDepD = modeD === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
         const fullDayDepD = modeD === 'fullday' ? scenario.departureTime : scenario.plugInTime
@@ -3792,7 +3789,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 <span className="text-[10px] text-gray-400 ml-1">/session</span>
               </div>
             </div>
-            {showIntraday && hasIntraday && (
+            {showIntraday && hasIntraday && !showProcessView && (
               <div className="mt-2 rounded-lg border border-sky-200/60 bg-sky-50/40 p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-sky-600 uppercase tracking-wider">Intraday Re-optimization (ID3)</span>
@@ -3823,17 +3820,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         )
       })()}
 
-      {/* ── Waterfall Card (Process View) ── */}
-      {showProcessView && processResult && (
-        <WaterfallCard
-          waterfall={processResult.waterfall}
-          fleetWaterfall={processResult.fleetWaterfall}
-          showFleet={showFleet}
-          perfectSavingsCtKwh={processResult.perfectSavingsCtKwh}
-          realizedSavingsCtKwh={processResult.realizedSavingsCtKwh}
-          uncertaintyScenario={uncertaintyScenario}
-        />
-      )}
+      {/* WaterfallCard removed from process view — savings shown inline in pill */}
 
       </div>{/* end right content column */}
       </div>{/* end main two-column grid */}
