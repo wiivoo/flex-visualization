@@ -3032,7 +3032,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         </span>
                         {processStage === 'da_nomination' && pvError > 0.01 && (
                           <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-amber-600 ml-1.5">
-                            · DA error: −{pvError.toFixed(1)} ct
+                            · DA error: −{pvError.toFixed(1)} ct/kWh
                           </span>
                         )}
                       </div>

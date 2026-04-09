@@ -149,6 +149,8 @@ export const ProcessViewChart = ({
       } else {
         // DA stage: blue dots on perfect slots (actual DA optimal), red dots on DA curve (from mainChartData)
         extra.optimizedPrice = isPerfectSlot ? d.priceVal ?? d.price : null
+        // Amber dots: forecast-locked slots shown on the DA curve (what was initially nominated)
+        extra.pvForecastLockedPrice = isForecastNominated ? d.priceVal ?? d.price : null
         // baselinePrice stays from mainChartData (already on DA curve)
       }
 
@@ -225,6 +227,12 @@ export const ProcessViewChart = ({
                   <p className="text-blue-600 text-xs mt-1 flex items-center gap-1">
                     <span className="w-2 h-2 bg-blue-500 rounded-full inline-block flex-shrink-0" />
                     Smart charging
+                  </p>
+                )}
+                {d.pvForecastLockedPrice !== null && d.pvForecastLockedPrice !== undefined && (
+                  <p className="text-amber-600 text-xs mt-1 flex items-center gap-1">
+                    <span className="w-2 h-2 bg-amber-500 rounded-full inline-block flex-shrink-0" style={{ opacity: 0.7 }} />
+                    Forecast-locked slot
                   </p>
                 )}
               </div>
@@ -331,6 +339,15 @@ export const ProcessViewChart = ({
           dot={{ r: isQH ? 2.5 : 4, fill: '#3B82F6', stroke: '#fff', strokeWidth: isQH ? 1 : 2 }}
           connectNulls={false} isAnimationActive={false}
         />
+
+        {/* Forecast-locked dots — amber, on DA curve (DA stage only, shows initially nominated slots) */}
+        {currentStage === 'da_nomination' && uncertaintyScenario !== 'perfect' && (
+          <Line yAxisId="left" type="monotone" dataKey="pvForecastLockedPrice"
+            stroke="#D97706" strokeWidth={0}
+            dot={{ r: isQH ? 2 : 3.5, fill: '#D97706', stroke: '#fff', strokeWidth: isQH ? 0.5 : 1.5, fillOpacity: 0.7 }}
+            connectNulls={false} isAnimationActive={false}
+          />
+        )}
 
         {/* Forecast price curve — solid/prominent on forecast stage, dashed on DA stage */}
         {(currentStage === 'forecast' || currentStage === 'da_nomination') && uncertaintyScenario !== 'perfect' && (
