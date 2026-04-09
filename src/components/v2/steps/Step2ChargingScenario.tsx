@@ -23,6 +23,7 @@ import {
   ResponsiveContainer, ReferenceLine, ReferenceArea,
 } from 'recharts'
 import { useIntradayFunnel, FunnelTimeline, FUNNEL_STAGES } from '@/components/v2/IntradayFunnel'
+import { ProcessViewChart } from '@/components/v2/ProcessViewChart'
 import type { IntradayFullPoint } from '@/lib/use-prices'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
@@ -109,6 +110,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const [showIntraday, setShowIntraday] = useState(false)
   // showDayPicker removed — always visible
   const [renewableData, setRenewableData] = useState<Map<string, number>>(new Map())
+  // Process view state (Phase 6)
+  const [showProcessView, setShowProcessView] = useState(false)
   // Fleet flex band state (PROJ-35/36/37)
   const [showFleet, setShowFleet] = useState(false)
   const [fleetView, setFleetView] = useState<'single' | 'fleet'>('fleet')
@@ -2176,6 +2179,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </button>
                   </div>
                 )}
+                {/* Process view toggle */}
+                <button
+                  onClick={() => setShowProcessView(v => !v)}
+                  title="Walk through the chronological optimization timeline: Forecast → DA → Intraday"
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded transition-colors ${
+                    showProcessView
+                      ? 'bg-white text-sky-700 shadow-sm'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  Process
+                </button>
                 {/* Fleet toggle is in Customer Profile sidebar — no chart toolbar pill */}
               </div>
             </div>
@@ -2193,6 +2208,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onMouseMove={isDragging ? handleDrag : undefined}
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
+              {showProcessView ? (
+                <ProcessViewChart
+                  prices={chartPrices}
+                  intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
+                  scenario={scenario}
+                  showFleet={showFleet}
+                  fleetConfig={fleetConfig}
+                  isQH={isQH}
+                  chartWidth={plotArea?.width ?? 800}
+                  chartHeight={plotArea?.height ?? 350}
+                  hasIntraday={hasIntraday ?? false}
+                  dateSeed={prices.selectedDate}
+                />
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={finalChartData} margin={CHART_MARGIN}>
                   <defs>
@@ -2544,6 +2573,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Arrival/departure/midnight lines rendered as HTML overlays below for guaranteed visibility */}
                 </ComposedChart>
               </ResponsiveContainer>
+              )}
 
               {/* ── Date labels — positioned between midnight boundaries ── */}
               {N > 1 && plotArea && (() => {
