@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea,
@@ -8,7 +8,6 @@ import {
 import type { HourlyPrice, ChargingScenario, FleetConfig } from '@/lib/v2-config'
 import {
   PROCESS_STAGES, UNCERTAINTY_SCENARIOS,
-  computeProcessViewResults,
   type ProcessStage, type UncertaintyScenario, type ProcessViewResult,
 } from '@/lib/process-view'
 import { computeFlexBand } from '@/lib/fleet-optimizer'
@@ -26,6 +25,11 @@ interface Props {
   chartHeight: number
   hasIntraday: boolean
   dateSeed: string
+  processResult: ProcessViewResult
+  uncertaintyScenario: UncertaintyScenario
+  onUncertaintyChange: (s: UncertaintyScenario) => void
+  currentStage: ProcessStage
+  onStageChange: (s: ProcessStage) => void
 }
 
 /* ── Chart data builder ── */
@@ -90,59 +94,45 @@ function buildChartData(
 
 export const ProcessViewChart = ({
   prices,
-  intradayPrices,
   scenario,
   showFleet,
   fleetConfig,
   isQH,
-  chartWidth,
   chartHeight,
   hasIntraday,
-  dateSeed,
+  processResult,
+  uncertaintyScenario,
+  onUncertaintyChange,
+  currentStage,
+  onStageChange,
 }: Props) => {
-  const [stageIndex, setStageIndex] = useState(0)
-  const [uncertaintyScenario, setUncertaintyScenario] = useState<UncertaintyScenario>('realistic')
-
-  const activeStage = PROCESS_STAGES[stageIndex].key
+  const stageIndex = PROCESS_STAGES.findIndex(s => s.key === currentStage)
+  const activeStage = currentStage
 
   // Prevent navigating to intraday when unavailable
   const goToStage = useCallback((idx: number) => {
     if (idx === 2 && !hasIntraday) return
-    setStageIndex(Math.max(0, Math.min(idx, PROCESS_STAGES.length - 1)))
-  }, [hasIntraday])
+    const clamped = Math.max(0, Math.min(idx, PROCESS_STAGES.length - 1))
+    onStageChange(PROCESS_STAGES[clamped].key)
+  }, [hasIntraday, onStageChange])
 
   const nextStage = useCallback(() => {
-    setStageIndex(prev => {
-      const next = prev + 1
-      if (next === 2 && !hasIntraday) return prev
-      return Math.min(next, PROCESS_STAGES.length - 1)
-    })
-  }, [hasIntraday])
+    const next = stageIndex + 1
+    if (next === 2 && !hasIntraday) return
+    if (next < PROCESS_STAGES.length) onStageChange(PROCESS_STAGES[next].key)
+  }, [stageIndex, hasIntraday, onStageChange])
 
   const prevStage = useCallback(() => {
-    setStageIndex(prev => Math.max(0, prev - 1))
-  }, [])
+    if (stageIndex > 0) onStageChange(PROCESS_STAGES[stageIndex - 1].key)
+  }, [stageIndex, onStageChange])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'ArrowRight') { e.preventDefault(); nextStage() }
     if (e.key === 'ArrowLeft') { e.preventDefault(); prevStage() }
   }, [nextStage, prevStage])
 
-  // Main computation
-  const pvResult = useMemo<ProcessViewResult>(() => {
-    return computeProcessViewResults({
-      prices,
-      intradayPrices,
-      scenario,
-      uncertaintyScenario,
-      showFleet,
-      fleetConfig,
-      dateSeed,
-    })
-  }, [prices, intradayPrices, scenario, uncertaintyScenario, showFleet, fleetConfig, dateSeed])
-
-  // Chart data
-  const chartData = useMemo(() => buildChartData(prices, pvResult, activeStage), [prices, pvResult, activeStage])
+  // Chart data from externally-provided processResult
+  const chartData = useMemo(() => buildChartData(prices, processResult, activeStage), [prices, processResult, activeStage])
 
   // Fleet flex band (for overlay)
   const flexBand = useMemo(() => {
@@ -152,7 +142,7 @@ export const ProcessViewChart = ({
 
   // Determine charging window indices for ReferenceArea overlays
   const windowIndices = useMemo(() => {
-    const stageResult = pvResult.stages[activeStage]
+    const stageResult = processResult.stages[activeStage]
     if (!stageResult) return { start: -1, end: -1 }
     const startHour = parseInt(stageResult.windowStart.split(':')[0], 10)
     const endHour = parseInt(stageResult.windowEnd.split(':')[0], 10)
@@ -161,7 +151,7 @@ export const ProcessViewChart = ({
     if (startIdx < 0) startIdx = 0
     if (endIdx < 0) endIdx = prices.length - 1
     return { start: startIdx, end: endIdx }
-  }, [pvResult, activeStage, prices])
+  }, [processResult, activeStage, prices])
 
   // Stage badge configuration
   const stageBadge = useMemo(() => {
@@ -238,7 +228,7 @@ export const ProcessViewChart = ({
         {UNCERTAINTY_SCENARIOS.map(s => (
           <button
             key={s.key}
-            onClick={() => setUncertaintyScenario(s.key)}
+            onClick={() => onUncertaintyChange(s.key)}
             className={`flex-1 text-[10px] font-bold uppercase tracking-wider py-1.5 rounded transition-colors ${
               uncertaintyScenario === s.key
                 ? 'bg-white text-[#313131] shadow-sm'
@@ -296,8 +286,8 @@ export const ProcessViewChart = ({
             )}
 
             {/* DA Nomination stage: emerald optimized blocks */}
-            {activeStage === 'da_nomination' && pvResult.stages.da_nomination && (
-              pvResult.stages.da_nomination.optimizeResult.charging_schedule.map((block, bi) => {
+            {activeStage === 'da_nomination' && processResult.stages.da_nomination && (
+              processResult.stages.da_nomination.optimizeResult.charging_schedule.map((block, bi) => {
                 const startH = parseInt(block.start.split(':')[0], 10)
                 const endH = parseInt(block.end.split(':')[0], 10)
                 const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === startH)
@@ -318,9 +308,9 @@ export const ProcessViewChart = ({
             )}
 
             {/* Intraday stage: red correction zones */}
-            {activeStage === 'intraday_adjustment' && pvResult.stages.intraday_adjustment && pvResult.stages.forecast && (() => {
-              const forecastStart = parseInt(pvResult.stages.forecast.windowStart.split(':')[0], 10)
-              const realStart = parseInt(pvResult.stages.intraday_adjustment.windowStart.split(':')[0], 10)
+            {activeStage === 'intraday_adjustment' && processResult.stages.intraday_adjustment && processResult.stages.forecast && (() => {
+              const forecastStart = parseInt(processResult.stages.forecast.windowStart.split(':')[0], 10)
+              const realStart = parseInt(processResult.stages.intraday_adjustment.windowStart.split(':')[0], 10)
               if (forecastStart !== realStart) {
                 const minH = Math.min(forecastStart, realStart)
                 const maxH = Math.max(forecastStart, realStart)
@@ -343,8 +333,8 @@ export const ProcessViewChart = ({
             })()}
 
             {/* Intraday stage: emerald re-optimized blocks */}
-            {activeStage === 'intraday_adjustment' && pvResult.stages.intraday_adjustment && (
-              pvResult.stages.intraday_adjustment.optimizeResult.charging_schedule.map((block, bi) => {
+            {activeStage === 'intraday_adjustment' && processResult.stages.intraday_adjustment && (
+              processResult.stages.intraday_adjustment.optimizeResult.charging_schedule.map((block, bi) => {
                 const startH = parseInt(block.start.split(':')[0], 10)
                 const endH = parseInt(block.end.split(':')[0], 10)
                 const startIdx = chartData.findIndex(d => parseInt(d.label.split(':')[0], 10) === startH)
@@ -434,23 +424,23 @@ export const ProcessViewChart = ({
       <div className="flex items-center gap-3 px-2">
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-bold text-gray-400">Perfect:</span>
-          <span className="text-[11px] font-bold tabular-nums text-emerald-600">{pvResult.perfectSavingsCtKwh.toFixed(2)} ct/kWh</span>
+          <span className="text-[11px] font-bold tabular-nums text-emerald-600">{processResult.perfectSavingsCtKwh.toFixed(2)} ct/kWh</span>
         </div>
-        {pvResult.daForecastDragCtKwh > 0 && (
+        {processResult.daForecastDragCtKwh > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-gray-400">DA Error:</span>
-            <span className="text-[11px] font-bold tabular-nums text-red-500">-{pvResult.daForecastDragCtKwh.toFixed(2)}</span>
+            <span className="text-[11px] font-bold tabular-nums text-red-500">-{processResult.daForecastDragCtKwh.toFixed(2)}</span>
           </div>
         )}
-        {pvResult.availabilityDragCtKwh > 0 && (
+        {processResult.availabilityDragCtKwh > 0 && (
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-gray-400">Avail.:</span>
-            <span className="text-[11px] font-bold tabular-nums text-red-500">-{pvResult.availabilityDragCtKwh.toFixed(2)}</span>
+            <span className="text-[11px] font-bold tabular-nums text-red-500">-{processResult.availabilityDragCtKwh.toFixed(2)}</span>
           </div>
         )}
         <div className="flex items-center gap-1.5">
           <span className="text-[10px] font-bold text-gray-400">Realized:</span>
-          <span className="text-[11px] font-bold tabular-nums text-emerald-600">{pvResult.realizedSavingsCtKwh.toFixed(2)} ct/kWh</span>
+          <span className="text-[11px] font-bold tabular-nums text-emerald-600">{processResult.realizedSavingsCtKwh.toFixed(2)} ct/kWh</span>
         </div>
       </div>
     </div>

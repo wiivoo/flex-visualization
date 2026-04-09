@@ -24,6 +24,8 @@ import {
 } from 'recharts'
 import { useIntradayFunnel, FunnelTimeline, FUNNEL_STAGES } from '@/components/v2/IntradayFunnel'
 import { ProcessViewChart } from '@/components/v2/ProcessViewChart'
+import { WaterfallCard } from '@/components/v2/WaterfallCard'
+import { computeProcessViewResults, type UncertaintyScenario, type ProcessStage } from '@/lib/process-view'
 import type { IntradayFullPoint } from '@/lib/use-prices'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
@@ -112,6 +114,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const [renewableData, setRenewableData] = useState<Map<string, number>>(new Map())
   // Process view state (Phase 6)
   const [showProcessView, setShowProcessView] = useState(false)
+  const [uncertaintyScenario, setUncertaintyScenario] = useState<UncertaintyScenario>('realistic')
+  const [processStage, setProcessStage] = useState<ProcessStage>('forecast')
   // Fleet flex band state (PROJ-35/36/37)
   const [showFleet, setShowFleet] = useState(false)
   const [fleetView, setFleetView] = useState<'single' | 'fleet'>('fleet')
@@ -503,6 +507,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const optResult = optimizeFleetSchedule(band, windowPrices, totalEnergy, isQH)
     return { flexBand: band, fleetOptResult: optResult }
   }, [isFleetActive, chartData, fleetConfig, isQH, scenario.chargingMode])
+
+  // ── Process view computation (Phase 6 Plan 02) ──
+  const processResult = useMemo(() => {
+    if (!showProcessView || !date1 || chartData.length === 0) return null
+    return computeProcessViewResults({
+      prices: chartPrices,
+      intradayPrices: prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null,
+      scenario,
+      uncertaintyScenario,
+      showFleet,
+      fleetConfig: showFleet ? fleetConfig : null,
+      dateSeed: prices.selectedDate,
+    })
+  }, [showProcessView, date1, chartData.length, chartPrices, prices.intradayId3, scenario, uncertaintyScenario, showFleet, fleetConfig, prices.selectedDate])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
@@ -2181,7 +2199,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )}
                 {/* Process view toggle */}
                 <button
-                  onClick={() => setShowProcessView(v => !v)}
+                  onClick={() => setShowProcessView(v => { if (!v) setProcessStage('forecast'); return !v })}
                   title="Walk through the chronological optimization timeline: Forecast → DA → Intraday"
                   className={`px-2.5 py-1 text-[11px] font-bold rounded transition-colors ${
                     showProcessView
@@ -2208,7 +2226,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onMouseMove={isDragging ? handleDrag : undefined}
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
-              {showProcessView ? (
+              {showProcessView && processResult ? (
                 <ProcessViewChart
                   prices={chartPrices}
                   intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
@@ -2220,6 +2238,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   chartHeight={plotArea?.height ?? 350}
                   hasIntraday={hasIntraday ?? false}
                   dateSeed={prices.selectedDate}
+                  processResult={processResult}
+                  uncertaintyScenario={uncertaintyScenario}
+                  onUncertaintyChange={setUncertaintyScenario}
+                  currentStage={processStage}
+                  onStageChange={setProcessStage}
                 />
               ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -3687,6 +3710,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           </div>
         )
       })()}
+
+      {/* ── Waterfall Card (Process View) ── */}
+      {showProcessView && processResult && (
+        <WaterfallCard
+          waterfall={processResult.waterfall}
+          fleetWaterfall={processResult.fleetWaterfall}
+          showFleet={showFleet}
+          perfectSavingsCtKwh={processResult.perfectSavingsCtKwh}
+          realizedSavingsCtKwh={processResult.realizedSavingsCtKwh}
+          uncertaintyScenario={uncertaintyScenario}
+        />
+      )}
 
       </div>{/* end right content column */}
       </div>{/* end main two-column grid */}
