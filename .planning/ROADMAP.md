@@ -197,61 +197,6 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 
 ---
 
-## Phase 6: Process View — Chronological Optimization Timeline
-
-**Goal:** Add a dedicated "process view" mode to the price chart that walks the user through the optimization timeline chronologically (forecast → DA nomination → intraday adjustment), with uncertainty modeling and a waterfall value-drag visualization. Works for both single EV and fleet mode — fleet mode demonstrates the portfolio effect on uncertainty reduction.
-
-**Requirements:** PROC-01, PROC-02, PROC-03
-
-**Plans:** 2 plans
-
-Plans:
-- [ ] 06-01-PLAN.md — Process view computation engine + ProcessViewChart + Step2 integration
-- [ ] 06-02-PLAN.md — WaterfallCard + fleet overlays + end-to-end verification
-
-**Depends on:** Phase 5 (needs intraday convergence data for full experience; DA stages work standalone)
-
-**What exists today:**
-- `TheoryOverlay.tsx` — 5-step educational walkthrough with synthetic data (Shape → DA → Intraday → Portfolio → Flex Band)
-- `IntradayFunnel.tsx` — convergence funnel with DA → ID3 → ID1 → ID Full → Last stages
-- `optimizer.ts` — single-pass optimization on DA prices
-- `fleet-optimizer.ts` — flex band (greedy/lazy bounds), fleet schedule optimization, arrival/departure distributions
-- Dashboard shows "perfect foresight" only — no uncertainty representation
-
-**What needs to be built:**
-- **Process view mode:** Dedicated chart mode (replaces normal chart temporarily) with time-axis scrubber or scroll-driven progressive reveal through 3 stages: Forecast → DA Nomination → Intraday Adjustment
-- **Uncertainty scenarios:** User-selectable: Perfect foresight / Realistic forecast / Worst case — each shows different DA price error, car availability variance, and intraday correction costs
-- **Waterfall value-drag card:** Decomposes value loss: perfect savings → minus DA forecast error → minus car availability error → minus intraday spread cost = realized value. Updates per selected scenario.
-- **Re-optimization at each stage:** Show how the charging schedule changes as information is progressively revealed (forecast → actual DA → actual intraday)
-- **Fleet mode support:** Process view respects single/fleet toggle. In fleet mode: √N portfolio effect reduces uncertainty bars in waterfall, flex band provides wider re-optimization corridor, arrival/departure distribution spread acts as natural hedge. The single-EV vs. fleet waterfall contrast is the killer argument for aggregation.
-
-**Key files:**
-- `src/components/v2/TheoryOverlay.tsx` (navigation pattern reference)
-- `src/components/v2/IntradayFunnel.tsx` (funnel data model reference)
-- `src/components/v2/steps/Step2ChargingScenario.tsx` (chart integration, single/fleet toggle)
-- `src/lib/optimizer.ts` (re-optimization with staged price inputs)
-- `src/lib/fleet-optimizer.ts` (flex band, fleet scheduling, distributions)
-- `src/components/v2/FleetConfigPanel.tsx` (fleet config UI)
-- New: `src/components/v2/ProcessViewChart.tsx` (process view chart mode)
-- New: `src/components/v2/WaterfallCard.tsx` (waterfall value-drag card)
-- New: `src/lib/process-view.ts` (pure computation for staged optimization + uncertainty)
-
-**Canonical refs:** `src/components/v2/TheoryOverlay.tsx`, `src/components/v2/IntradayFunnel.tsx`, `src/lib/fleet-optimizer.ts`
-
-**Success Criteria:**
-1. Process view mode accessible from chart controls, replaces normal chart temporarily
-2. Three chronological stages revealed progressively via scrubber/scroll: Forecast → DA Nomination → Intraday Adjustment
-3. Three uncertainty scenarios selectable: Perfect foresight / Realistic / Worst case
-4. Waterfall card decomposes value drag per uncertainty factor, updates per scenario
-5. Chart shows re-optimized charging blocks at each stage with real price data
-6. Uses actual DA and intraday prices for the selected date (graceful fallback when intraday unavailable)
-7. Works in fleet mode: waterfall shows reduced uncertainty drag from √N portfolio effect; flex band visualizes re-optimization corridor
-8. Switching single↔fleet visibly changes the waterfall — fleet shows smaller drag bars per car
-
-**UI hint:** yes
-
----
-
 ## Traceability
 
 | Requirement | Phase | Status |
@@ -267,9 +212,6 @@ Plans:
 | INTRA-04 | Phase 5 | Not started |
 | INTRA-05 | Phase 5 | Not started |
 | Tech debt | Phase 3 | Not started |
-| PROC-01 | Phase 6 | Planned |
-| PROC-02 | Phase 6 | Planned |
-| PROC-03 | Phase 6 | Planned |
 
 ---
-*Last updated: 2026-04-09 — Phase 6 plans created (2 plans, 2 waves)*
+*Last updated: 2026-04-08 — added Phase 4 (scraper) and Phase 5 (funnel viz)*
