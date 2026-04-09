@@ -199,7 +199,7 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 
 ## Phase 6: Process View — Chronological Optimization Timeline
 
-**Goal:** Add a dedicated "process view" mode to the price chart that walks the user through the optimization timeline chronologically (forecast → DA nomination → intraday adjustment), using real price data, with uncertainty modeling and a waterfall value-drag visualization.
+**Goal:** Add a dedicated "process view" mode to the price chart that walks the user through the optimization timeline chronologically (forecast → DA nomination → intraday adjustment), with uncertainty modeling and a waterfall value-drag visualization. Works for both single EV and fleet mode — fleet mode demonstrates the portfolio effect on uncertainty reduction.
 
 **Depends on:** Phase 5 (needs intraday convergence data for full experience; DA stages work standalone)
 
@@ -207,6 +207,7 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 - `TheoryOverlay.tsx` — 5-step educational walkthrough with synthetic data (Shape → DA → Intraday → Portfolio → Flex Band)
 - `IntradayFunnel.tsx` — convergence funnel with DA → ID3 → ID1 → ID Full → Last stages
 - `optimizer.ts` — single-pass optimization on DA prices
+- `fleet-optimizer.ts` — flex band (greedy/lazy bounds), fleet schedule optimization, arrival/departure distributions
 - Dashboard shows "perfect foresight" only — no uncertainty representation
 
 **What needs to be built:**
@@ -214,16 +215,19 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 - **Uncertainty scenarios:** User-selectable: Perfect foresight / Realistic forecast / Worst case — each shows different DA price error, car availability variance, and intraday correction costs
 - **Waterfall value-drag card:** Decomposes value loss: perfect savings → minus DA forecast error → minus car availability error → minus intraday spread cost = realized value. Updates per selected scenario.
 - **Re-optimization at each stage:** Show how the charging schedule changes as information is progressively revealed (forecast → actual DA → actual intraday)
+- **Fleet mode support:** Process view respects single/fleet toggle. In fleet mode: √N portfolio effect reduces uncertainty bars in waterfall, flex band provides wider re-optimization corridor, arrival/departure distribution spread acts as natural hedge. The single-EV vs. fleet waterfall contrast is the killer argument for aggregation.
 
 **Key files:**
 - `src/components/v2/TheoryOverlay.tsx` (navigation pattern reference)
 - `src/components/v2/IntradayFunnel.tsx` (funnel data model reference)
-- `src/components/v2/steps/Step2ChargingScenario.tsx` (chart integration)
+- `src/components/v2/steps/Step2ChargingScenario.tsx` (chart integration, single/fleet toggle)
 - `src/lib/optimizer.ts` (re-optimization with staged price inputs)
+- `src/lib/fleet-optimizer.ts` (flex band, fleet scheduling, distributions)
+- `src/components/v2/FleetConfigPanel.tsx` (fleet config UI)
 - New: `src/components/v2/ProcessView.tsx` (process view mode)
 - New: `src/components/v2/ValueWaterfall.tsx` (waterfall value-drag card)
 
-**Canonical refs:** `src/components/v2/TheoryOverlay.tsx`, `src/components/v2/IntradayFunnel.tsx`
+**Canonical refs:** `src/components/v2/TheoryOverlay.tsx`, `src/components/v2/IntradayFunnel.tsx`, `src/lib/fleet-optimizer.ts`
 
 **Success Criteria:**
 1. Process view mode accessible from chart controls, replaces normal chart temporarily
@@ -232,6 +236,8 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 4. Waterfall card decomposes value drag per uncertainty factor, updates per scenario
 5. Chart shows re-optimized charging blocks at each stage with real price data
 6. Uses actual DA and intraday prices for the selected date (graceful fallback when intraday unavailable)
+7. Works in fleet mode: waterfall shows reduced uncertainty drag from √N portfolio effect; flex band visualizes re-optimization corridor
+8. Switching single↔fleet visibly changes the waterfall — fleet shows smaller drag bars per car
 
 **UI hint:** yes
 

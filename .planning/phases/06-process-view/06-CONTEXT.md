@@ -6,9 +6,15 @@
 <domain>
 ## Phase Boundary
 
-Dedicated "process view" mode on the price chart that walks the user through the chronological optimization timeline: forecast → DA nomination → intraday adjustment. Uses real price data (not synthetic). Includes uncertainty modeling with a waterfall value-drag visualization.
+Dedicated "process view" mode on the price chart that walks the user through the chronological optimization timeline: forecast → DA nomination → intraday adjustment. Works for both **single EV** and **fleet mode**. Uses real price data (not synthetic). Includes uncertainty modeling with a waterfall value-drag visualization.
 
 This replaces the normal chart temporarily (not an overlay on top of it). The existing TheoryOverlay uses synthetic data in a full-screen view — this is different: it uses real data integrated into the chart area.
+
+**Fleet mode is a first-class citizen** — the process view is even more powerful for fleets because:
+- Portfolio effect (√N) reduces forecast uncertainty → waterfall shows smaller drag per car
+- Fleet flex band provides more degrees of freedom for intraday re-optimization
+- Arrival/departure distribution spread creates a natural hedge against single-car volatility
+- The contrast between single-EV and fleet waterfalls is the killer argument for aggregation
 
 </domain>
 
@@ -35,6 +41,13 @@ This replaces the normal chart temporarily (not an overlay on top of it). The ex
 - **D-07:** Waterfall shows: Perfect value → minus DA forecast error drag → minus car availability error drag → minus intraday correction spread = realized value
 - **D-08:** Key insight to communicate: DA price is unknown at nomination time, car availability is unknown → may lead to false position. In intraday, actual car availability is revealed and may force additional optimization trades at cost.
 - **D-09:** Currently the dashboard shows the "perfect world" — this feature makes visible how much uncertainty costs.
+
+### Fleet Mode Integration
+- **D-11:** Process view works for BOTH single EV and fleet mode — fleet is first-class, not an afterthought.
+- **D-12:** In fleet mode, the √N portfolio effect reduces forecast uncertainty — the waterfall should show visibly smaller drag bars per car compared to single EV. This is the killer argument for aggregation.
+- **D-13:** Fleet flex band (`computeFlexBand` greedy/lazy bounds) provides more degrees of freedom for intraday re-optimization — the process view should visualize how the band enables better recovery from forecast errors.
+- **D-14:** Fleet arrival/departure distribution spread (generated via `deriveFleetDistributions` with narrow/normal/wide sigma) acts as a natural hedge — some cars arrive early, some late, errors partially cancel out.
+- **D-15:** The waterfall contrast between single-EV and fleet should be clearly visible — either side-by-side or via the single/fleet toggle already in Step2. When switching single↔fleet, the waterfall bars resize to show the portfolio benefit.
 
 ### Data Source
 - **D-10:** Use actual real-time data from the chart (requires intraday data for selected date). When intraday data is unavailable, show only the DA stages and indicate intraday stage is data-dependent.
@@ -63,6 +76,11 @@ This replaces the normal chart temporarily (not an overlay on top of it). The ex
 - `src/lib/optimizer.ts` — `runOptimization()` — currently runs once on DA prices. Process view needs to show re-optimization at different stages.
 - `src/lib/charging-helpers.ts` — `computeWindowSavings`, `computeSpread`, `buildOvernightWindows` — baseline/optimized cost computations.
 
+### Fleet Optimizer
+- `src/lib/fleet-optimizer.ts` — `computeFlexBand`, `optimizeFleetSchedule`, `deriveFleetDistributions`, `generateDistribution` — fleet flex band computation with greedy/lazy bounds and price-optimal scheduling.
+- `src/components/v2/FleetConfigPanel.tsx` — Fleet config UI (fleet size, arrival/departure distributions, spread modes).
+- `src/lib/v2-config.ts` — `FleetConfig`, `FleetOptimizationResult`, `FlexBandSlot`, `FleetScheduleSlot` types.
+
 ### Price Data
 - `src/lib/use-prices.ts` — Price data hook providing `intradayId3`, `intradayFull`, `hourly`, `hourlyQH` data.
 
@@ -76,6 +94,9 @@ This replaces the normal chart temporarily (not an overlay on top of it). The ex
 - **IntradayFunnel data model**: `FunnelPoint` with `corridorLow`/`corridorHigh`/`corridorWidth` — captures uncertainty narrowing
 - **ReferenceArea overlays**: Step2 already renders 10+ overlay types — established pattern for adding process-view overlays
 - **`useIntradayFunnel` hook**: Computes funnel state per stage — can be extended for process view stages
+- **Fleet flex band**: `computeFlexBand` produces greedy/lazy bounds per slot — visualizes degrees of freedom available for re-optimization
+- **Fleet distribution model**: `generateDistribution` with narrow/normal/wide sigma — models arrival/departure variance (natural hedge)
+- **Single/fleet toggle**: Already exists in Step2 (`showFleet`, `fleetView`) — process view should respect and react to this toggle
 
 ### Established Patterns
 - Chart overlays use `<ReferenceArea>` with `fillOpacity` and color-coding (green=optimized, red=baseline, blue=intraday)
@@ -97,6 +118,7 @@ This replaces the normal chart temporarily (not an overlay on top of it). The ex
 - The waterfall should clearly decompose where value is lost: DA forecast error, car availability error, intraday correction cost
 - The three scenarios (perfect/realistic/worst) are user-selectable, and each updates the waterfall
 - Current dashboard = "perfect world" — this feature is the reality check
+- Fleet mode is even more powerful — the contrast between single-EV and fleet waterfalls is the killer argument for aggregation (√N effect visually proven)
 
 </specifics>
 
