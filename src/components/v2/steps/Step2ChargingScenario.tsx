@@ -517,10 +517,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       scenario,
       uncertaintyScenario,
       showFleet,
-      fleetConfig: showFleet ? fleetConfig : null,
+      fleetConfig: showFleet ? deferredFleetConfig : null,
       dateSeed: prices.selectedDate,
     })
-  }, [showProcessView, date1, chartData.length, chartPrices, prices.intradayId3, scenario, uncertaintyScenario, showFleet, fleetConfig, prices.selectedDate])
+  }, [showProcessView, date1, chartData.length, chartPrices, prices.intradayId3, scenario, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
