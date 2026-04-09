@@ -3011,34 +3011,92 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
-              {/* ── Process view savings pill ── */}
+              {/* ── Process view savings pill + avg ct/kWh labels ── */}
               {showProcessView && processResult && plotArea && (() => {
-                // Both stages use processResult as single source of truth
                 const pvError = processResult.availabilityDragCtKwh + processResult.priceForecastDragCtKwh
-                // Forecast stage: perfect savings minus forecast error (what forecast achieves)
-                // DA stage: perfect savings (real optimization)
-                // Perfect scenario: pvError=0, so both stages show the same value
-                const pvSavings = processStage === 'forecast'
-                  ? Math.max(0, processResult.perfectSavingsCtKwh - pvError)
-                  : processResult.perfectSavingsCtKwh
+                // Perfect scenario: use sessionCost (identical to price view) to guarantee match
+                // Forecast/DA with uncertainty: use processResult decomposition
+                const isPerfect = uncertaintyScenario === 'perfect'
+                const pvSavings = isPerfect && sessionCost
+                  ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt)
+                  : processStage === 'forecast'
+                    ? Math.max(0, processResult.perfectSavingsCtKwh - pvError)
+                    : processResult.perfectSavingsCtKwh
+
+                // Avg ct/kWh values for baseline and optimized pills (like price view)
+                const bAvg = isPerfect && sessionCost ? sessionCost.baselineAvgCt
+                  : processStage === 'forecast'
+                    ? (processResult.stages.forecast?.avgPriceCtKwh ?? 0) + pvSavings // baseline ≈ forecast avg + savings
+                    : (processResult.stages.da_nomination?.avgPriceCtKwh ?? 0) + processResult.perfectSavingsCtKwh
+                const oAvg = isPerfect && sessionCost ? sessionCost.optimizedAvgCt
+                  : processStage === 'forecast'
+                    ? (processResult.stages.forecast?.avgPriceCtKwh ?? 0)
+                    : (processResult.stages.da_nomination?.avgPriceCtKwh ?? 0)
+
+                const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
+                const bCenter = baselineRanges.length > 0
+                  ? baselineRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / baselineRanges.length
+                  : idxToPx(arrivalIdx >= 0 ? arrivalIdx + 1 : 0)
+                const pvOptRanges = processStage === 'forecast'
+                  ? [...(processResult.stages.forecast?.cheapestHours ?? [])].map(idx => ({ x1: idx, x2: Math.min(idx + 1, N - 1) }))
+                  : optimizedRanges
+                const oCenter = pvOptRanges.length > 0
+                  ? pvOptRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / pvOptRanges.length
+                  : idxToPx(Math.floor(N / 2))
+                const priceToY = (ct: number) => {
+                  const frac = (ct - priceRange.min) / (priceRange.max - priceRange.min)
+                  return plotArea.top + plotArea.height * (1 - frac)
+                }
+                const bY = Math.max(plotArea.top + 22, Math.min(plotArea.top + plotArea.height - 40, priceToY(bAvg) + 16))
+                const oY = Math.max(plotArea.top + 22, Math.min(plotArea.top + plotArea.height - 40, priceToY(oAvg) - 36))
+
                 return (
-                  <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
-                    <div className="flex items-center gap-1.5 flex-nowrap">
-                      <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
-                        <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                          ▼ {pvSavings.toFixed(1)} ct/kWh
-                        </span>
-                        <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
-                          {processStage === 'forecast' ? 'forecast' : 'perfect'}
-                        </span>
-                        {processStage === 'da_nomination' && pvError > 0.01 && (
-                          <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-amber-600 ml-1.5">
-                            · DA error: −{pvError.toFixed(1)} ct/kWh
+                  <>
+                    {/* Top savings pill */}
+                    <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
+                      <div className="flex items-center gap-1.5 flex-nowrap">
+                        <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
+                          <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
+                            ▼ {pvSavings.toFixed(1)} ct/kWh
                           </span>
-                        )}
+                          <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
+                            {processStage === 'forecast' ? 'forecast' : 'perfect'}
+                          </span>
+                          {processStage === 'da_nomination' && pvError > 0.01 && (
+                            <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-amber-600 ml-1.5">
+                              · DA error: −{pvError.toFixed(1)} ct/kWh
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
+                    {/* Baseline avg pill — red, positioned at baseline slots */}
+                    <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
+                      style={{ left: bCenter, top: bY, transform: 'translateX(-50%)' }}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Baseline</span>
+                        <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
+                          <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                            {bAvg.toFixed(1)} ct/kWh
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Smart charging avg pill — blue, positioned at optimized slots */}
+                    <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
+                      style={{ left: oCenter, top: oY, transform: 'translateX(-50%)' }}>
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="text-[8px] font-bold text-blue-500 uppercase tracking-wider">Smart charging</span>
+                        <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
+                          <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
+                            {oAvg.toFixed(1)} ct/kWh
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )
               })()}
 

@@ -149,8 +149,8 @@ export const ProcessViewChart = ({
       } else {
         // DA stage: blue dots on perfect slots (actual DA optimal), red dots on DA curve (from mainChartData)
         extra.optimizedPrice = isPerfectSlot ? d.priceVal ?? d.price : null
-        // Amber dots: forecast-locked slots shown on the DA curve (what was initially nominated)
-        extra.pvForecastLockedPrice = isForecastNominated ? d.priceVal ?? d.price : null
+        // Amber dots: forecast-locked slots shown on the FORECAST curve (where forecast thought they'd be priced)
+        extra.pvForecastLockedPrice = isForecastNominated && fp ? fp.priceCtKwh : null
         // baselinePrice stays from mainChartData (already on DA curve)
       }
 
