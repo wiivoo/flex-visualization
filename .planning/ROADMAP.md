@@ -201,6 +201,14 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 
 **Goal:** Add a dedicated "process view" mode to the price chart that walks the user through the optimization timeline chronologically (forecast → DA nomination → intraday adjustment), with uncertainty modeling and a waterfall value-drag visualization. Works for both single EV and fleet mode — fleet mode demonstrates the portfolio effect on uncertainty reduction.
 
+**Requirements:** PROC-01, PROC-02, PROC-03
+
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md — Process view computation engine + ProcessViewChart + Step2 integration
+- [ ] 06-02-PLAN.md — WaterfallCard + fleet overlays + end-to-end verification
+
 **Depends on:** Phase 5 (needs intraday convergence data for full experience; DA stages work standalone)
 
 **What exists today:**
@@ -224,8 +232,9 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 - `src/lib/optimizer.ts` (re-optimization with staged price inputs)
 - `src/lib/fleet-optimizer.ts` (flex band, fleet scheduling, distributions)
 - `src/components/v2/FleetConfigPanel.tsx` (fleet config UI)
-- New: `src/components/v2/ProcessView.tsx` (process view mode)
-- New: `src/components/v2/ValueWaterfall.tsx` (waterfall value-drag card)
+- New: `src/components/v2/ProcessViewChart.tsx` (process view chart mode)
+- New: `src/components/v2/WaterfallCard.tsx` (waterfall value-drag card)
+- New: `src/lib/process-view.ts` (pure computation for staged optimization + uncertainty)
 
 **Canonical refs:** `src/components/v2/TheoryOverlay.tsx`, `src/components/v2/IntradayFunnel.tsx`, `src/lib/fleet-optimizer.ts`
 
@@ -258,9 +267,9 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 | INTRA-04 | Phase 5 | Not started |
 | INTRA-05 | Phase 5 | Not started |
 | Tech debt | Phase 3 | Not started |
-| PROC-01 | Phase 6 | Not started |
-| PROC-02 | Phase 6 | Not started |
-| PROC-03 | Phase 6 | Not started |
+| PROC-01 | Phase 6 | Planned |
+| PROC-02 | Phase 6 | Planned |
+| PROC-03 | Phase 6 | Planned |
 
 ---
-*Last updated: 2026-04-09 — added Phase 6 (process view with uncertainty modeling)*
+*Last updated: 2026-04-09 — Phase 6 plans created (2 plans, 2 waves)*
