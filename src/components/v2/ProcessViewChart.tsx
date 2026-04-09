@@ -364,51 +364,7 @@ export const ProcessViewChart = ({
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* Arrival label */}
-        {arrivalIdx >= 0 && (
-          <div className="absolute pointer-events-none z-10"
-            style={{ left: `${idxToPercent(arrivalIdx)}%`, top: 4, transform: 'translateX(-50%)' }}>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border text-[#EA1C0A] bg-white/95 border-red-200">
-              Plug-in {arrivalLabel}
-            </span>
-          </div>
-        )}
-
-        {/* Departure label */}
-        {departureIdx >= 0 && (
-          <div className="absolute pointer-events-none z-10"
-            style={{ left: `${idxToPercent(departureIdx)}%`, top: 4, transform: 'translateX(-50%)' }}>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border text-blue-600 bg-white/95 border-blue-200">
-              Departure {departureLabel}
-            </span>
-          </div>
-        )}
-
-        {/* Savings pill — top center: anchored to actual savings card value */}
-        {perfectSavings > 0 && (
-          <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
-            <div className="flex items-center gap-1.5 flex-nowrap">
-              <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
-                <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                  ▼ {perfectSavings.toFixed(1)} ct/kWh
-                </span>
-                <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
-                  perfect
-                </span>
-              </div>
-              {forecastError > 0.01 && (
-                <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50 flex-shrink-0">
-                  <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-red-600">
-                    {currentStage === 'forecast'
-                      ? `Forecast error: -${forecastError.toFixed(1)} ct`
-                      : `DA error: -${processResult.daForecastDragCtKwh.toFixed(1)} ct`
-                    }
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Pills (arrival, departure, savings) are rendered by Step2 parent for consistent positioning */}
       </div>
 
       {/* Legend strip */}

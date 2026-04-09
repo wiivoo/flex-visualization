@@ -2234,29 +2234,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           </div>
           </CardHeader>
           <CardContent className="pb-1">
-            {/* ── Process view chart (rendered outside fixed-height container) ── */}
-            {showProcessView && processResult && (
-              <ProcessViewChart
-                prices={pvWindowPrices}
-                intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
-                scenario={scenario}
-                showFleet={showFleet}
-                fleetConfig={fleetConfig}
-                isQH={isQH}
-                chartWidth={plotArea?.width ?? 800}
-                chartHeight={plotArea?.height ?? 350}
-                hasIntraday={hasIntraday ?? false}
-                dateSeed={prices.selectedDate}
-                processResult={processResult}
-                uncertaintyScenario={uncertaintyScenario}
-                onUncertaintyChange={setUncertaintyScenario}
-                currentStage={processStage}
-                onStageChange={setProcessStage}
-                actualSavingsCtKwh={sessionCost ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt) : undefined}
-              />
-            )}
             {/* ── Chart container ── */}
-            {!showProcessView && <div className="relative h-[400px] select-none outline-none"
+            <div className="relative h-[400px] select-none outline-none"
               ref={chartRef}
               tabIndex={0}
               onKeyDown={(e) => {
@@ -2266,6 +2245,26 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onMouseMove={isDragging ? handleDrag : undefined}
               onTouchMove={isDragging ? handleDrag : undefined}
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
+              {showProcessView && processResult ? (
+                <ProcessViewChart
+                  prices={pvWindowPrices}
+                  intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
+                  scenario={scenario}
+                  showFleet={showFleet}
+                  fleetConfig={fleetConfig}
+                  isQH={isQH}
+                  chartWidth={plotArea?.width ?? 800}
+                  chartHeight={plotArea?.height ?? 350}
+                  hasIntraday={hasIntraday ?? false}
+                  dateSeed={prices.selectedDate}
+                  processResult={processResult}
+                  uncertaintyScenario={uncertaintyScenario}
+                  onUncertaintyChange={setUncertaintyScenario}
+                  currentStage={processStage}
+                  onStageChange={setProcessStage}
+                  actualSavingsCtKwh={sessionCost ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt) : undefined}
+                />
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={finalChartData} margin={CHART_MARGIN}>
                   <defs>
@@ -2617,9 +2616,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {/* Arrival/departure/midnight lines rendered as HTML overlays below for guaranteed visibility */}
                 </ComposedChart>
               </ResponsiveContainer>
+              )}
 
-              {/* ── Normal chart overlays ── */}
-              {<>
+              {/* ── Chart overlays (shared between normal and process view) ── */}
+              {!showProcessView && <>
               {/* ── Date labels — positioned between midnight boundaries ── */}
               {N > 1 && plotArea && (() => {
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
@@ -2992,6 +2992,35 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
+              </>}
+
+              {/* ── Process view savings pill ── */}
+              {showProcessView && processResult && plotArea && (() => {
+                const pvSavings = sessionCost ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt) : processResult.perfectSavingsCtKwh
+                const pvError = processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh
+                return (
+                  <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
+                    <div className="flex items-center gap-1.5 flex-nowrap">
+                      <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
+                        <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
+                          ▼ {pvSavings.toFixed(1)} ct/kWh
+                        </span>
+                        <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
+                          {processStage === 'forecast' ? 'forecast' : 'perfect'}
+                        </span>
+                      </div>
+                      {processStage === 'da_nomination' && pvError > 0.01 && (
+                        <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50 flex-shrink-0">
+                          <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-red-600">
+                            DA error: -{pvError.toFixed(1)} ct
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
               {/* ── Drag handles — invisible touch targets + label pills (hidden in fleet mode) ── */}
               {N > 1 && !isFleetActive && (
                 <>
@@ -3119,7 +3148,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
-              </>}
               {/* ── Edge-scroll zones — press & hold to scrub through days ── */}
               {!isDragging && (
                 <>
@@ -3153,7 +3181,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </div>
                 </>
               )}
-            </div>}
+            </div>
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
 
