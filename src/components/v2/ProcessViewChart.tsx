@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
+import { useMemo, useCallback } from 'react'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea, ReferenceLine,
@@ -31,6 +31,8 @@ interface Props {
   onUncertaintyChange: (s: UncertaintyScenario) => void
   currentStage: ProcessStage
   onStageChange: (s: ProcessStage) => void
+  /** Actual savings from savings card — used as the "perfect" anchor so values always match */
+  actualSavingsCtKwh?: number
 }
 
 /* ── Chart data builder ── */
@@ -102,6 +104,7 @@ export const ProcessViewChart = ({
   onUncertaintyChange,
   currentStage,
   onStageChange,
+  actualSavingsCtKwh,
 }: Props) => {
   const stageIndex = PROCESS_STAGES.findIndex(s => s.key === currentStage)
 
@@ -225,34 +228,20 @@ export const ProcessViewChart = ({
     }
   }, [currentStage])
 
-  // Plot area measurement for overlays
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
-
-  useEffect(() => {
-    if (!containerRef.current) return
-    const svg = containerRef.current.querySelector('.recharts-wrapper svg')
-    const plotBg = containerRef.current.querySelector('.recharts-cartesian-grid')
-    if (svg && plotBg) {
-      const svgRect = svg.getBoundingClientRect()
-      const plotRect = plotBg.getBoundingClientRect()
-      setPlotArea({
-        left: plotRect.left - svgRect.left,
-        width: plotRect.width,
-        top: plotRect.top - svgRect.top,
-        height: plotRect.height,
-      })
-    }
-  }, [chartData, N])
-
-  // Compute pixel position for an index
-  const idxToPx = (idx: number) => {
-    if (!plotArea || N <= 1) return 0
-    return plotArea.left + (idx / (N - 1)) * plotArea.width
+  // Percentage-based positioning for pills (no DOM measurement needed)
+  const idxToPercent = (idx: number) => {
+    if (N <= 1) return 50
+    // Account for chart margins: plot area starts at CHART_MARGIN.left and ends at 100% - CHART_MARGIN.right
+    // Approximate: margins are ~5% left and ~3% right for typical widths
+    const leftPct = 5
+    const rightPct = 97
+    const range = rightPct - leftPct
+    return leftPct + (idx / (N - 1)) * range
   }
 
   const stageResult = processResult.stages[currentStage]
-  const forecastSavings = processResult.perfectSavingsCtKwh - processResult.daForecastDragCtKwh - processResult.availabilityDragCtKwh
+  const perfectSavings = actualSavingsCtKwh ?? processResult.perfectSavingsCtKwh
+  const forecastError = processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh
 
   if (prices.length === 0) {
     return (
@@ -265,7 +254,7 @@ export const ProcessViewChart = ({
   return (
     <div className="space-y-0">
       {/* Chart — matching main chart layout */}
-      <div className="relative" style={{ height: 400 }} ref={containerRef}>
+      <div className="relative" style={{ height: 400 }}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={chartData} margin={CHART_MARGIN}>
             <defs>
@@ -375,10 +364,10 @@ export const ProcessViewChart = ({
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* Arrival label — positioned as HTML overlay */}
-        {arrivalIdx >= 0 && plotArea && (
+        {/* Arrival label */}
+        {arrivalIdx >= 0 && (
           <div className="absolute pointer-events-none z-10"
-            style={{ left: idxToPx(arrivalIdx), top: 4, transform: 'translateX(-50%)' }}>
+            style={{ left: `${idxToPercent(arrivalIdx)}%`, top: 4, transform: 'translateX(-50%)' }}>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border text-[#EA1C0A] bg-white/95 border-red-200">
               Plug-in {arrivalLabel}
             </span>
@@ -386,34 +375,32 @@ export const ProcessViewChart = ({
         )}
 
         {/* Departure label */}
-        {departureIdx >= 0 && plotArea && (
+        {departureIdx >= 0 && (
           <div className="absolute pointer-events-none z-10"
-            style={{ left: idxToPx(departureIdx), top: 4, transform: 'translateX(-50%)' }}>
+            style={{ left: `${idxToPercent(departureIdx)}%`, top: 4, transform: 'translateX(-50%)' }}>
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border text-blue-600 bg-white/95 border-blue-200">
               Departure {departureLabel}
             </span>
           </div>
         )}
 
-        {/* Savings pill — top center: always anchored to perfect (= savings card value) */}
-        {plotArea && processResult.perfectSavingsCtKwh > 0 && (
+        {/* Savings pill — top center: anchored to actual savings card value */}
+        {perfectSavings > 0 && (
           <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
             <div className="flex items-center gap-1.5 flex-nowrap">
-              {/* Perfect savings — always shown, matches savings card */}
               <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
                 <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                  ▼ {processResult.perfectSavingsCtKwh.toFixed(1)} ct/kWh
+                  ▼ {perfectSavings.toFixed(1)} ct/kWh
                 </span>
                 <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
                   perfect
                 </span>
               </div>
-              {/* Forecast error delta — shown when scenario != perfect */}
-              {(processResult.daForecastDragCtKwh > 0.01 || processResult.availabilityDragCtKwh > 0.01) && (
+              {forecastError > 0.01 && (
                 <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50 flex-shrink-0">
                   <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-red-600">
                     {currentStage === 'forecast'
-                      ? `Forecast error: -${(processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh).toFixed(1)} ct`
+                      ? `Forecast error: -${forecastError.toFixed(1)} ct`
                       : `DA error: -${processResult.daForecastDragCtKwh.toFixed(1)} ct`
                     }
                   </span>

@@ -2252,6 +2252,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 onUncertaintyChange={setUncertaintyScenario}
                 currentStage={processStage}
                 onStageChange={setProcessStage}
+                actualSavingsCtKwh={sessionCost ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt) : undefined}
               />
             )}
             {/* ── Chart container ── */}
