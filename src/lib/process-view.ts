@@ -28,6 +28,20 @@ export const UNCERTAINTY_SCENARIOS: { key: UncertaintyScenario; label: string }[
   { key: 'worst', label: 'Worst case' },
 ]
 
+/** Interpolate uncertainty parameters from a 0–100 slider value */
+export function uncertaintyFromPct(pct: number): {
+  daPriceNoiseEurMwh: number
+  plugInVarianceHours: number
+  departureVarianceHours: number
+} {
+  const t = Math.max(0, Math.min(100, pct)) / 100
+  return {
+    daPriceNoiseEurMwh: t * 20,        // 0 → 0, 100 → 20 EUR/MWh
+    plugInVarianceHours: t * 2,          // 0 → 0h, 100 → 2h
+    departureVarianceHours: t * 2,       // 0 → 0h, 100 → 2h
+  }
+}
+
 export interface StageResult {
   windowStart: string
   windowEnd: string
@@ -170,6 +184,35 @@ export function perturbDeparture(
   return `${String(newHour).padStart(2, '0')}:00`
 }
 
+/* ── Continuous-control perturbation (slider-driven) ── */
+
+/** Perturb prices with a specific noise level (EUR/MWh) */
+function perturbPricesWithNoise(prices: HourlyPrice[], noiseEurMwh: number, dateSeed: string): HourlyPrice[] {
+  const rng = createSeededRng(`${dateSeed}_prices_slider`)
+  return prices.map(p => {
+    const noise = gaussianNoise(rng) * noiseEurMwh
+    const perturbedEurMwh = p.priceEurMwh + noise
+    return { ...p, priceEurMwh: perturbedEurMwh, priceCtKwh: perturbedEurMwh / 10 }
+  })
+}
+
+/** Perturb a time boundary by a specific variance (hours). Direction is seeded. */
+function perturbWindowByHours(time: string, varianceHours: number, dateSeed: string, kind: 'arrival' | 'departure'): string {
+  const hour = parseInt(time.split(':')[0], 10)
+  const rng = createSeededRng(`${dateSeed}_${kind}_slider`)
+  // Round variance to nearest integer for clean hours
+  const maxShift = Math.round(varianceHours)
+  if (maxShift === 0) return time
+  // Arrival tends late (+), departure tends early (-)
+  const direction = kind === 'arrival' ? 1 : -1
+  // Seeded: sometimes shift less, sometimes full
+  const shift = rng() > 0.5 ? maxShift * direction : Math.ceil(maxShift / 2) * direction
+  const clampMin = kind === 'arrival' ? 14 : 4
+  const clampMax = kind === 'arrival' ? 23 : 12
+  const newHour = Math.max(clampMin, Math.min(clampMax, hour + shift))
+  return `${String(newHour).padStart(2, '0')}:00`
+}
+
 /* ── Lightweight price analysis (no optimizer calls) ── */
 
 /**
@@ -262,21 +305,20 @@ export function computeProcessViewResults(params: {
   intradayPrices: HourlyPrice[] | null
   scenario: ChargingScenario
   uncertaintyScenario: UncertaintyScenario
+  /** Continuous uncertainty 0–100. When provided, overrides uncertaintyScenario for noise/variance. */
+  uncertaintyPct?: number
   showFleet: boolean
   fleetConfig: FleetConfig | null
   dateSeed: string
-  /** Optional ground-truth baseline/optimized from the main chart's computation.
-   *  When provided, perfectSavings is anchored to this instead of the approximate engine. */
   perfectBaseline?: { baselineAvgCt: number; optimizedAvgCt: number } | null
 }): ProcessViewResult {
-  const { prices, intradayPrices, scenario, uncertaintyScenario, showFleet, fleetConfig, dateSeed, perfectBaseline } = params
+  const { prices, intradayPrices, scenario, uncertaintyScenario, uncertaintyPct, showFleet, fleetConfig, dateSeed, perfectBaseline } = params
 
   const startH = scenario.plugInTime
   const endH = scenario.departureTime
   const windowStart = `${String(startH).padStart(2, '0')}:00`
   const windowEnd = `${String(endH).padStart(2, '0')}:00`
 
-  // Estimate charging hours needed from vehicle + scenario
   const vehicle = VEHICLE_PRESETS.find(v => v.id === scenario.vehicleId) ?? VEHICLE_PRESETS[1]
   const energyNeeded = vehicle.battery_kwh * (scenario.targetLevel - scenario.startLevel) / 100
   const hoursNeeded = Math.ceil(energyNeeded / scenario.chargePowerKw)
@@ -290,10 +332,24 @@ export function computeProcessViewResults(params: {
     return { stages: emptyStages, waterfall: [], fleetWaterfall: null, perfectSavingsCtKwh: 0, realizedSavingsCtKwh: 0, availabilityDragCtKwh: 0, priceForecastDragCtKwh: 0, intradayCorrectionCtKwh: 0 }
   }
 
-  // Perturbed values (arrival + departure + prices)
-  const perturbedPrices = perturbPrices(prices, uncertaintyScenario, dateSeed)
-  const perturbedWindowStart = perturbWindow(windowStart, uncertaintyScenario, dateSeed)
-  const perturbedWindowEnd = perturbDeparture(windowEnd, uncertaintyScenario, dateSeed)
+  // Resolve uncertainty config: slider (pct) takes precedence over named scenario
+  const uConfig = uncertaintyPct !== undefined && uncertaintyPct > 0
+    ? uncertaintyFromPct(uncertaintyPct)
+    : uncertaintyScenario === 'perfect'
+      ? { daPriceNoiseEurMwh: 0, plugInVarianceHours: 0, departureVarianceHours: 0 }
+      : UNCERTAINTY_CONFIG[uncertaintyScenario]
+  const effectiveScenario = (uncertaintyPct !== undefined && uncertaintyPct > 0) || uncertaintyScenario !== 'perfect' ? 'realistic' : 'perfect'
+
+  // Perturbed values (arrival + departure + prices) using resolved config
+  const perturbedPrices = uConfig.daPriceNoiseEurMwh > 0
+    ? perturbPricesWithNoise(prices, uConfig.daPriceNoiseEurMwh, dateSeed)
+    : prices
+  const perturbedWindowStart = uConfig.plugInVarianceHours > 0
+    ? perturbWindowByHours(windowStart, uConfig.plugInVarianceHours, dateSeed, 'arrival')
+    : windowStart
+  const perturbedWindowEnd = uConfig.departureVarianceHours > 0
+    ? perturbWindowByHours(windowEnd, uConfig.departureVarianceHours, dateSeed, 'departure')
+    : windowEnd
   const perturbedStartH = parseInt(perturbedWindowStart.split(':')[0], 10)
   const perturbedEndH = parseInt(perturbedWindowEnd.split(':')[0], 10)
 
@@ -312,10 +368,15 @@ export function computeProcessViewResults(params: {
   const optimizedAvg = perfectBaseline ? perfectBaseline.optimizedAvgCt : perfectAvg
   const perfectSavingsCtKwh = Math.max(0, baselineAvg - optimizedAvg)
 
+  // Forecast baseline: "charge now" from perturbed arrival (baseline shifts with plug-in time)
+  const forecastBaselineAvg = (perturbedStartH !== startH || perturbedEndH !== endH)
+    ? baselineAvgPrice(prices, perturbedStartH, perturbedEndH, slotsNeeded)
+    : baselineAvg
+
   // Stage 1 — Forecast: perturbed prices + perturbed window (arrival + departure)
   const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, perturbedEndH, slotsNeeded)
   const forecastActualAvg = avgPrice(prices, forecastCheapest) // what those hours actually cost
-  const forecastSavingsCtKwh = Math.max(0, baselineAvg - forecastActualAvg)
+  const forecastSavingsCtKwh = Math.max(0, forecastBaselineAvg - forecastActualAvg)
 
   // DA Nomination kept internally for error decomposition but not exposed as a UI stage
   const daCheapest = findCheapestHours(prices, perturbedStartH, perturbedEndH, slotsNeeded)

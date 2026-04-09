@@ -114,6 +114,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   // Process view state (Phase 6)
   const [showProcessView, setShowProcessView] = useState(false)
   const [uncertaintyScenario, setUncertaintyScenario] = useState<UncertaintyScenario>('realistic')
+  const [uncertaintyPct, setUncertaintyPct] = useState(30) // 0=perfect, 100=max uncertainty
   const [processStage, setProcessStage] = useState<ProcessStage>('forecast')
   // Fleet flex band state (PROJ-35/36/37)
   const [showFleet, setShowFleet] = useState(false)
@@ -531,13 +532,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       intradayPrices: prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null,
       scenario,
       uncertaintyScenario,
+      uncertaintyPct,
       showFleet,
       fleetConfig: showFleet ? deferredFleetConfig : null,
       dateSeed: prices.selectedDate,
       perfectBaseline: sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt } : null,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showProcessView, date1, chartData.length, pvWindowPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, showFleet, deferredFleetConfig, prices.selectedDate, sessionCost?.baselineAvgCt, sessionCost?.optimizedAvgCt])
+  }, [showProcessView, date1, chartData.length, pvWindowPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, uncertaintyPct, showFleet, deferredFleetConfig, prices.selectedDate, sessionCost?.baselineAvgCt, sessionCost?.optimizedAvgCt])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
@@ -2214,18 +2216,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </button>
                   </div>
                 )}
-                {/* Process view toggle */}
+                {/* Scenario view toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                   <button
                     onClick={() => setShowProcessView(v => { if (!v) setProcessStage('forecast'); return !v })}
-                    title="Walk through the chronological optimization timeline: Forecast → DA → Intraday"
+                    title="Show forecast uncertainty scenarios: how price and availability errors affect optimization"
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
                       showProcessView
                         ? 'bg-white text-[#313131] shadow-sm'
                         : 'text-gray-400 hover:text-gray-600'
                     }`}
                   >
-                    Process
+                    Scenario
                   </button>
                 </div>
                 {/* Fleet toggle is in Customer Profile sidebar — no chart toolbar pill */}
@@ -2255,6 +2257,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   isQH={isQH}
                   processResult={processResult}
                   uncertaintyScenario={uncertaintyScenario}
+                  uncertaintyPct={uncertaintyPct}
                   currentStage={processStage}
                   arrivalIdx={arrivalIdx}
                   departureIdx={departureIdx}
@@ -3015,7 +3018,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {/* ── Process view savings pill + avg ct/kWh labels ── */}
               {showProcessView && processResult && plotArea && (() => {
                 const pvError = processResult.availabilityDragCtKwh + processResult.priceForecastDragCtKwh
-                const isPerfect = uncertaintyScenario === 'perfect'
+                const isPerfect = uncertaintyPct === 0
                 // Forecast savings = what the forecast-locked slots actually cost vs baseline
                 const forecastSavings = isPerfect && sessionCost
                   ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt)
@@ -3267,25 +3270,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               <div className="flex items-center gap-4 text-[10px] text-gray-500">
                 <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-gray-400" /><span>DA (actual)</span></div>
                 <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-dashed border-amber-500" /><span>Forecast</span></div>
-                {uncertaintyScenario !== 'perfect' && (
-                  <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence band</span></div>
+                {uncertaintyPct > 0 && (
+                  <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence</span></div>
                 )}
                 <div className="flex items-center gap-1"><div className="w-2 h-2 bg-red-500 rounded-full" /><span>Baseline</span></div>
                 <div className="flex items-center gap-1"><div className="w-2 h-2 bg-blue-500 rounded-full" /><span>Smart charging</span></div>
               </div>
-              {/* Scenario selector only (no stage scrubber) */}
+              {/* Uncertainty slider */}
               <div className="flex items-center gap-3 py-2 bg-gray-50 rounded-lg px-3">
-                <div className="bg-gray-100 rounded-full p-0.5 flex">
-                  {([{ key: 'perfect' as const, label: 'Perfect' }, { key: 'realistic' as const, label: 'Realistic' }, { key: 'worst' as const, label: 'Worst case' }]).map(s => (
-                    <button key={s.key} onClick={() => setUncertaintyScenario(s.key)}
-                      className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
-                        uncertaintyScenario === s.key ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
-                      }`}
-                    >{s.label}</button>
-                  ))}
-                </div>
-                <span className="text-[10px] font-bold flex-shrink-0 text-amber-600">
-                  D-2 to D-1 12:00 — Forecast-based optimization
+                <span className="text-[10px] font-semibold text-gray-500 flex-shrink-0">Uncertainty</span>
+                <input
+                  type="range" min={0} max={100} step={5} value={uncertaintyPct}
+                  onChange={(e) => setUncertaintyPct(Number(e.target.value))}
+                  className="flex-1 h-1 accent-amber-500 cursor-pointer"
+                />
+                <span className="text-[10px] font-bold tabular-nums text-amber-600 w-8 text-right flex-shrink-0">{uncertaintyPct}%</span>
+                <div className="w-px h-4 bg-gray-200" />
+                <span className="text-[10px] text-gray-400 flex-shrink-0">
+                  {uncertaintyPct === 0 ? 'Perfect foresight' : `±${(uncertaintyPct * 0.02).toFixed(1)}h arrival · ±${(uncertaintyPct * 0.2).toFixed(0)} EUR/MWh price`}
                 </span>
               </div>
             </div>

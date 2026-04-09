@@ -31,6 +31,8 @@ interface Props {
   processResult: ProcessViewResult
   /** Current uncertainty scenario */
   uncertaintyScenario: UncertaintyScenario
+  /** Continuous uncertainty 0–100 (overrides scenario when > 0) */
+  uncertaintyPct: number
   /** Current process stage */
   currentStage: 'forecast' | 'da_nomination' | 'intraday_adjustment'
   /** Arrival/departure indices in mainChartData */
@@ -51,6 +53,7 @@ export const ProcessViewChart = ({
   isQH,
   processResult,
   uncertaintyScenario,
+  uncertaintyPct,
   currentStage,
   arrivalIdx,
   departureIdx,
@@ -58,6 +61,7 @@ export const ProcessViewChart = ({
   optimizedRanges,
 }: Props) => {
   const N = mainChartData.length
+  const hasUncertainty = uncertaintyPct > 0 || uncertaintyScenario !== 'perfect'
 
   // Enrich mainChartData with forecast price + confidence band
   const noiseConfig = uncertaintyScenario === 'perfect'
@@ -330,7 +334,7 @@ export const ProcessViewChart = ({
         )}
 
         {/* Forecast confidence band (forecast stage only) */}
-        {currentStage === 'forecast' && uncertaintyScenario !== 'perfect' && (
+        {currentStage === 'forecast' && hasUncertainty && (
           <Area yAxisId="left" type="monotone" dataKey="pvConfidenceBand"
             stroke="#D97706" strokeWidth={0.5} strokeOpacity={0.3}
             fill="url(#pvForecastBand)" fillOpacity={1}
@@ -368,7 +372,7 @@ export const ProcessViewChart = ({
         />
 
         {/* Forecast-locked dots — amber, on DA curve (DA stage only, shows initially nominated slots) */}
-        {currentStage === 'da_nomination' && uncertaintyScenario !== 'perfect' && (
+        {currentStage === 'da_nomination' && hasUncertainty && (
           <Line yAxisId="left" type="monotone" dataKey="pvForecastLockedPrice"
             stroke="#D97706" strokeWidth={0}
             dot={{ r: isQH ? 2 : 3.5, fill: '#D97706', stroke: '#fff', strokeWidth: isQH ? 0.5 : 1.5, fillOpacity: 0.7 }}
@@ -377,7 +381,7 @@ export const ProcessViewChart = ({
         )}
 
         {/* Forecast price curve — solid/prominent on forecast stage, dashed on DA stage */}
-        {(currentStage === 'forecast' || currentStage === 'da_nomination') && uncertaintyScenario !== 'perfect' && (
+        {(currentStage === 'forecast' || currentStage === 'da_nomination') && hasUncertainty && (
           <Line yAxisId="left" type="monotone" dataKey="pvForecastPrice"
             stroke="#D97706"
             strokeWidth={currentStage === 'forecast' ? 2 : 1.5}
