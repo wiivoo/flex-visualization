@@ -2247,22 +2247,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               style={{ cursor: isDragging ? 'ew-resize' : undefined }}>
               {showProcessView && processResult ? (
                 <ProcessViewChart
-                  prices={pvWindowPrices}
-                  intradayPrices={prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null}
-                  scenario={scenario}
-                  showFleet={showFleet}
-                  fleetConfig={fleetConfig}
+                  mainChartData={finalChartData}
+                  xTicks={xTicks}
+                  renderXTick={renderXTick}
+                  priceRange={priceRange}
+                  midnightIdxSet={midnightIdxSet}
                   isQH={isQH}
-                  chartWidth={plotArea?.width ?? 800}
-                  chartHeight={plotArea?.height ?? 350}
-                  hasIntraday={hasIntraday ?? false}
-                  dateSeed={prices.selectedDate}
                   processResult={processResult}
                   uncertaintyScenario={uncertaintyScenario}
-                  onUncertaintyChange={setUncertaintyScenario}
                   currentStage={processStage}
-                  onStageChange={setProcessStage}
-                  actualSavingsCtKwh={sessionCost ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt) : undefined}
+                  arrivalIdx={arrivalIdx}
+                  departureIdx={departureIdx}
+                  baselineRanges={baselineRanges}
+                  optimizedRanges={optimizedRanges}
                 />
               ) : (
               <ResponsiveContainer width="100%" height="100%">
