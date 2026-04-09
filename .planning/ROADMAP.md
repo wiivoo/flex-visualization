@@ -206,8 +206,8 @@ Verify `middleware.ts` matcher config covers `/api/prices/batch` — currently u
 **Plans:** 2 plans
 
 Plans:
-- [ ] 06-01-PLAN.md — Process view computation engine + ProcessViewChart + Step2 integration
-- [ ] 06-02-PLAN.md — WaterfallCard + fleet overlays + end-to-end verification
+- [x] 06-01-PLAN.md — Process view computation engine + ProcessViewChart + Step2 integration
+- [x] 06-02-PLAN.md — WaterfallCard + fleet overlays + end-to-end verification
 
 **Depends on:** Phase 5 (needs intraday convergence data for full experience; DA stages work standalone)
 
