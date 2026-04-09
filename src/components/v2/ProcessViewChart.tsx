@@ -364,55 +364,7 @@ export const ProcessViewChart = ({
           </ComposedChart>
         </ResponsiveContainer>
 
-        {/* Pills (arrival, departure, savings) are rendered by Step2 parent for consistent positioning */}
-      </div>
-
-      {/* Legend strip */}
-      <div className="flex items-center gap-4 px-2 text-[10px] text-gray-500">
-        <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-gray-400" /><span>DA</span></div>
-        <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-dashed border-amber-500" /><span>Forecast</span></div>
-        {currentStage === 'forecast' && (
-          <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence</span></div>
-        )}
-        <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-blue-500/10 rounded-sm" /><span>Nominated slots</span></div>
-      </div>
-
-      {/* Stage scrubber + scenario selector — below chart */}
-      <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg mt-2" tabIndex={0} onKeyDown={handleKeyDown}>
-        <div className="flex items-center gap-0 flex-1">
-          {PROCESS_STAGES.filter((_, i) => i < 2).map((stage, idx) => (
-            <div key={stage.key} className="flex items-center flex-1">
-              <button
-                onClick={() => goToStage(idx)}
-                className={`flex flex-col items-center gap-0.5 px-2 py-0.5 rounded transition-all ${
-                  idx === stageIndex ? 'bg-sky-100 text-sky-700'
-                    : idx < stageIndex ? 'text-sky-500'
-                    : 'text-gray-400 hover:text-gray-600'
-                }`}
-                title={stage.description}
-              >
-                <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all ${
-                  idx === stageIndex ? 'bg-sky-500 border-sky-500 scale-125'
-                    : idx < stageIndex ? 'bg-sky-300 border-sky-300'
-                    : 'bg-white border-gray-300'
-                }`} />
-                <span className="text-[10px] font-bold tabular-nums">{stage.label}</span>
-              </button>
-              {idx < 1 && <div className={`h-0.5 flex-1 rounded ${idx < stageIndex ? 'bg-sky-300' : 'bg-gray-200'}`} />}
-            </div>
-          ))}
-        </div>
-        <div className="w-px h-6 bg-gray-200" />
-        <div className="bg-gray-100 rounded-full p-0.5 flex">
-          {UNCERTAINTY_SCENARIOS.map(s => (
-            <button key={s.key} onClick={() => onUncertaintyChange(s.key)}
-              className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
-                uncertaintyScenario === s.key ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >{s.label}</button>
-          ))}
-        </div>
-        <span className={`text-[10px] font-bold ${stageBadge.className} flex-shrink-0`}>{stageBadge.text}</span>
+        {/* Pills, legend, and stage controls are rendered by Step2 parent */}
       </div>
     </div>
   )

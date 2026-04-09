@@ -3185,6 +3185,69 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
           {/* legend removed — colors explained via tooltip + drag handle labels */}
 
+          {/* Process view controls — below chart container */}
+          {showProcessView && processResult && (
+            <div className="px-3 pb-2 space-y-2">
+              {/* Legend */}
+              <div className="flex items-center gap-4 text-[10px] text-gray-500">
+                <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-gray-400" /><span>DA</span></div>
+                <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-dashed border-amber-500" /><span>Forecast</span></div>
+                {processStage === 'forecast' && (
+                  <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence</span></div>
+                )}
+                <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-blue-500/10 rounded-sm" /><span>Nominated slots</span></div>
+              </div>
+              {/* Stage scrubber + scenario selector */}
+              <div className="flex items-center gap-3 py-2 bg-gray-50 rounded-lg px-3">
+                <div className="flex items-center gap-0 flex-1">
+                  {(['forecast', 'da_nomination'] as const).map((stageKey, idx) => {
+                    const labels = ['Forecast', 'DA Nom.']
+                    const descs = ['D-2 to D-1 12:00 — estimate availability and energy need', 'D-1 12:00 — day-ahead auction prices revealed, nominate cheapest slots']
+                    const si = stageKey === processStage ? idx : ((['forecast', 'da_nomination'] as const).indexOf(processStage))
+                    const isActive = idx === si
+                    const isCompleted = idx < si
+                    return (
+                      <div key={stageKey} className="flex items-center flex-1">
+                        <button
+                          onClick={() => setProcessStage(stageKey)}
+                          className={`flex flex-col items-center gap-0.5 px-2 py-0.5 rounded transition-all ${
+                            isActive ? 'bg-sky-100 text-sky-700'
+                              : isCompleted ? 'text-sky-500'
+                              : 'text-gray-400 hover:text-gray-600'
+                          }`}
+                          title={descs[idx]}
+                        >
+                          <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all ${
+                            isActive ? 'bg-sky-500 border-sky-500 scale-125'
+                              : isCompleted ? 'bg-sky-300 border-sky-300'
+                              : 'bg-white border-gray-300'
+                          }`} />
+                          <span className="text-[10px] font-bold tabular-nums">{labels[idx]}</span>
+                        </button>
+                        {idx < 1 && <div className={`h-0.5 flex-1 rounded ${isCompleted ? 'bg-sky-300' : 'bg-gray-200'}`} />}
+                      </div>
+                    )
+                  })}
+                </div>
+                <div className="w-px h-6 bg-gray-200" />
+                <div className="bg-gray-100 rounded-full p-0.5 flex">
+                  {([{ key: 'perfect' as const, label: 'Perfect' }, { key: 'realistic' as const, label: 'Realistic' }, { key: 'worst' as const, label: 'Worst case' }]).map(s => (
+                    <button key={s.key} onClick={() => setUncertaintyScenario(s.key)}
+                      className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                        uncertaintyScenario === s.key ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >{s.label}</button>
+                  ))}
+                </div>
+                <span className={`text-[10px] font-bold flex-shrink-0 ${
+                  processStage === 'forecast' ? 'text-amber-600' : 'text-emerald-600'
+                }`}>
+                  {processStage === 'forecast' ? 'D-2 to D-1 12:00 — Forecast' : 'D-1 12:00 — DA Prices Revealed'}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Intraday convergence funnel timeline — shown when DA+ID active */}
           {showIntraday && funnel.hasFunnelData && (
             <div className="px-3 pb-2">
