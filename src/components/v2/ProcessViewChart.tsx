@@ -93,6 +93,18 @@ export const ProcessViewChart = ({
     }
   }, [uncertaintyScenario, forecastWindow, isQH, N])
 
+  // Uncertainty range for departure
+  const departureUncertainty = useMemo(() => {
+    if (uncertaintyScenario === 'perfect' || !forecastWindow || forecastWindow.depIdx < 0) return null
+    const varianceHours = UNCERTAINTY_CONFIG[uncertaintyScenario].departureVarianceHours
+    const slotsPerHour = isQH ? 4 : 1
+    const slots = varianceHours * slotsPerHour
+    return {
+      low: Math.max(0, forecastWindow.depIdx - slots),
+      high: Math.min(N - 1, forecastWindow.depIdx + slots),
+    }
+  }, [uncertaintyScenario, forecastWindow, isQH, N])
+
   // Forecast-nominated slot indices
   const forecastCheapestSet = useMemo(() => {
     return new Set(processResult.stages.forecast?.cheapestHours ?? [])
@@ -285,6 +297,21 @@ export const ProcessViewChart = ({
         {currentStage === 'forecast' && forecastWindow && forecastWindow.arrIdx >= 0 && forecastWindow.arrIdx !== arrivalIdx && (
           <ReferenceLine x={forecastWindow.arrIdx} yAxisId="left"
             stroke="#D97706" strokeWidth={1.5} strokeOpacity={0.6} strokeDasharray="4 4"
+          />
+        )}
+
+        {/* Forecast departure uncertainty band — amber zone around expected departure */}
+        {currentStage === 'forecast' && departureUncertainty && forecastWindow && forecastWindow.depIdx >= 0 && (
+          <ReferenceArea
+            x1={departureUncertainty.low} x2={departureUncertainty.high}
+            yAxisId="left" fill="#3B82F6" fillOpacity={0.06} stroke="none" ifOverflow="hidden"
+          />
+        )}
+
+        {/* Forecast departure line — dashed blue (where we expect departure) */}
+        {currentStage === 'forecast' && forecastWindow && forecastWindow.depIdx >= 0 && forecastWindow.depIdx !== departureIdx && (
+          <ReferenceLine x={forecastWindow.depIdx} yAxisId="left"
+            stroke="#2563EB" strokeWidth={1.5} strokeOpacity={0.5} strokeDasharray="4 4"
           />
         )}
 

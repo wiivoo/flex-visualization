@@ -3015,32 +3015,27 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {/* ── Process view savings pill + avg ct/kWh labels ── */}
               {showProcessView && processResult && plotArea && (() => {
                 const pvError = processResult.availabilityDragCtKwh + processResult.priceForecastDragCtKwh
-                // Perfect scenario: use sessionCost (identical to price view) to guarantee match
-                // Forecast/DA with uncertainty: use processResult decomposition
                 const isPerfect = uncertaintyScenario === 'perfect'
-                const pvSavings = isPerfect && sessionCost
+                // Forecast savings = what the forecast-locked slots actually cost vs baseline
+                const forecastSavings = isPerfect && sessionCost
                   ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt)
-                  : processStage === 'forecast'
-                    ? Math.max(0, processResult.perfectSavingsCtKwh - pvError)
-                    : processResult.perfectSavingsCtKwh
+                  : Math.max(0, processResult.perfectSavingsCtKwh - pvError)
+                const perfectSavings = isPerfect && sessionCost
+                  ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt)
+                  : processResult.perfectSavingsCtKwh
 
-                // Avg ct/kWh values for baseline and optimized pills (like price view)
+                // Avg ct/kWh for baseline and forecast-optimized
+                const forecastOptAvg = processResult.stages.forecast?.avgPriceCtKwh ?? 0
                 const bAvg = isPerfect && sessionCost ? sessionCost.baselineAvgCt
-                  : processStage === 'forecast'
-                    ? (processResult.stages.forecast?.avgPriceCtKwh ?? 0) + pvSavings // baseline ≈ forecast avg + savings
-                    : (processResult.stages.da_nomination?.avgPriceCtKwh ?? 0) + processResult.perfectSavingsCtKwh
+                  : forecastOptAvg + forecastSavings
                 const oAvg = isPerfect && sessionCost ? sessionCost.optimizedAvgCt
-                  : processStage === 'forecast'
-                    ? (processResult.stages.forecast?.avgPriceCtKwh ?? 0)
-                    : (processResult.stages.da_nomination?.avgPriceCtKwh ?? 0)
+                  : forecastOptAvg
 
                 const idxToPx = (idx: number) => plotArea.left + (idx / (N - 1)) * plotArea.width
                 const bCenter = baselineRanges.length > 0
                   ? baselineRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / baselineRanges.length
                   : idxToPx(arrivalIdx >= 0 ? arrivalIdx + 1 : 0)
-                const pvOptRanges = processStage === 'forecast'
-                  ? [...(processResult.stages.forecast?.cheapestHours ?? [])].map(idx => ({ x1: idx, x2: Math.min(idx + 1, N - 1) }))
-                  : optimizedRanges
+                const pvOptRanges = [...(processResult.stages.forecast?.cheapestHours ?? [])].map(idx => ({ x1: idx, x2: Math.min(idx + 1, N - 1) }))
                 const oCenter = pvOptRanges.length > 0
                   ? pvOptRanges.reduce((s, r) => s + (idxToPx(r.x1) + idxToPx(r.x2)) / 2, 0) / pvOptRanges.length
                   : idxToPx(Math.floor(N / 2))
@@ -3053,19 +3048,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
                 return (
                   <>
-                    {/* Top savings pill */}
+                    {/* Top savings pill — forecast savings + perfect comparison */}
                     <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
                       <div className="flex items-center gap-1.5 flex-nowrap">
                         <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
                           <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                            ▼ {pvSavings.toFixed(1)} ct/kWh
+                            ▼ {forecastSavings.toFixed(1)} ct/kWh
                           </span>
                           <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
-                            {processStage === 'forecast' ? 'forecast' : 'perfect'}
+                            forecast
                           </span>
-                          {processStage === 'da_nomination' && pvError > 0.01 && (
-                            <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-amber-600 ml-1.5">
-                              · DA error: −{pvError.toFixed(1)} ct/kWh
+                          {!isPerfect && pvError > 0.01 && (
+                            <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-gray-400 ml-1.5">
+                              · perfect: {perfectSavings.toFixed(1)} ct/kWh
                             </span>
                           )}
                         </div>
@@ -3270,47 +3265,16 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             <div className="px-3 pb-2 space-y-2">
               {/* Legend */}
               <div className="flex items-center gap-4 text-[10px] text-gray-500">
-                <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-gray-400" /><span>DA</span></div>
+                <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-gray-400" /><span>DA (actual)</span></div>
                 <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-dashed border-amber-500" /><span>Forecast</span></div>
-                {processStage === 'forecast' && (
-                  <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence</span></div>
+                {uncertaintyScenario !== 'perfect' && (
+                  <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence band</span></div>
                 )}
-                <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-blue-500/10 rounded-sm" /><span>Nominated slots</span></div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-red-500 rounded-full" /><span>Baseline</span></div>
+                <div className="flex items-center gap-1"><div className="w-2 h-2 bg-blue-500 rounded-full" /><span>Smart charging</span></div>
               </div>
-              {/* Stage scrubber + scenario selector */}
+              {/* Scenario selector only (no stage scrubber) */}
               <div className="flex items-center gap-3 py-2 bg-gray-50 rounded-lg px-3">
-                <div className="flex items-center gap-0 flex-1">
-                  {(['forecast', 'da_nomination'] as const).map((stageKey, idx) => {
-                    const labels = ['Forecast', 'DA Nom.']
-                    const descs = ['D-2 to D-1 12:00 — estimate availability and energy need', 'D-1 12:00 — day-ahead auction prices revealed, nominate cheapest slots']
-                    const stageIdx = processStage === 'forecast' ? 0 : 1
-                    const si = stageIdx
-                    const isActive = idx === si
-                    const isCompleted = idx < si
-                    return (
-                      <div key={stageKey} className="flex items-center flex-1">
-                        <button
-                          onClick={() => setProcessStage(stageKey)}
-                          className={`flex flex-col items-center gap-0.5 px-2 py-0.5 rounded transition-all ${
-                            isActive ? 'bg-sky-100 text-sky-700'
-                              : isCompleted ? 'text-sky-500'
-                              : 'text-gray-400 hover:text-gray-600'
-                          }`}
-                          title={descs[idx]}
-                        >
-                          <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all ${
-                            isActive ? 'bg-sky-500 border-sky-500 scale-125'
-                              : isCompleted ? 'bg-sky-300 border-sky-300'
-                              : 'bg-white border-gray-300'
-                          }`} />
-                          <span className="text-[10px] font-bold tabular-nums">{labels[idx]}</span>
-                        </button>
-                        {idx < 1 && <div className={`h-0.5 flex-1 rounded ${isCompleted ? 'bg-sky-300' : 'bg-gray-200'}`} />}
-                      </div>
-                    )
-                  })}
-                </div>
-                <div className="w-px h-6 bg-gray-200" />
                 <div className="bg-gray-100 rounded-full p-0.5 flex">
                   {([{ key: 'perfect' as const, label: 'Perfect' }, { key: 'realistic' as const, label: 'Realistic' }, { key: 'worst' as const, label: 'Worst case' }]).map(s => (
                     <button key={s.key} onClick={() => setUncertaintyScenario(s.key)}
@@ -3320,10 +3284,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     >{s.label}</button>
                   ))}
                 </div>
-                <span className={`text-[10px] font-bold flex-shrink-0 ${
-                  processStage === 'forecast' ? 'text-amber-600' : 'text-emerald-600'
-                }`}>
-                  {processStage === 'forecast' ? 'D-2 to D-1 12:00 — Forecast' : 'D-1 12:00 — DA Prices Revealed'}
+                <span className="text-[10px] font-bold flex-shrink-0 text-amber-600">
+                  D-2 to D-1 12:00 — Forecast-based optimization
                 </span>
               </div>
             </div>

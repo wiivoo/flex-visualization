@@ -58,8 +58,8 @@ export interface ProcessViewResult {
 /* ── Uncertainty Calibration ── */
 
 export const UNCERTAINTY_CONFIG = {
-  realistic: { daPriceNoiseEurMwh: 8, plugInVarianceHours: 1, intradaySpreadEurMwh: 3 },
-  worst: { daPriceNoiseEurMwh: 20, plugInVarianceHours: 2, intradaySpreadEurMwh: 10 },
+  realistic: { daPriceNoiseEurMwh: 8, plugInVarianceHours: 1, departureVarianceHours: 1, intradaySpreadEurMwh: 3 },
+  worst: { daPriceNoiseEurMwh: 20, plugInVarianceHours: 2, departureVarianceHours: 2, intradaySpreadEurMwh: 10 },
 } as const
 
 /* ── Seeded PRNG (multiply-with-carry) ── */
@@ -141,6 +141,32 @@ export function perturbWindow(
   }
 
   const newHour = Math.max(14, Math.min(23, hour + shiftHours))
+  return `${String(newHour).padStart(2, '0')}:00`
+}
+
+/**
+ * Perturb departure time.
+ * Perfect: unchanged. Realistic: +/-1h. Worst: -2h (car leaves early).
+ * Clamp to 4-12 range.
+ */
+export function perturbDeparture(
+  windowEnd: string,
+  scenario: UncertaintyScenario,
+  dateSeed: string,
+): string {
+  if (scenario === 'perfect') return windowEnd
+
+  const hour = parseInt(windowEnd.split(':')[0], 10)
+  const rng = createSeededRng(`${dateSeed}_departure_${scenario}`)
+
+  let shiftHours: number
+  if (scenario === 'worst') {
+    shiftHours = -2 // car leaves early in worst case
+  } else {
+    shiftHours = rng() > 0.5 ? 1 : -1
+  }
+
+  const newHour = Math.max(4, Math.min(12, hour + shiftHours))
   return `${String(newHour).padStart(2, '0')}:00`
 }
 
@@ -264,10 +290,12 @@ export function computeProcessViewResults(params: {
     return { stages: emptyStages, waterfall: [], fleetWaterfall: null, perfectSavingsCtKwh: 0, realizedSavingsCtKwh: 0, availabilityDragCtKwh: 0, priceForecastDragCtKwh: 0, intradayCorrectionCtKwh: 0 }
   }
 
-  // Perturbed values
+  // Perturbed values (arrival + departure + prices)
   const perturbedPrices = perturbPrices(prices, uncertaintyScenario, dateSeed)
   const perturbedWindowStart = perturbWindow(windowStart, uncertaintyScenario, dateSeed)
+  const perturbedWindowEnd = perturbDeparture(windowEnd, uncertaintyScenario, dateSeed)
   const perturbedStartH = parseInt(perturbedWindowStart.split(':')[0], 10)
+  const perturbedEndH = parseInt(perturbedWindowEnd.split(':')[0], 10)
 
   // Determine slots needed (QH-aware: if prices have minute data, use QH slots)
   const isQH = prices.some(p => (p.minute ?? 0) !== 0)
@@ -284,17 +312,17 @@ export function computeProcessViewResults(params: {
   const optimizedAvg = perfectBaseline ? perfectBaseline.optimizedAvgCt : perfectAvg
   const perfectSavingsCtKwh = Math.max(0, baselineAvg - optimizedAvg)
 
-  // Stage 1 — Forecast: perturbed prices + perturbed window
-  const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, endH, slotsNeeded)
+  // Stage 1 — Forecast: perturbed prices + perturbed window (arrival + departure)
+  const forecastCheapest = findCheapestHours(perturbedPrices, perturbedStartH, perturbedEndH, slotsNeeded)
   const forecastActualAvg = avgPrice(prices, forecastCheapest) // what those hours actually cost
   const forecastSavingsCtKwh = Math.max(0, baselineAvg - forecastActualAvg)
 
-  // Stage 2 — DA Nomination: real prices + perturbed window
-  const daCheapest = findCheapestHours(prices, perturbedStartH, endH, slotsNeeded)
+  // DA Nomination kept internally for error decomposition but not exposed as a UI stage
+  const daCheapest = findCheapestHours(prices, perturbedStartH, perturbedEndH, slotsNeeded)
   const daAvg = avgPrice(prices, daCheapest)
   const daSavingsCtKwh = Math.max(0, baselineAvg - daAvg)
 
-  // Stage 3 — Intraday: intraday prices + real window
+  // Intraday (kept for future use)
   let intradaySavingsCtKwh: number | null = null
   let intradayCheapest: number[] = []
   if (intradayPrices && intradayPrices.length > 0) {
@@ -307,14 +335,14 @@ export function computeProcessViewResults(params: {
   const stages: Record<ProcessStage, StageResult | null> = {
     forecast: {
       windowStart: perturbedWindowStart,
-      windowEnd,
+      windowEnd: perturbedWindowEnd,
       pricesUsed: perturbedPrices,
       avgPriceCtKwh: forecastActualAvg,
       cheapestHours: forecastCheapest,
     },
     da_nomination: {
       windowStart: perturbedWindowStart,
-      windowEnd,
+      windowEnd: perturbedWindowEnd,
       pricesUsed: prices,
       avgPriceCtKwh: daAvg,
       cheapestHours: daCheapest,
