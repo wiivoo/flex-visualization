@@ -187,8 +187,9 @@ function buildWaterfall(
   const toCtKwh = (eur: number) => energyKwh > 0 ? (eur / energyKwh) * 100 : 0
 
   const perfectCtKwh = toCtKwh(perfectSavingsEur)
-  const daErrorCtKwh = toCtKwh(perfectSavingsEur - daSavingsEur)
-  const availErrorCtKwh = toCtKwh(daSavingsEur - forecastSavingsEur)
+  // If perturbation accidentally improves on perfect, clamp to zero
+  const daErrorCtKwh = Math.max(0, toCtKwh(perfectSavingsEur - daSavingsEur))
+  const availErrorCtKwh = Math.max(0, toCtKwh(daSavingsEur - forecastSavingsEur))
   const idCostCtKwh = intradaySavingsEur !== null ? toCtKwh(forecastSavingsEur - intradaySavingsEur) : 0
 
   const realizedSavings = intradaySavingsEur ?? forecastSavingsEur
@@ -289,8 +290,21 @@ export function computeProcessViewResults(params: {
     } : null,
   }
 
-  // Waterfall computation
-  const energyKwh = perfectResult.energy_charged_kwh || 1 // avoid division by zero
+  // Waterfall computation — if no energy charged, return all-zero waterfall
+  if (perfectResult.energy_charged_kwh === 0) {
+    return {
+      stages,
+      waterfall: [],
+      fleetWaterfall: null,
+      perfectSavingsCtKwh: 0,
+      realizedSavingsCtKwh: 0,
+      daForecastDragCtKwh: 0,
+      availabilityDragCtKwh: 0,
+      intradayCorrectionCtKwh: 0,
+    }
+  }
+
+  const energyKwh = perfectResult.energy_charged_kwh
   const intradaySavingsEur = intradayResult ? intradayResult.savings_eur : null
 
   const { bars, perfectCtKwh, realizedCtKwh, daErrorCtKwh, availErrorCtKwh, idCostCtKwh } = buildWaterfall(
