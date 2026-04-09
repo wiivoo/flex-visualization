@@ -36,6 +36,7 @@ const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug
 
 export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate, colorFn, forecastAfter, colorLegend }: DateStripProps) {
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [hoveredDay, setHoveredDay] = useState<DailySummary | null>(null)
 
   const spreadColor = useMemo(() => makeSpreadColor(daily), [daily])
 
@@ -246,7 +247,7 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
         <div
           ref={scrollRef}
           className="flex-1 overflow-x-auto flex items-end gap-px"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none', overflowY: 'visible' }}
         >
           {sortedDays.map((day) => {
             const dt = new Date(day.date + 'T12:00:00Z')
@@ -267,8 +268,9 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
               <button
                 data-date={day.date}
                 onClick={() => onSelect(day.date)}
-                title={`${day.date} (${DAY_NAMES[dow]})${isForecast ? ' (forecast)' : ''}: Spread ${day.spread.toFixed(0)} EUR/MWh`}
-                className={`w-full flex flex-col items-center px-1 py-0.5 rounded-md transition-colors ${
+                onMouseEnter={() => setHoveredDay(day)}
+                onMouseLeave={() => setHoveredDay(null)}
+                className={`relative w-full flex flex-col items-center px-1 py-0.5 rounded-md transition-colors ${
                   isSelected
                     ? 'bg-[#EA1C0A]/10 ring-1 ring-[#EA1C0A]'
                     : isWeekend
@@ -291,6 +293,42 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
                   {dayNum}
                 </span>
                 <div className={`w-3.5 h-[3px] rounded-full mt-0.5 ${colorFn ? colorFn(day.date) : spreadColor(day.spread)}`} />
+                {/* Hover tooltip */}
+                {hoveredDay?.date === day.date && (
+                  <div className="absolute left-1/2 top-full mt-1 -translate-x-1/2 z-50 pointer-events-none">
+                    <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[11px] tabular-nums whitespace-nowrap">
+                      <p className="text-gray-500 text-[10px] font-medium mb-1">{day.date} ({DAY_NAMES[dow]}){isForecast ? ' — forecast' : ''}</p>
+                      <div className="space-y-0.5">
+                        <div className="flex justify-between gap-4">
+                          <span className="text-gray-400">24h Spread</span>
+                          <span className="font-semibold text-gray-700">{(day.spread / 10).toFixed(1)} ct/kWh</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <span className="text-gray-400">Window Spread</span>
+                          <span className="font-semibold text-gray-700">{(day.nightSpread / 10).toFixed(1)} ct/kWh</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <span className="text-gray-400">Avg. Price</span>
+                          <span className="font-semibold text-gray-700">{day.avgPrice.toFixed(1)} ct/kWh</span>
+                        </div>
+                        <div className="flex justify-between gap-4 border-t border-gray-100 pt-0.5 mt-0.5">
+                          <span className="text-gray-400">Day (6–22h)</span>
+                          <span className="font-medium text-gray-600">{(day.dayAvgPrice / 10).toFixed(1)} ct</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                          <span className="text-gray-400">Night (22–6h)</span>
+                          <span className="font-medium text-gray-600">{(day.nightAvgPrice / 10).toFixed(1)} ct</span>
+                        </div>
+                        {day.negativeHours > 0 && (
+                          <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">Negative hours</span>
+                            <span className="font-medium text-red-500">{day.negativeHours}h</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </button>
               </div>
             )
