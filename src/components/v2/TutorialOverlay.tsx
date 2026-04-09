@@ -46,7 +46,7 @@ const SINGLE_STEPS: TutorialStep[] = [
     title: 'Find the Cheapest Hours',
     description: 'Real EPEX Spot day-ahead prices.',
     bullets: [
-      'Red dots = immediate charging ("charge now")',
+      'Red dots = baseline (immediate charging at plug-in)',
       'Blue dots = cheapest hours (smart charging)',
       'Drag the arrival/departure pills to adjust your window',
       'Green pill at top shows savings in ct/kWh',

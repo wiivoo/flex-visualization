@@ -2319,7 +2319,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           {d.baselinePrice !== null && (
                             <p className="text-red-600 text-xs mt-1 flex items-center gap-1">
                               <span className="w-2 h-2 bg-red-500 rounded-full inline-block flex-shrink-0" style={isV2G ? { opacity: 0.4 } : undefined} />
-                              {isV2G ? 'Baseline — unmanaged charge at plug-in time' : 'Charge now — starts immediately at plug-in'}
+                              {isV2G ? 'Baseline — unmanaged charge at plug-in time' : 'Baseline — starts immediately at plug-in'}
                             </p>
                           )}
                           {d.netChargePrice !== null && (
@@ -2816,7 +2816,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <div className="absolute pointer-events-none transition-[left,top] duration-100 ease-out z-10"
                       style={{ left: bCenter, top: bYAdj, transform: 'translateX(-50%)', opacity: isV2G ? 0.55 : 1 }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">{isV2G ? 'Baseline' : 'Charge now'}</span>
+                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Baseline</span>
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
@@ -3013,13 +3013,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
               {/* ── Process view savings pill ── */}
               {showProcessView && processResult && plotArea && (() => {
-                // Use forecast-based savings on forecast stage, perfect savings on DA stage
-                const forecastAvg = processResult.stages.forecast?.avgPriceCtKwh ?? 0
-                const baselineAvg = sessionCost ? sessionCost.baselineAvgCt : (processResult.perfectSavingsCtKwh + forecastAvg)
-                const pvSavings = processStage === 'forecast'
-                  ? Math.max(0, baselineAvg - forecastAvg)
-                  : processResult.perfectSavingsCtKwh
+                // Both stages use processResult as single source of truth
                 const pvError = processResult.daForecastDragCtKwh + processResult.availabilityDragCtKwh
+                // Forecast stage: perfect savings minus forecast error (what forecast achieves)
+                // DA stage: perfect savings (real optimization)
+                // Perfect scenario: pvError=0, so both stages show the same value
+                const pvSavings = processStage === 'forecast'
+                  ? Math.max(0, processResult.perfectSavingsCtKwh - pvError)
+                  : processResult.perfectSavingsCtKwh
                 return (
                   <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
                     <div className="flex items-center gap-1.5 flex-nowrap">
@@ -3760,7 +3761,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               {/* Baseline = first N slots */}
               <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
                 <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider mb-2">
-                  Charge now · first {slotLabel}
+                  Baseline · first {slotLabel}
                 </p>
                 <div className="space-y-0.5 max-h-[200px] overflow-y-auto">
                   {baselineSlots.map((p: HourlyPrice, i: number) => (
