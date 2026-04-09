@@ -1,16 +1,17 @@
 'use client'
 
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState, useRef, useEffect } from 'react'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea,
+  ResponsiveContainer, ReferenceArea, ReferenceLine,
 } from 'recharts'
 import type { HourlyPrice, ChargingScenario } from '@/lib/v2-config'
 import {
   PROCESS_STAGES, UNCERTAINTY_SCENARIOS, UNCERTAINTY_CONFIG,
-  perturbPrices,
   type ProcessStage, type UncertaintyScenario, type ProcessViewResult,
 } from '@/lib/process-view'
+
+const CHART_MARGIN = { top: 42, right: 30, bottom: 25, left: 20 }
 
 /* ── Props ── */
 
@@ -36,11 +37,14 @@ interface Props {
 
 interface ChartDatum {
   idx: number
+  hour: number
+  minute: number
+  date: string
   label: string
   daPrice: number
   forecastPrice: number | null
-  confidenceBand: [number, number] | null  // [lower, upper] for Recharts range Area
-  isCharging: boolean  // selected for charging at current stage
+  confidenceBand: [number, number] | null
+  isCharging: boolean
 }
 
 function buildChartData(
@@ -48,25 +52,23 @@ function buildChartData(
   result: ProcessViewResult,
   activeStage: ProcessStage,
   uncertaintyScenario: UncertaintyScenario,
-  dateSeed: string,
 ): ChartDatum[] {
   const stageResult = result.stages[activeStage]
   const cheapestSet = stageResult ? new Set(stageResult.cheapestHours) : new Set<number>()
-
-  // Generate forecast prices + confidence band
   const forecastPrices = result.stages.forecast?.pricesUsed ?? null
   const noiseConfig = uncertaintyScenario === 'perfect'
     ? { daPriceNoiseEurMwh: 0 }
     : UNCERTAINTY_CONFIG[uncertaintyScenario]
-
-  // Band: use 1.5x noise as confidence interval width
-  const bandWidth = noiseConfig.daPriceNoiseEurMwh * 1.5 / 10  // convert to ct/kWh
+  const bandWidth = noiseConfig.daPriceNoiseEurMwh * 1.5 / 10
 
   return prices.map((p, i) => {
     const hourLabel = `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}`
 
     const datum: ChartDatum = {
       idx: i,
+      hour: p.hour,
+      minute: p.minute ?? 0,
+      date: p.date,
       label: hourLabel,
       daPrice: p.priceCtKwh,
       forecastPrice: null,
@@ -74,20 +76,13 @@ function buildChartData(
       isCharging: cheapestSet.has(i),
     }
 
-    // Forecast stage: show forecast curve + confidence band
-    if (activeStage === 'forecast' && forecastPrices) {
+    if ((activeStage === 'forecast' || activeStage === 'da_nomination') && forecastPrices) {
       const fp = forecastPrices[i]
       if (fp) {
         datum.forecastPrice = fp.priceCtKwh
-        datum.confidenceBand = [Math.max(0, fp.priceCtKwh - bandWidth), fp.priceCtKwh + bandWidth]
-      }
-    }
-
-    // DA stage: show forecast as reference, DA is the main curve
-    if (activeStage === 'da_nomination' && forecastPrices) {
-      const fp = forecastPrices[i]
-      if (fp) {
-        datum.forecastPrice = fp.priceCtKwh
+        if (activeStage === 'forecast') {
+          datum.confidenceBand = [Math.max(0, fp.priceCtKwh - bandWidth), fp.priceCtKwh + bandWidth]
+        }
       }
     }
 
@@ -99,9 +94,9 @@ function buildChartData(
 
 export const ProcessViewChart = ({
   prices,
+  scenario,
   isQH,
   hasIntraday,
-  dateSeed,
   processResult,
   uncertaintyScenario,
   onUncertaintyChange,
@@ -130,11 +125,79 @@ export const ProcessViewChart = ({
   }, [stageIndex, hasIntraday, onStageChange])
 
   const chartData = useMemo(
-    () => buildChartData(prices, processResult, currentStage, uncertaintyScenario, dateSeed),
-    [prices, processResult, currentStage, uncertaintyScenario, dateSeed],
+    () => buildChartData(prices, processResult, currentStage, uncertaintyScenario),
+    [prices, processResult, currentStage, uncertaintyScenario],
   )
 
-  // Price range for Y axis
+  const N = chartData.length
+
+  // Arrival/departure indices — same logic as main chart
+  const arrivalIdx = useMemo(() => {
+    const firstDate = prices[0]?.date
+    return chartData.findIndex(d => d.date === firstDate && d.hour === scenario.plugInTime)
+  }, [chartData, prices, scenario.plugInTime])
+
+  const departureIdx = useMemo(() => {
+    const lastDate = prices[prices.length - 1]?.date
+    // Departure is on the next day typically
+    const depDate = chartData.find(d => d.date !== prices[0]?.date)?.date ?? lastDate
+    return chartData.findIndex(d => d.date === depDate && d.hour === scenario.departureTime)
+  }, [chartData, prices, scenario.departureTime])
+
+  const arrivalLabel = `${String(scenario.plugInTime).padStart(2, '0')}:00`
+  const departureLabel = `${String(scenario.departureTime).padStart(2, '0')}:00`
+
+  // Midnight boundaries
+  const midnightIdxSet = useMemo(() => {
+    const set = new Set<number>()
+    for (let i = 1; i < chartData.length; i++) {
+      if (chartData[i].date !== chartData[i - 1].date) set.add(i)
+    }
+    return set
+  }, [chartData])
+
+  // X axis ticks — match main chart pattern
+  const labelInterval = isQH ? 3 : 2
+  const xTicks = useMemo(() => {
+    return chartData
+      .filter(d => d.minute === 0 && (midnightIdxSet.has(d.idx) || d.hour % labelInterval === 0))
+      .map(d => d.idx)
+  }, [chartData, midnightIdxSet, labelInterval])
+
+  const renderXTick = useCallback((props: { x: number; y: number; payload: { value: number } }) => {
+    const { x, y, payload } = props
+    const pt = chartData[payload.value]
+    if (!pt) return <g />
+    const isDateBoundary = midnightIdxSet.has(pt.idx)
+    let isNearBoundary = false
+    if (!isDateBoundary && pt.hour % labelInterval === 0) {
+      const step = isQH ? 4 : 1
+      for (const midIdx of midnightIdxSet) {
+        if (Math.abs(pt.idx - midIdx) < step * labelInterval) { isNearBoundary = true; break }
+      }
+    }
+    const showLabel = pt.hour % labelInterval === 0 && !isDateBoundary && !isNearBoundary
+    const fontSize = labelInterval >= 6 ? 10 : 12
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <line x1={0} y1={0} x2={0} y2={isDateBoundary ? 8 : 6} stroke={isDateBoundary ? '#6B7280' : '#D1D5DB'} strokeWidth={isDateBoundary ? 1.5 : 1} />
+        {showLabel && (
+          <text x={0} y={0} dy={18} textAnchor="middle" fill="#6B7280" fontSize={fontSize} fontWeight={500}>
+            {`${String(pt.hour).padStart(2, '0')}:00`}
+          </text>
+        )}
+        {isDateBoundary && (
+          <>
+            <text x={0} y={0} dy={20} textAnchor="middle" fill="#374151" fontSize={fontSize} fontWeight={700}>
+              00:00
+            </text>
+          </>
+        )}
+      </g>
+    )
+  }, [chartData, midnightIdxSet, labelInterval, isQH])
+
+  // Price range
   const priceRange = useMemo(() => {
     let min = Infinity, max = -Infinity
     for (const d of chartData) {
@@ -153,17 +216,6 @@ export const ProcessViewChart = ({
     return { min: Math.floor(min - pad), max: Math.ceil(max + pad) }
   }, [chartData])
 
-  // Charging window indices for grey overlay
-  const windowInfo = useMemo(() => {
-    const stageResult = processResult.stages[currentStage]
-    if (!stageResult) return null
-    const startH = parseInt(stageResult.windowStart.split(':')[0], 10)
-    const endH = parseInt(stageResult.windowEnd.split(':')[0], 10)
-    const startIdx = prices.findIndex(p => p.hour === startH)
-    const endIdx = prices.findIndex(p => p.hour === endH)
-    return { startIdx: startIdx >= 0 ? startIdx : 0, endIdx: endIdx >= 0 ? endIdx : prices.length - 1 }
-  }, [processResult, currentStage, prices])
-
   // Stage badge
   const stageBadge = useMemo(() => {
     switch (currentStage) {
@@ -173,8 +225,34 @@ export const ProcessViewChart = ({
     }
   }, [currentStage])
 
-  // X axis tick interval
-  const tickInterval = isQH ? 7 : 1
+  // Plot area measurement for overlays
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
+
+  useEffect(() => {
+    if (!containerRef.current) return
+    const svg = containerRef.current.querySelector('.recharts-wrapper svg')
+    const plotBg = containerRef.current.querySelector('.recharts-cartesian-grid')
+    if (svg && plotBg) {
+      const svgRect = svg.getBoundingClientRect()
+      const plotRect = plotBg.getBoundingClientRect()
+      setPlotArea({
+        left: plotRect.left - svgRect.left,
+        width: plotRect.width,
+        top: plotRect.top - svgRect.top,
+        height: plotRect.height,
+      })
+    }
+  }, [chartData, N])
+
+  // Compute pixel position for an index
+  const idxToPx = (idx: number) => {
+    if (!plotArea || N <= 1) return 0
+    return plotArea.left + (idx / (N - 1)) * plotArea.width
+  }
+
+  const stageResult = processResult.stages[currentStage]
+  const forecastSavings = processResult.perfectSavingsCtKwh - processResult.daForecastDragCtKwh - processResult.availabilityDragCtKwh
 
   if (prices.length === 0) {
     return (
@@ -184,79 +262,50 @@ export const ProcessViewChart = ({
     )
   }
 
-  // Summary values for current stage
-  const stageResult = processResult.stages[currentStage]
-  const forecastSavings = processResult.stages.forecast
-    ? processResult.perfectSavingsCtKwh - processResult.daForecastDragCtKwh - processResult.availabilityDragCtKwh
-    : 0
-
   return (
-    <div className="space-y-2">
+    <div className="space-y-0">
       {/* Stage scrubber + scenario selector in one row */}
-      <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg" tabIndex={0} onKeyDown={handleKeyDown}>
-        {/* Stage dots */}
+      <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg mb-1" tabIndex={0} onKeyDown={handleKeyDown}>
         <div className="flex items-center gap-0 flex-1">
-          {PROCESS_STAGES.filter((_, i) => i < 2).map((stage, idx) => {
-            return (
-              <div key={stage.key} className="flex items-center flex-1">
-                <button
-                  onClick={() => goToStage(idx)}
-                  className={`flex flex-col items-center gap-0.5 px-2 py-0.5 rounded transition-all ${
-                    idx === stageIndex
-                      ? 'bg-sky-100 text-sky-700'
-                      : idx < stageIndex
-                      ? 'text-sky-500'
-                      : 'text-gray-400 hover:text-gray-600'
-                  }`}
-                  title={stage.description}
-                >
-                  <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all ${
-                    idx === stageIndex
-                      ? 'bg-sky-500 border-sky-500 scale-125'
-                      : idx < stageIndex
-                      ? 'bg-sky-300 border-sky-300'
-                      : 'bg-white border-gray-300'
-                  }`} />
-                  <span className="text-[10px] font-bold tabular-nums">{stage.label}</span>
-                </button>
-                {idx < 1 && (
-                  <div className={`h-0.5 flex-1 rounded ${
-                    idx < stageIndex ? 'bg-sky-300' : 'bg-gray-200'
-                  }`} />
-                )}
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Divider */}
-        <div className="w-px h-6 bg-gray-200" />
-
-        {/* Scenario selector */}
-        <div className="bg-gray-100 rounded-full p-0.5 flex">
-          {UNCERTAINTY_SCENARIOS.map(s => (
-            <button
-              key={s.key}
-              onClick={() => onUncertaintyChange(s.key)}
-              className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
-                uncertaintyScenario === s.key
-                  ? 'bg-white text-[#313131] shadow-sm'
-                  : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              {s.label}
-            </button>
+          {PROCESS_STAGES.filter((_, i) => i < 2).map((stage, idx) => (
+            <div key={stage.key} className="flex items-center flex-1">
+              <button
+                onClick={() => goToStage(idx)}
+                className={`flex flex-col items-center gap-0.5 px-2 py-0.5 rounded transition-all ${
+                  idx === stageIndex ? 'bg-sky-100 text-sky-700'
+                    : idx < stageIndex ? 'text-sky-500'
+                    : 'text-gray-400 hover:text-gray-600'
+                }`}
+                title={stage.description}
+              >
+                <div className={`w-2.5 h-2.5 rounded-full border-2 transition-all ${
+                  idx === stageIndex ? 'bg-sky-500 border-sky-500 scale-125'
+                    : idx < stageIndex ? 'bg-sky-300 border-sky-300'
+                    : 'bg-white border-gray-300'
+                }`} />
+                <span className="text-[10px] font-bold tabular-nums">{stage.label}</span>
+              </button>
+              {idx < 1 && <div className={`h-0.5 flex-1 rounded ${idx < stageIndex ? 'bg-sky-300' : 'bg-gray-200'}`} />}
+            </div>
           ))}
         </div>
-
-        {/* Stage badge */}
+        <div className="w-px h-6 bg-gray-200" />
+        <div className="bg-gray-100 rounded-full p-0.5 flex">
+          {UNCERTAINTY_SCENARIOS.map(s => (
+            <button key={s.key} onClick={() => onUncertaintyChange(s.key)}
+              className={`text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors ${
+                uncertaintyScenario === s.key ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >{s.label}</button>
+          ))}
+        </div>
         <span className={`text-[10px] font-bold ${stageBadge.className} flex-shrink-0`}>{stageBadge.text}</span>
       </div>
 
-      {/* Recharts chart — same style as main price chart */}
-      <div style={{ height: 350 }}>
+      {/* Chart — matching main chart layout */}
+      <div className="relative" style={{ height: 400 }} ref={containerRef}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 10, right: 10, bottom: 5, left: 0 }}>
+          <ComposedChart data={chartData} margin={CHART_MARGIN}>
             <defs>
               <linearGradient id="pvForecastBand" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#F59E0B" stopOpacity={0.15} />
@@ -268,21 +317,27 @@ export const ProcessViewChart = ({
               </linearGradient>
             </defs>
 
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E5E7EB" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+
             <XAxis
-              dataKey="label"
-              tick={{ fontSize: 10 }}
+              dataKey="idx" type="number"
+              domain={[0, Math.max(N - 1, 1)]}
+              ticks={xTicks}
+              tick={renderXTick as never}
               tickLine={false}
-              axisLine={{ stroke: '#E5E7EB' }}
-              interval={tickInterval}
+              stroke="#9CA3AF"
+              interval={0}
+              height={midnightIdxSet.size > 0 ? 48 : 32}
+              allowDecimals={false}
             />
             <YAxis
               yAxisId="left"
-              tick={{ fontSize: 10 }}
-              tickLine={false}
-              axisLine={false}
+              tick={{ fontSize: 11, fontWeight: 500 }}
+              stroke="#9CA3AF"
+              width={35}
               domain={[priceRange.min, priceRange.max]}
-              label={{ value: 'ct/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }}
+              allowDataOverflow
+              allowDecimals={false}
             />
 
             <Tooltip
@@ -297,55 +352,39 @@ export const ProcessViewChart = ({
               }) as never}
             />
 
-            {/* Grey outside-window overlay: before arrival */}
-            {windowInfo && windowInfo.startIdx > 0 && (
-              <ReferenceArea
-                x1={0} x2={windowInfo.startIdx}
-                yAxisId="left" fill="#94A3B8" fillOpacity={0.08} stroke="none"
-              />
+            {/* Grey outside charging window */}
+            {arrivalIdx > 0 && (
+              <ReferenceArea x1={0} x2={arrivalIdx} yAxisId="left" fill="#94A3B8" fillOpacity={0.10} stroke="none" />
             )}
-            {/* Grey outside-window overlay: after departure */}
-            {windowInfo && windowInfo.endIdx < chartData.length - 1 && (
-              <ReferenceArea
-                x1={windowInfo.endIdx} x2={chartData.length - 1}
-                yAxisId="left" fill="#94A3B8" fillOpacity={0.08} stroke="none"
-              />
+            {departureIdx >= 0 && departureIdx < N - 1 && (
+              <ReferenceArea x1={departureIdx} x2={N - 1} yAxisId="left" fill="#94A3B8" fillOpacity={0.10} stroke="none" />
             )}
 
-            {/* Charging slot highlights — green bands for selected cheapest hours */}
+            {/* Charging slot highlights — green bands for nominated cheapest hours */}
             {stageResult && stageResult.cheapestHours.map(idx => (
               <ReferenceArea
                 key={`charge-${idx}`}
-                x1={idx} x2={Math.min(idx + (isQH ? 1 : 1), chartData.length - 1)}
-                yAxisId="left" fill="#10B981" fillOpacity={0.12} stroke="none"
+                x1={idx} x2={Math.min(idx + 1, N - 1)}
+                yAxisId="left" fill="#3B82F6" fillOpacity={0.08} stroke="none"
               />
             ))}
 
-            {/* Forecast stage: confidence band as range area [lower, upper] */}
+            {/* Forecast confidence band */}
             {currentStage === 'forecast' && (
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="confidenceBand"
-                stroke="#D97706"
-                strokeWidth={0.5}
-                strokeOpacity={0.3}
-                fill="url(#pvForecastBand)"
-                fillOpacity={1}
-                isAnimationActive={false}
-                connectNulls={false}
+              <Area yAxisId="left" type="monotone" dataKey="confidenceBand"
+                stroke="#D97706" strokeWidth={0.5} strokeOpacity={0.3}
+                fill="url(#pvForecastBand)" fillOpacity={1}
+                isAnimationActive={false} connectNulls={false}
               />
             )}
 
-            {/* DA price curve — solid grey (dimmed at forecast stage) */}
-            <Area
-              yAxisId="left" type="monotone" dataKey="daPrice"
+            {/* DA price curve */}
+            <Area yAxisId="left" type="monotone" dataKey="daPrice"
               fill="url(#pvDaGrad)" stroke="none"
               fillOpacity={currentStage === 'forecast' ? 0.3 : 1}
               isAnimationActive={false}
             />
-            <Line
-              yAxisId="left" type="monotone" dataKey="daPrice"
+            <Line yAxisId="left" type="monotone" dataKey="daPrice"
               stroke="#94A3B8" strokeWidth={1.5}
               strokeOpacity={currentStage === 'forecast' ? 0.3 : 1}
               dot={false} isAnimationActive={false}
@@ -353,71 +392,85 @@ export const ProcessViewChart = ({
 
             {/* Forecast price curve — dashed amber */}
             {(currentStage === 'forecast' || currentStage === 'da_nomination') && (
-              <Line
-                yAxisId="left" type="monotone" dataKey="forecastPrice"
-                stroke="#D97706" strokeWidth={1.5}
-                strokeDasharray="6 3"
-                dot={false} isAnimationActive={false}
-                connectNulls={false}
+              <Line yAxisId="left" type="monotone" dataKey="forecastPrice"
+                stroke="#D97706" strokeWidth={1.5} strokeDasharray="6 3"
+                dot={false} isAnimationActive={false} connectNulls={false}
+              />
+            )}
+
+            {/* Arrival line */}
+            {arrivalIdx >= 0 && (
+              <ReferenceLine x={arrivalIdx} yAxisId="left"
+                stroke="#EA1C0A" strokeWidth={1.5} strokeOpacity={0.6}
+              />
+            )}
+            {/* Departure line */}
+            {departureIdx >= 0 && (
+              <ReferenceLine x={departureIdx} yAxisId="left"
+                stroke="#2563EB" strokeWidth={1.5} strokeOpacity={0.6}
               />
             )}
           </ComposedChart>
         </ResponsiveContainer>
-      </div>
 
-      {/* Stage summary strip */}
-      <div className="flex items-center gap-4 px-2 text-[10px]">
-        {/* Legend */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1">
-            <div className="w-4 border-t-[1.5px] border-gray-400" />
-            <span className="text-gray-500">DA</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-4 border-t-[1.5px] border-dashed border-amber-500" />
-            <span className="text-gray-500">Forecast</span>
-          </div>
-          {currentStage === 'forecast' && (
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" />
-              <span className="text-gray-500">Confidence</span>
-            </div>
-          )}
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-2.5 bg-emerald-500/15 rounded-sm" />
-            <span className="text-gray-500">Charging</span>
-          </div>
-        </div>
-
-        <div className="flex-1" />
-
-        {/* Savings values */}
-        {currentStage === 'forecast' && (
-          <div className="flex items-center gap-1.5">
-            <span className="font-bold text-gray-400">Forecast savings:</span>
-            <span className="text-[11px] font-bold tabular-nums text-amber-600">
-              {forecastSavings.toFixed(2)} ct/kWh
+        {/* Arrival label — positioned as HTML overlay */}
+        {arrivalIdx >= 0 && plotArea && (
+          <div className="absolute pointer-events-none z-10"
+            style={{ left: idxToPx(arrivalIdx), top: 4, transform: 'translateX(-50%)' }}>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border text-[#EA1C0A] bg-white/95 border-red-200">
+              Plug-in {arrivalLabel}
             </span>
           </div>
         )}
-        {currentStage === 'da_nomination' && (
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-gray-400">Perfect:</span>
-              <span className="text-[11px] font-bold tabular-nums text-emerald-600">{processResult.perfectSavingsCtKwh.toFixed(2)}</span>
-            </div>
-            {processResult.daForecastDragCtKwh > 0.01 && (
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-gray-400">DA Error:</span>
-                <span className="text-[11px] font-bold tabular-nums text-red-500">-{processResult.daForecastDragCtKwh.toFixed(2)}</span>
-              </div>
-            )}
-            <div className="flex items-center gap-1.5">
-              <span className="font-bold text-gray-400">Realized:</span>
-              <span className="text-[11px] font-bold tabular-nums text-emerald-600">{processResult.realizedSavingsCtKwh.toFixed(2)} ct/kWh</span>
-            </div>
+
+        {/* Departure label */}
+        {departureIdx >= 0 && plotArea && (
+          <div className="absolute pointer-events-none z-10"
+            style={{ left: idxToPx(departureIdx), top: 4, transform: 'translateX(-50%)' }}>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shadow-sm border text-blue-600 bg-white/95 border-blue-200">
+              Departure {departureLabel}
+            </span>
           </div>
         )}
+
+        {/* Savings pill — top center */}
+        {plotArea && (
+          <div className="absolute pointer-events-none z-10" style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
+            {currentStage === 'forecast' && forecastSavings > 0 && (
+              <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-amber-50/80 border-amber-300/50">
+                <span className="text-[11px] font-bold tabular-nums text-amber-700">
+                  Forecast: ▼ {forecastSavings.toFixed(1)} ct/kWh
+                </span>
+              </div>
+            )}
+            {currentStage === 'da_nomination' && processResult.perfectSavingsCtKwh > 0 && (
+              <div className="flex items-center gap-1.5">
+                <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50">
+                  <span className="text-[11px] font-bold tabular-nums text-emerald-700">
+                    ▼ {processResult.realizedSavingsCtKwh.toFixed(1)} ct/kWh realized
+                  </span>
+                </div>
+                {processResult.daForecastDragCtKwh > 0.01 && (
+                  <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm bg-red-50/80 border-red-300/50">
+                    <span className="text-[10px] font-bold tabular-nums text-red-600">
+                      DA Error: -{processResult.daForecastDragCtKwh.toFixed(2)} ct
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Legend strip */}
+      <div className="flex items-center gap-4 px-2 text-[10px] text-gray-500">
+        <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-gray-400" /><span>DA</span></div>
+        <div className="flex items-center gap-1"><div className="w-4 border-t-[1.5px] border-dashed border-amber-500" /><span>Forecast</span></div>
+        {currentStage === 'forecast' && (
+          <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-amber-500/15 rounded-sm" /><span>Confidence</span></div>
+        )}
+        <div className="flex items-center gap-1"><div className="w-3 h-2.5 bg-blue-500/10 rounded-sm" /><span>Nominated slots</span></div>
       </div>
     </div>
   )
