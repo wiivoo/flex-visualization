@@ -90,19 +90,18 @@ export function SensitivityCurves({ series }: Props) {
   const { pinned } = series
 
   return (
-    <div className="space-y-4">
-      <div className="px-3 py-2.5 rounded-lg bg-gray-50 border border-gray-200">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Pinned defaults</div>
-        <div className="text-[11px] text-gray-700 mt-0.5 tabular-nums">
-          {pinned.yearlyMileageKm.toLocaleString()} km/yr · plug-in {String(pinned.plugInTime).padStart(2, '0')}:00 ·{' '}
-          {pinned.windowLengthHours}h window · {pinned.chargePowerKw} kW · {pinned.plugInsPerWeek}× / week
+    <Card className="overflow-hidden shadow-sm border-gray-200/80">
+      <CardHeader className="pb-3 border-b border-gray-100">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base font-bold text-[#313131]">Sensitivity — which lever moves savings most</CardTitle>
+          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">EUR/yr per parameter</span>
         </div>
-        <div className="text-[10px] text-gray-400 mt-1 italic">
-          Each chart varies one parameter; the others stay fixed at the values above. Red dot marks the pinned value.
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <p className="text-[11px] text-gray-500 mt-1">
+          Each chart varies one parameter; the others stay pinned. Red dot marks the current value from the controls above. The bigger the slope, the bigger the lever.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <SensitivityChart
           title="Mileage"
           subtitle="How yearly savings scale with annual driving distance"
@@ -135,7 +134,8 @@ export function SensitivityCurves({ series }: Props) {
           xLabel="kW"
           formatX={(v) => `${v}`}
         />
-      </div>
-    </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
