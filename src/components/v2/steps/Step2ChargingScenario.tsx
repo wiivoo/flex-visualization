@@ -2913,7 +2913,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           {showIntraday && !showFunnel && hasIntraday && intradayUpliftEur > 0 && (
                             <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 bg-sky-50/80 border-sky-300/50 flex-shrink-0">
                               <span className="text-[11px] font-bold tabular-nums whitespace-nowrap text-sky-700">
-                                +{intradayUpliftCt.toFixed(1)} ct
+                                +{intradayUpliftCt.toFixed(1)} ct/kWh
                               </span>
                               <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-sky-600">
                                 {intradayUpliftEur.toFixed(2)} € ID3
@@ -2953,7 +2953,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <div className="absolute pointer-events-none z-10"
                       style={{ left: bCenter, top: plotArea.top + 28, transform: 'translateX(-50%)' }}>
                       <div className="flex flex-col items-center gap-0.5">
-                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Charge ASAP</span>
+                        <span className="text-[8px] font-bold text-red-500 uppercase tracking-wider">Baseline</span>
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
