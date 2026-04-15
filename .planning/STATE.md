@@ -35,9 +35,10 @@ Status: Ready to execute
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260409-lu1 | Remove symbol from Renewables toggle | 2026-04-09 | 7ec94f0 | [260409-lu1-remove-symbol-from-renewables-toggle](./quick/260409-lu1-remove-symbol-from-renewables-toggle/) |
-| 260415-c4z | Improve insights page — actionable sensitivity charts and price patterns heatmap | 2026-04-15 | 94c271c | [260415-c4z-improve-insights-page-actionable-sensiti](./quick/260415-c4z-improve-insights-page-actionable-sensiti/) |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260409-lu1 | Remove symbol from Renewables toggle | 2026-04-09 | 7ec94f0 |  | [260409-lu1-remove-symbol-from-renewables-toggle](./quick/260409-lu1-remove-symbol-from-renewables-toggle/) |
+| 260415-c4z | Improve insights page — actionable sensitivity charts and price patterns heatmap | 2026-04-15 | 94c271c |  | [260415-c4z-improve-insights-page-actionable-sensiti](./quick/260415-c4z-improve-insights-page-actionable-sensiti/) |
+| 260415-cjb | Auditable Excel exports for /v2/insights graphs (raw prices → formulas → chart visual) | 2026-04-15 | 7cb7d73 | Needs Review | [260415-cjb-add-auditable-excel-exports-with-formula](./quick/260415-cjb-add-auditable-excel-exports-with-formula/) |
 
-Last activity: 2026-04-15 - Completed quick task 260415-c4z: Improve insights page — actionable sensitivity charts and price patterns heatmap
+Last activity: 2026-04-15 - Completed quick task 260415-cjb: Auditable Excel exports for /v2/insights graphs
