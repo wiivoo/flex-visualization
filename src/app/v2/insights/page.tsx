@@ -15,6 +15,7 @@ import {
 } from '@/lib/insights-sweep'
 import { IdealParametersHeatmap } from '@/components/v2/insights/IdealParametersHeatmap'
 import { SensitivityCurves } from '@/components/v2/insights/SensitivityCurves'
+import { PricePatternsHeatmap } from '@/components/v2/insights/PricePatternsHeatmap'
 import { InsightsControls } from '@/components/v2/insights/InsightsControls'
 import { TimeFrameBar, type TimeFrame } from '@/components/v2/insights/TimeFrameBar'
 
@@ -220,6 +221,7 @@ function InsightsInner() {
             {/* Both views, stacked full-width like the main page rhythm */}
             {grid && <IdealParametersHeatmap grid={grid} mode={mode} fleetSize={fleet.fleetSize} />}
             {series && <SensitivityCurves series={series} mode={mode} fleetSize={fleet.fleetSize} />}
+            {prices.hourlyQH.length > 0 && <PricePatternsHeatmap hourlyQH={prices.hourlyQH} />}
           </>
         )}
       </main>
