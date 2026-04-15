@@ -218,9 +218,28 @@ function InsightsInner() {
               }}
             />
 
-            {/* Both views, stacked full-width like the main page rhythm */}
-            {grid && <IdealParametersHeatmap grid={grid} mode={mode} fleetSize={fleet.fleetSize} />}
-            {series && <SensitivityCurves series={series} mode={mode} fleetSize={fleet.fleetSize} />}
+            {/* Both views, stacked full-width like the main page rhythm.
+                Excel exports use single-vehicle formulas driven by `deferredPinned`
+                even in fleet mode. This is a conscious simplification for the v1
+                of the auditable export; the parameters sheet includes a note row. */}
+            {grid && (
+              <IdealParametersHeatmap
+                grid={grid}
+                mode={mode}
+                fleetSize={fleet.fleetSize}
+                hourlyQH={prices.hourlyQH}
+                pinned={deferredPinned}
+              />
+            )}
+            {series && (
+              <SensitivityCurves
+                series={series}
+                mode={mode}
+                fleetSize={fleet.fleetSize}
+                hourlyQH={prices.hourlyQH}
+                pinned={deferredPinned}
+              />
+            )}
             {prices.hourlyQH.length > 0 && <PricePatternsHeatmap hourlyQH={prices.hourlyQH} />}
           </>
         )}

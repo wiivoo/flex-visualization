@@ -1,19 +1,52 @@
 'use client'
 
+import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { MileageWindowGrid } from '@/lib/insights-sweep'
+import { Button } from '@/components/ui/button'
+import { Download } from 'lucide-react'
+import { toast } from 'sonner'
+import type { MileageWindowGrid, PinnedDefaults } from '@/lib/insights-sweep'
 import { findBestCell } from '@/lib/insights-sweep'
+import type { HourlyPrice } from '@/lib/v2-config'
 
 interface Props {
   grid: MileageWindowGrid
   mode: 'single' | 'fleet'
   fleetSize: number
+  hourlyQH: HourlyPrice[]
+  pinned: PinnedDefaults
 }
 
-export function IdealParametersHeatmap({ grid, mode, fleetSize }: Props) {
+async function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+export function IdealParametersHeatmap({ grid, mode, fleetSize, hourlyQH, pinned }: Props) {
   const allCells = grid.cells.flat()
   const maxVal = Math.max(...allCells.map(c => c.yearlySavingsEur), 0.01)
   const best = findBestCell(grid)
+  const [busy, setBusy] = useState(false)
+
+  const handleExport = async () => {
+    setBusy(true)
+    try {
+      const { exportIdealParametersXlsx } = await import('@/lib/excel-exports/ideal-parameters')
+      const { blob, filename } = await exportIdealParametersXlsx(hourlyQH, pinned, grid.mileages, grid.windowLengths)
+      await triggerDownload(blob, filename)
+      toast.success('Excel exported')
+    } catch (e) {
+      toast.error('Export failed: ' + (e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const heatColor = (val: number) => {
     const t = Math.min(val / maxVal, 1)
@@ -27,9 +60,20 @@ export function IdealParametersHeatmap({ grid, mode, fleetSize }: Props) {
           <CardTitle className="text-base font-bold text-[#313131]">
             {mode === 'fleet' ? 'Fleet Savings Heatmap' : 'Target Customer Heatmap'}
           </CardTitle>
-          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
-            {mode === 'fleet' ? `EUR/yr fleet total · ${fleetSize.toLocaleString()} vehicles` : 'EUR/yr savings'}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
+              {mode === 'fleet' ? `EUR/yr fleet total · ${fleetSize.toLocaleString()} vehicles` : 'EUR/yr savings'}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={handleExport}
+              className="h-7 px-2 text-[11px] text-gray-500 hover:text-[#313131]">
+              <Download className="w-3.5 h-3.5 mr-1" />
+              {busy ? 'Exporting…' : 'Export'}
+            </Button>
+          </div>
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
           Mileage × plug-in window length · pinned: arrival {String(grid.pinnedPlugInTime).padStart(2, '0')}:00, {grid.pinnedChargePowerKw} kW, {grid.pinnedPlugInsPerWeek}× / week · {grid.rangeLabel}

@@ -1,7 +1,10 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Download } from 'lucide-react'
+import { toast } from 'sonner'
 import {
   ComposedChart,
   Line,
@@ -15,12 +18,26 @@ import {
   CartesianGrid,
   Label,
 } from 'recharts'
-import { computeElasticity, type SensitivitySeries, type SweepPoint } from '@/lib/insights-sweep'
+import { computeElasticity, type SensitivitySeries, type SweepPoint, type PinnedDefaults } from '@/lib/insights-sweep'
+import type { HourlyPrice } from '@/lib/v2-config'
 
 interface Props {
   series: SensitivitySeries
   mode: 'single' | 'fleet'
   fleetSize: number
+  hourlyQH: HourlyPrice[]
+  pinned: PinnedDefaults
+}
+
+async function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 interface ChartProps {
@@ -213,17 +230,43 @@ function SensitivityChart({
   )
 }
 
-export function SensitivityCurves({ series, mode, fleetSize }: Props) {
+export function SensitivityCurves({ series, mode, fleetSize, hourlyQH, pinned: exportPinned }: Props) {
   const { pinned } = series
+  const [busy, setBusy] = useState(false)
+
+  const handleExport = async () => {
+    setBusy(true)
+    try {
+      const { exportSensitivityXlsx } = await import('@/lib/excel-exports/sensitivity')
+      const { blob, filename } = await exportSensitivityXlsx(hourlyQH, exportPinned)
+      await triggerDownload(blob, filename)
+      toast.success('Excel exported')
+    } catch (e) {
+      toast.error('Export failed: ' + (e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80">
       <CardHeader className="pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-bold text-[#313131]">Sensitivity — which lever moves savings most</CardTitle>
-          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
-            {mode === 'fleet' ? `EUR/yr · ${fleetSize.toLocaleString()} vehicles` : 'EUR/yr per parameter'}
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
+              {mode === 'fleet' ? `EUR/yr · ${fleetSize.toLocaleString()} vehicles` : 'EUR/yr per parameter'}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={handleExport}
+              className="h-7 px-2 text-[11px] text-gray-500 hover:text-[#313131]">
+              <Download className="w-3.5 h-3.5 mr-1" />
+              {busy ? 'Exporting…' : 'Export'}
+            </Button>
+          </div>
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
           Each chart varies one parameter; the others stay pinned at{' '}

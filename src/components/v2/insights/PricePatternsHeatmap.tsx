@@ -1,9 +1,23 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Download } from 'lucide-react'
+import { toast } from 'sonner'
 import type { HourlyPrice } from '@/lib/v2-config'
 import { computeMonthlyQhAverages } from '@/lib/price-patterns'
+
+async function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
 
 interface Props {
   hourlyQH: HourlyPrice[]
@@ -32,6 +46,21 @@ function heatColor(t: number): string {
 
 export function PricePatternsHeatmap({ hourlyQH }: Props) {
   const matrix = useMemo(() => computeMonthlyQhAverages(hourlyQH), [hourlyQH])
+  const [busy, setBusy] = useState(false)
+
+  const handleExport = async () => {
+    setBusy(true)
+    try {
+      const { exportPricePatternsXlsx } = await import('@/lib/excel-exports/price-patterns')
+      const { blob, filename } = await exportPricePatternsXlsx(hourlyQH)
+      await triggerDownload(blob, filename)
+      toast.success('Excel exported')
+    } catch (e) {
+      toast.error('Export failed: ' + (e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   if (matrix.sampleCount === 0) {
     return (
@@ -59,9 +88,20 @@ export function PricePatternsHeatmap({ hourlyQH }: Props) {
       <CardHeader className="pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-bold text-[#313131]">Price Patterns — when power is cheap</CardTitle>
-          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide tabular-nums">
-            avg ct/kWh · month × time of day
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide tabular-nums">
+              avg ct/kWh · month × time of day
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={handleExport}
+              className="h-7 px-2 text-[11px] text-gray-500 hover:text-[#313131]">
+              <Download className="w-3.5 h-3.5 mr-1" />
+              {busy ? 'Exporting…' : 'Export'}
+            </Button>
+          </div>
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
           Quarter-hourly SMARD day-ahead prices averaged per month and time slot.

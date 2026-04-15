@@ -7,4 +7,4 @@
 export type { RawPriceRow, ScenarioParams, ExportResult } from './types'
 export { exportPricePatternsXlsx } from './price-patterns'
 export { exportSensitivityXlsx } from './sensitivity'
-// exportIdealParametersXlsx — added in task 3
+export { exportIdealParametersXlsx } from './ideal-parameters'
