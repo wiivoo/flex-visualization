@@ -6,9 +6,11 @@ import { findBestCell } from '@/lib/insights-sweep'
 
 interface Props {
   grid: MileageWindowGrid
+  mode: 'single' | 'fleet'
+  fleetSize: number
 }
 
-export function IdealParametersHeatmap({ grid }: Props) {
+export function IdealParametersHeatmap({ grid, mode, fleetSize }: Props) {
   const allCells = grid.cells.flat()
   const maxVal = Math.max(...allCells.map(c => c.yearlySavingsEur), 0.01)
   const best = findBestCell(grid)
@@ -22,11 +24,15 @@ export function IdealParametersHeatmap({ grid }: Props) {
     <Card className="overflow-hidden shadow-sm border-gray-200/80">
       <CardHeader className="pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base font-bold text-[#313131]">Target Customer Heatmap</CardTitle>
-          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">EUR/yr savings</span>
+          <CardTitle className="text-base font-bold text-[#313131]">
+            {mode === 'fleet' ? 'Fleet Savings Heatmap' : 'Target Customer Heatmap'}
+          </CardTitle>
+          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
+            {mode === 'fleet' ? `EUR/yr fleet total · ${fleetSize.toLocaleString()} vehicles` : 'EUR/yr savings'}
+          </span>
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
-          Mileage × plug-in window length · pinned: plug-in {String(grid.pinnedPlugInTime).padStart(2, '0')}:00, {grid.pinnedChargePowerKw} kW, {grid.pinnedPlugInsPerWeek}× / week · last 12 months
+          Mileage × plug-in window length · pinned: arrival {String(grid.pinnedPlugInTime).padStart(2, '0')}:00, {grid.pinnedChargePowerKw} kW, {grid.pinnedPlugInsPerWeek}× / week · {grid.rangeLabel}
         </p>
       </CardHeader>
       <CardContent className="pt-5">

@@ -6,6 +6,8 @@ import type { SensitivitySeries, SweepPoint } from '@/lib/insights-sweep'
 
 interface Props {
   series: SensitivitySeries
+  mode: 'single' | 'fleet'
+  fleetSize: number
 }
 
 interface ChartProps {
@@ -86,7 +88,7 @@ function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: C
   )
 }
 
-export function SensitivityCurves({ series }: Props) {
+export function SensitivityCurves({ series, mode, fleetSize }: Props) {
   const { pinned } = series
 
   return (
@@ -94,10 +96,12 @@ export function SensitivityCurves({ series }: Props) {
       <CardHeader className="pb-3 border-b border-gray-100">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base font-bold text-[#313131]">Sensitivity — which lever moves savings most</CardTitle>
-          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">EUR/yr per parameter</span>
+          <span className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">
+            {mode === 'fleet' ? `EUR/yr · ${fleetSize.toLocaleString()} vehicles` : 'EUR/yr per parameter'}
+          </span>
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
-          Each chart varies one parameter; the others stay pinned. Red dot marks the current value from the controls above. The bigger the slope, the bigger the lever.
+          Each chart varies one parameter; the others stay pinned. Red dot marks the current value from the controls above. The bigger the slope, the bigger the lever. · {series.rangeLabel}
         </p>
       </CardHeader>
       <CardContent className="pt-5">
