@@ -1,8 +1,21 @@
 'use client'
 
+import { useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceDot, CartesianGrid } from 'recharts'
-import type { SensitivitySeries, SweepPoint } from '@/lib/insights-sweep'
+import {
+  ComposedChart,
+  Line,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceDot,
+  ReferenceLine,
+  CartesianGrid,
+  Label,
+} from 'recharts'
+import { computeElasticity, type SensitivitySeries, type SweepPoint } from '@/lib/insights-sweep'
 
 interface Props {
   series: SensitivitySeries
@@ -17,13 +30,69 @@ interface ChartProps {
   pinnedX: number
   xLabel: string
   formatX: (v: number) => string
+  unitLabel: string
+  elasticityScale?: number
+  actionVerb: string
 }
 
-function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: ChartProps) {
-  const pinnedPoint = data.find(d => Math.abs(d.x - pinnedX) < 0.001)
+function SensitivityChart({
+  title,
+  subtitle,
+  data,
+  pinnedX,
+  xLabel,
+  formatX,
+  unitLabel,
+  elasticityScale = 1,
+  actionVerb,
+}: ChartProps) {
+  // Pinned point — exact match or nearest neighbour fallback.
+  const pinnedPoint = useMemo(() => {
+    if (data.length === 0) return undefined
+    const exact = data.find(d => Math.abs(d.x - pinnedX) < 0.001)
+    if (exact) return exact
+    let best = data[0]
+    let bestDist = Math.abs(best.x - pinnedX)
+    for (const d of data) {
+      const dist = Math.abs(d.x - pinnedX)
+      if (dist < bestDist) {
+        best = d
+        bestDist = dist
+      }
+    }
+    return best
+  }, [data, pinnedX])
+
+  const pinnedY = pinnedPoint?.yearlySavingsEur ?? 0
+  const optimum = useMemo(
+    () => data.reduce((a, b) => (b.yearlySavingsEur > a.yearlySavingsEur ? b : a), data[0]),
+    [data],
+  )
+  const optimumDelta = (optimum?.yearlySavingsEur ?? 0) - pinnedY
+  const slope = useMemo(() => computeElasticity(data, pinnedX), [data, pinnedX])
+
   const max = Math.max(...data.map(d => d.yearlySavingsEur))
   const min = Math.min(...data.map(d => d.yearlySavingsEur))
   const delta = max - min
+
+  const yMin = Math.min(min, pinnedY) * 0.98
+  const yMax = Math.max(max, pinnedY) * 1.02
+
+  const chartData = useMemo(
+    () =>
+      data.map(d => ({
+        ...d,
+        gain: d.yearlySavingsEur >= pinnedY ? d.yearlySavingsEur : pinnedY,
+        loss: d.yearlySavingsEur < pinnedY ? d.yearlySavingsEur : pinnedY,
+      })),
+    [data, pinnedY],
+  )
+
+  const scaledSlope = Math.round(slope * elasticityScale)
+  const elasticityText =
+    Math.abs(slope * elasticityScale) < 0.5
+      ? `~€0/yr per ${unitLabel}`
+      : `€${scaledSlope}/yr per ${unitLabel}`
 
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80">
@@ -34,7 +103,7 @@ function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: C
       <CardContent className="pt-3 pb-3">
         <div style={{ height: 140 }}>
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 12, left: -8, bottom: 4 }}>
+            <ComposedChart data={chartData} margin={{ top: 14, right: 12, left: -8, bottom: 4 }}>
               <CartesianGrid strokeDasharray="2 4" stroke="#f3f4f6" vertical={false} />
               <XAxis
                 dataKey="x"
@@ -45,6 +114,7 @@ function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: C
                 label={{ value: xLabel, position: 'insideBottom', offset: -2, fontSize: 9, fill: '#9ca3af' }}
               />
               <YAxis
+                domain={[yMin, yMax]}
                 tick={{ fontSize: 10, fill: '#9ca3af' }}
                 axisLine={false}
                 tickLine={false}
@@ -56,13 +126,38 @@ function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: C
                 formatter={(value) => [`€${Number(value).toFixed(0)}/yr`, 'Savings']}
                 labelFormatter={(label) => `${xLabel}: ${formatX(Number(label))}`}
               />
+              <Area
+                type="monotone"
+                dataKey="gain"
+                stroke="none"
+                fill="#10b981"
+                fillOpacity={0.14}
+                baseValue={pinnedY}
+                isAnimationActive={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="loss"
+                stroke="none"
+                fill="#EA1C0A"
+                fillOpacity={0.10}
+                baseValue={pinnedY}
+                isAnimationActive={false}
+              />
+              <ReferenceLine
+                y={pinnedY}
+                stroke="#9ca3af"
+                strokeDasharray="3 3"
+                strokeWidth={1}
+              />
               <Line
                 type="monotone"
                 dataKey="yearlySavingsEur"
                 stroke="#10b981"
                 strokeWidth={2}
-                dot={{ r: 2.5, fill: '#10b981' }}
+                dot={{ r: 2, fill: '#10b981' }}
                 activeDot={{ r: 4 }}
+                isAnimationActive={false}
               />
               {pinnedPoint && (
                 <ReferenceDot
@@ -74,7 +169,25 @@ function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: C
                   strokeWidth={2}
                 />
               )}
-            </LineChart>
+              {optimum && optimumDelta > 0.5 && (
+                <ReferenceDot
+                  x={optimum.x}
+                  y={optimum.yearlySavingsEur}
+                  r={4}
+                  fill="#059669"
+                  stroke="#fff"
+                  strokeWidth={2}
+                >
+                  <Label
+                    value={`+€${Math.round(optimumDelta)}/yr`}
+                    position="top"
+                    fontSize={10}
+                    fill="#059669"
+                    fontWeight={600}
+                  />
+                </ReferenceDot>
+              )}
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
         <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1 px-1">
@@ -83,6 +196,18 @@ function SensitivityChart({ title, subtitle, data, pinnedX, xLabel, formatX }: C
             Lever: <span className="font-semibold text-gray-700">€{delta.toFixed(0)}/yr</span>
           </span>
         </div>
+        <div className="text-[10px] text-gray-500 tabular-nums px-1 mt-0.5">
+          Elasticity: <span className="font-semibold text-gray-700">{elasticityText}</span>
+        </div>
+        {optimum && optimumDelta > 0.5 ? (
+          <div className="text-[11px] text-emerald-700 font-medium mt-1 px-1">
+            {actionVerb} {formatX(pinnedX)} → {formatX(optimum.x)} to gain €{Math.round(optimumDelta)}/yr
+          </div>
+        ) : (
+          <div className="text-[11px] text-gray-500 mt-1 px-1">
+            Already at the optimum for this lever
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -101,7 +226,19 @@ export function SensitivityCurves({ series, mode, fleetSize }: Props) {
           </span>
         </div>
         <p className="text-[11px] text-gray-500 mt-1">
-          Each chart varies one parameter; the others stay pinned. Red dot marks the current value from the controls above. The bigger the slope, the bigger the lever. · {series.rangeLabel}
+          Each chart varies one parameter; the others stay pinned at{' '}
+          <span className="font-semibold text-gray-700 tabular-nums">
+            {(pinned.yearlyMileageKm / 1000).toFixed(0)}k km/yr
+          </span>,{' '}
+          <span className="font-semibold text-gray-700 tabular-nums">
+            {String(pinned.plugInTime).padStart(2, '0')}:00
+          </span>{' '}plug-in,{' '}
+          <span className="font-semibold text-gray-700 tabular-nums">
+            {pinned.windowLengthHours}h window
+          </span>,{' '}
+          <span className="font-semibold text-gray-700 tabular-nums">
+            {pinned.chargePowerKw} kW
+          </span>. Red dot = current; dashed line = baseline; green area = gain, red area = loss; emerald dot = optimum. · {series.rangeLabel}
         </p>
       </CardHeader>
       <CardContent className="pt-5">
@@ -113,6 +250,9 @@ export function SensitivityCurves({ series, mode, fleetSize }: Props) {
           pinnedX={pinned.yearlyMileageKm}
           xLabel="km/yr"
           formatX={(v) => `${(v / 1000).toFixed(0)}k`}
+          unitLabel="1k km"
+          elasticityScale={1000}
+          actionVerb="Raise mileage"
         />
         <SensitivityChart
           title="Plug-in time"
@@ -121,6 +261,8 @@ export function SensitivityCurves({ series, mode, fleetSize }: Props) {
           pinnedX={pinned.plugInTime}
           xLabel="hour"
           formatX={(v) => `${String(v).padStart(2, '0')}:00`}
+          unitLabel="hour"
+          actionVerb="Shift plug-in"
         />
         <SensitivityChart
           title="Plug-in window length"
@@ -129,6 +271,8 @@ export function SensitivityCurves({ series, mode, fleetSize }: Props) {
           pinnedX={pinned.windowLengthHours}
           xLabel="hours"
           formatX={(v) => `${v}h`}
+          unitLabel="hour of window"
+          actionVerb="Extend window"
         />
         <SensitivityChart
           title="Charge power"
@@ -137,6 +281,8 @@ export function SensitivityCurves({ series, mode, fleetSize }: Props) {
           pinnedX={pinned.chargePowerKw}
           xLabel="kW"
           formatX={(v) => `${v}`}
+          unitLabel="kW"
+          actionVerb="Upgrade power"
         />
         </div>
       </CardContent>

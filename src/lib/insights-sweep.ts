@@ -431,6 +431,41 @@ export function sweepFleetSensitivity(
   }
 }
 
+/**
+ * Slope of a sweep curve at a given x, using central difference across
+ * neighboring sample points. Returns yearly EUR delta per 1 unit of x.
+ * Falls back to forward/backward difference at the edges.
+ * Returns 0 when fewer than 2 points or pinnedX is not bracketed.
+ */
+export function computeElasticity(points: SweepPoint[], pinnedX: number): number {
+  if (points.length < 2) return 0
+  // Find index closest to pinnedX
+  let idx = 0
+  let bestDist = Math.abs(points[0].x - pinnedX)
+  for (let i = 1; i < points.length; i++) {
+    const d = Math.abs(points[i].x - pinnedX)
+    if (d < bestDist) { bestDist = d; idx = i }
+  }
+  const prev = points[idx - 1]
+  const next = points[idx + 1]
+  if (prev && next) {
+    const dx = next.x - prev.x
+    if (dx === 0) return 0
+    return (next.yearlySavingsEur - prev.yearlySavingsEur) / dx
+  }
+  if (next) {
+    const dx = next.x - points[idx].x
+    if (dx === 0) return 0
+    return (next.yearlySavingsEur - points[idx].yearlySavingsEur) / dx
+  }
+  if (prev) {
+    const dx = points[idx].x - prev.x
+    if (dx === 0) return 0
+    return (points[idx].yearlySavingsEur - prev.yearlySavingsEur) / dx
+  }
+  return 0
+}
+
 /** Locate the best cell in a mileage × window-length grid (for the BD callout). */
 export function findBestCell(grid: MileageWindowGrid): {
   mileage: number
