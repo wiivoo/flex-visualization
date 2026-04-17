@@ -271,5 +271,57 @@ Plans:
 | PROC-02 | Phase 6 | Planned |
 | PROC-03 | Phase 6 | Planned |
 
+### Phase 7: Insights tab — Ideal Parameters Sweep (BD heatmap + product sensitivity at /v2/insights, both views in one tab with toggle, sweep over optimizer.ts; pinned defaults sourcing TBD — see .planning/research/questions.md and .planning/notes/ideal-parameters-feature.md)
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 7 to break down)
+
+### Phase 8: Plug-in Battery Business Case (DE/NL)
+
+**Goal:** Ship a new v2-style sub-page that shows the business case for a plug-in home battery in Germany and the Netherlands (post-2027 regime). Covers three product variants — Schuko Steckerspeicher, Steckerspeicher + balcony PV, and a simple electrician-installed flat-friendly battery. Split layout: consumer ROI calculator on top, management/investor view below.
+
+**Requirements:** TBD (to be derived during planning)
+
+**Depends on:** Phase 7 (research prerequisites — see `.planning/research/questions.md` 2026-04-17 entries)
+
+**Prerequisites before planning:**
+- `.planning/notes/plug-in-battery-exploration.md` captures scope decisions — read first.
+- Three open research questions dated 2026-04-17 must be resolved:
+  1. Plug-in home battery product landscape & unit economics (DE/NL 2026)
+  2. DE Steckerspeicher regulation (2026 regime)
+  3. NL home battery regime post-2027 (salderingsregeling phase-out)
+
+**Value streams to model:**
+- Dynamic tariff arbitrage (SMARD DE, ENTSO-E NL) — charge at cheap hours, discharge at peak
+- Balcony PV self-consumption — store daytime solar, use in evening peak
+
+Not in scope: V2G, backup/resilience, C&I batteries, marketing landing page.
+
+**Technical constraints (first-class parameters):**
+- 800W DE feed-in cap (with 2000W transition scenario toggle)
+- Household consumption profile (apartment baseline + evening peak)
+- Battery specs: usable kWh, max charge/discharge kW, round-trip efficiency, standby loss
+
+**Architectural pattern:** Mirror /v2 — client component under `src/app/`, shared optimizer lib, reuse `use-prices.ts`, shadcn/ui, Recharts ComposedChart, URL↔state sync, desktop-first.
+
+**Success Criteria:**
+1. Sub-page route exists and loads DE and NL price data (post-2027 NL regime modeled)
+2. Battery optimizer produces arbitrage + PV self-consumption schedules respecting 800W feed-in cap, C-rate, and round-trip efficiency
+3. Consumer ROI section shows annual savings, payback period, break-even year for each of the three battery variants
+4. Management view shows unit economics per household and DE vs NL market comparison
+5. Regulation-dependent inputs (DE feed-in cap, NL post-2027 terugleverkosten) are explicit, documented, and changeable via the UI
+
+**UI hint:** yes
+
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 8 to break down)
+
 ---
 *Last updated: 2026-04-09 — Phase 6 plans created (2 plans, 2 waves)*

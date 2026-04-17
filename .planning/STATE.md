@@ -32,6 +32,7 @@ Status: Ready to execute
 ### Roadmap Evolution
 
 - Phase 7 added: Insights tab — Ideal Parameters Sweep (BD heatmap + product sensitivity at /v2/insights)
+- Phase 8 added: Plug-in Battery Business Case (DE/NL) — sub-page modeling home-battery economics across three variants with split consumer ROI + management view; research prerequisites logged 2026-04-17
 
 ### Quick Tasks Completed
 
