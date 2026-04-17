@@ -15,7 +15,7 @@
  *    this conservation equation.
  *  - Round-trip efficiency applied on charge→discharge path (energy out of battery =
  *    stored energy × roundTripEff).
- *  - Standby parasitic draw accrued as a daily scalar cost on top of optimizedCost.
+ *  - Standby parasitic draw accrued as a window scalar cost on top of optimizedCost.
  *
  * Algorithm (three-pass greedy — matches RESEARCH.md Pattern 1):
  *  Pass 1  Initialise slot array with PV-direct self-consumption (free energy baseline).
@@ -31,7 +31,7 @@
  *  Pass 3  Belt-and-suspenders enforcement: gridExport := 0, gridImport := max(0, …),
  *          socKwhEnd clamped to [0, usableKwh], socKwhStart re-linked.
  *
- * Performance: O(N log N) per day (N = 96). < 5 ms on a laptop.
+ * Performance: O(N log N) per window (N = 96 per day at quarter-hour resolution). < 5 ms on a laptop.
  */
 
 import type { HourlyPrice } from '@/lib/v2-config'
@@ -148,7 +148,7 @@ function zeroedDay(prices: HourlyPrice[]): { slots: SlotResult[]; summary: DaySu
 }
 
 // ---------------------------------------------------------------------------
-// runBatteryDay — single-day 96-slot optimizer
+// runBatteryDay — fixed-interval window optimizer
 // ---------------------------------------------------------------------------
 
 export function runBatteryDay(
@@ -171,7 +171,11 @@ export function runBatteryDay(
   }
 
   const N = prices.length
-  const slotHours = 24 / N                                  // 0.25 for 96 QH slots, 1.0 for hourly
+  const slotHours =
+    N > 1
+      ? Math.max(1 / 60, (prices[1].timestamp - prices[0].timestamp) / 3_600_000)
+      : 24 / N
+  const windowHours = slotHours * N
   const maxChargePerSlot = params.maxChargeKw * slotHours
   const maxDischargePerSlot = params.maxDischargeKw * slotHours
   const feedInCapPerSlot = params.feedInCapKw * slotHours
@@ -297,7 +301,7 @@ export function runBatteryDay(
   const baselineCostEur = slots.reduce((a, s) => a + s.baselineCostEur, 0)
   const slotCostSum = slots.reduce((a, s) => a + s.slotCostEur, 0)
   const avgPriceCtKwh = slots.reduce((a, s) => a + s.priceCtKwh, 0) / N
-  const standbyCostEur = ((params.standbyWatts * 24) / 1000) * avgPriceCtKwh / 100
+  const standbyCostEur = ((params.standbyWatts * windowHours) / 1000) * avgPriceCtKwh / 100
   const optimizedCostEur = slotCostSum + standbyCostEur
   const savingsEur = baselineCostEur - optimizedCostEur
 

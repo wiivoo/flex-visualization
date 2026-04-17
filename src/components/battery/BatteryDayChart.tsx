@@ -1,41 +1,15 @@
 'use client'
 
-/**
- * BatteryDayChart — intra-day battery visualization for the plug-in battery
- * business case page (phase 08).
- *
- * Renders a Recharts ComposedChart for the user-selected date with six layered
- * series (render order matters — do NOT rearrange):
- *   1. <Area>  Household load (gray)
- *   2. <Area>  PV generation (amber) — only when variant.includePv === true
- *   3. <Bar>   Battery charge (blue)
- *   4. <Bar>   Battery discharge to load (emerald)
- *   5. <Line>  Day-ahead price (brand red #EA1C0A), YAxis right
- *   6. <Line>  Battery SoC (blue dashed)
- *
- * Data flow:
- *   scenario + prices
- *      ↓ useBatteryProfiles(country) → pvProfile, loadProfile (8760 hourly fractions)
- *      ↓ slice prices.hourlyQH (preferred) or prices.hourly by selectedDate
- *      ↓ scale profiles to per-slot kWh using scenario.annualLoadKwh + variant.pvCapacityWp
- *      ↓ runBatteryDay(...) → slots[] + summary
- *      ↓ map to ChartPoint[] → ComposedChart
- *
- * DE grid-export prohibition (VDE-AR-N 4105:2026-03) is signalled via a legend-
- * style pill with a shadcn Tooltip. The optimizer already unconditionally sets
- * gridExportKwh = 0, so no bars ever render in export territory.
- */
-
 import { useMemo, useState } from 'react'
 import {
-  ComposedChart,
   Area,
+  CartesianGrid,
+  ComposedChart,
   Line,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
 } from 'recharts'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import {
@@ -52,19 +26,19 @@ interface Props {
   prices: PriceData
 }
 
+type Resolution = 'hour' | 'quarterhour'
+type WindowHours = 24 | 36 | 72
+
 interface ChartPoint {
   timestamp: number
-  label: string // 'HH:MM'
+  label: string
   priceCtKwh: number
   loadKwh: number
   pvKwh: number
-  /** positive when charging (PV or grid) */
   chargeKwh: number
   chargeFromGridKwh: number
-  /** positive when discharging to load */
   dischargeKwh: number
   slotSavingsEur: number
-  pvSelfKwh: number
   socPct: number
 }
 
@@ -76,122 +50,133 @@ function buildParamsFromScenario(scenario: BatteryScenario): BatteryParams {
     maxDischargeKw: variant.maxDischargeKw,
     roundTripEff: variant.roundTripEff,
     standbyWatts: variant.standbyWatts,
-    feedInCapKw: scenario.feedInCapKw, // scenario toggle: 0.8 (default) or 2.0 (proposed)
-    allowGridExport: false, // Phase 8 — Pass 3 enforces 0 regardless; belt-and-braces here
+    feedInCapKw: scenario.feedInCapKw,
+    allowGridExport: false,
   }
 }
 
+function formatSlotLabel(timestamp: number) {
+  const d = new Date(timestamp)
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const hour = String(d.getHours()).padStart(2, '0')
+  const minute = String(d.getMinutes()).padStart(2, '0')
+  return `${day}.${month} ${hour}:${minute}`
+}
+
 export function BatteryDayChart({ scenario, prices }: Props) {
-  const variant = getVariant(scenario.variantId)
+  const [batteryEnabled, setBatteryEnabled] = useState(true)
+  const [resolution, setResolution] = useState<Resolution>('hour')
+  const [windowHours, setWindowHours] = useState<WindowHours>(36)
+
+  const variant = useMemo(() => getVariant(scenario.variantId), [scenario.variantId])
   const profileYear = useMemo(() => {
     const dateLike = prices.selectedDate
       ?? prices.daily[0]?.date
       ?? prices.hourly[0]?.date
       ?? prices.hourlyQH[0]?.date
     const parsed = Number(dateLike?.slice(0, 4))
-    return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getUTCFullYear()
+    return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getFullYear()
   }, [prices.selectedDate, prices.daily, prices.hourly, prices.hourlyQH])
   const profiles = useBatteryProfiles(scenario.country, scenario.loadProfileId, profileYear)
   const loadProfile = useMemo(
     () => getLoadProfile(scenario.loadProfileId, scenario.country),
     [scenario.country, scenario.loadProfileId],
   )
-  const [batteryEnabled, setBatteryEnabled] = useState(true)
 
-  // Prefer QH (96 slots); fall back to hourly (24 slots).
-  const daySlots = useMemo(() => {
+  const activePrices = useMemo(
+    () => (resolution === 'quarterhour' && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly),
+    [prices.hourly, prices.hourlyQH, resolution],
+  )
+  const slotHours = resolution === 'quarterhour' && prices.hourlyQH.length > 0 ? 0.25 : 1
+
+  const windowSlots = useMemo(() => {
     if (!prices.selectedDate) return []
-    const qh = prices.hourlyQH.filter((p) => p.date === prices.selectedDate)
-    if (qh.length > 0) return qh
-    return prices.hourly.filter((p) => p.date === prices.selectedDate)
-  }, [prices.hourlyQH, prices.hourly, prices.selectedDate])
+    const startIdx = activePrices.findIndex((point) => point.date === prices.selectedDate)
+    if (startIdx < 0) return []
+    const startTs = activePrices[startIdx].timestamp
+    const endTs = startTs + windowHours * 3_600_000
+    return activePrices.filter((point) => point.timestamp >= startTs && point.timestamp < endTs)
+  }, [activePrices, prices.selectedDate, windowHours])
 
-  // Day-level optimizer result. Memoized on every input that materially affects it.
-  const dayResult = useMemo(() => {
-    if (daySlots.length === 0) return null
+  const windowResult = useMemo(() => {
+    if (windowSlots.length === 0) return null
     if (!profiles.pvProfile || !profiles.loadProfile) return null
-    if (!prices.selectedDate) return null
 
-    const [yy, mm, dd] = prices.selectedDate.split('-').map(Number)
-    const dayStart = Date.UTC(yy, mm - 1, dd)
-    const yearStart = Date.UTC(yy, 0, 1)
-    const hourOfYear = Math.floor((dayStart - yearStart) / 3_600_000)
-
-    const slotHours = daySlots.length === 96 ? 0.25 : 24 / daySlots.length
     const pvCapKwp = variant.pvCapacityWp / 1000
-    // Annual PV yield fallback (used as scalar only — profile already normalized to 1.0).
-    // PVGIS confirmed yields from plan 08-01: DE 846 kWh/yr, NL 821 kWh/yr (Berlin / Rotterdam).
-    // Research baseline was 820 DE / 730 NL — we use the confirmed numbers.
     const pvKwhPerYear = variant.includePv
       ? pvCapKwp * (scenario.country === 'DE' ? 820 : 730)
       : 0
 
-    const pvPerSlot = new Array<number>(daySlots.length)
-    const loadPerSlot = new Array<number>(daySlots.length)
-    for (let i = 0; i < daySlots.length; i++) {
-      const hourIdx = (hourOfYear + Math.floor(i * slotHours)) % 8760
+    const pvPerSlot = new Array<number>(windowSlots.length)
+    const loadPerSlot = new Array<number>(windowSlots.length)
+
+    for (let i = 0; i < windowSlots.length; i++) {
+      const slotDate = new Date(windowSlots[i].timestamp)
+      const yearStart = new Date(slotDate.getFullYear(), 0, 1).getTime()
+      const hourIdx = Math.floor((windowSlots[i].timestamp - yearStart) / 3_600_000) % 8760
       pvPerSlot[i] = (profiles.pvProfile[hourIdx] ?? 0) * pvKwhPerYear * slotHours
-      loadPerSlot[i] =
-        (profiles.loadProfile[hourIdx] ?? 0) * scenario.annualLoadKwh * slotHours
+      loadPerSlot[i] = (profiles.loadProfile[hourIdx] ?? 0) * scenario.annualLoadKwh * slotHours
     }
 
-    return runBatteryDay(daySlots, pvPerSlot, loadPerSlot, buildParamsFromScenario(scenario), 0)
-  }, [daySlots, profiles.pvProfile, profiles.loadProfile, variant, scenario, prices.selectedDate])
+    return runBatteryDay(windowSlots, pvPerSlot, loadPerSlot, buildParamsFromScenario(scenario), 0)
+  }, [profiles.loadProfile, profiles.pvProfile, scenario, slotHours, variant, windowSlots])
 
   const chartData: ChartPoint[] = useMemo(() => {
-    if (!dayResult) return []
-    return dayResult.slots.map((s: SlotResult) => ({
-      timestamp: s.timestamp,
-      label: `${String(s.hour).padStart(2, '0')}:${String(s.minute).padStart(2, '0')}`,
-      priceCtKwh: s.priceCtKwh,
-      loadKwh: s.loadKwh,
-      pvKwh: s.pvKwh,
-      chargeKwh: s.chargeFromGridKwh + s.chargeFromPvKwh,
-      chargeFromGridKwh: s.chargeFromGridKwh,
-      dischargeKwh: s.dischargeToLoadKwh,
-      slotSavingsEur: s.baselineCostEur - s.slotCostEur,
-      pvSelfKwh: s.pvSelfKwh,
-      socPct: variant.usableKwh > 0 ? (s.socKwhEnd / variant.usableKwh) * 100 : 0,
+    if (!windowResult) return []
+    return windowResult.slots.map((slot: SlotResult) => ({
+      timestamp: slot.timestamp,
+      label: formatSlotLabel(slot.timestamp),
+      priceCtKwh: slot.priceCtKwh,
+      loadKwh: slot.loadKwh,
+      pvKwh: slot.pvKwh,
+      chargeKwh: slot.chargeFromGridKwh + slot.chargeFromPvKwh,
+      chargeFromGridKwh: slot.chargeFromGridKwh,
+      dischargeKwh: slot.dischargeToLoadKwh,
+      slotSavingsEur: slot.baselineCostEur - slot.slotCostEur,
+      socPct: variant.usableKwh > 0 ? (slot.socKwhEnd / variant.usableKwh) * 100 : 0,
     }))
-  }, [dayResult, variant.usableKwh])
+  }, [variant.usableKwh, windowResult])
 
-  const showPv = variant.includePv
-  const dischargeCapPerSlotKwh =
-    chartData.length === 96 ? scenario.feedInCapKw * 0.25 : scenario.feedInCapKw * (24 / chartData.length)
   const displayData = useMemo(() => {
     return chartData.map((point) => ({
       ...point,
-      chargeMarkerCtKwh: batteryEnabled && point.chargeKwh > 0 ? point.priceCtKwh : null,
-      dischargeMarkerCtKwh: batteryEnabled && point.dischargeKwh > 0 ? point.priceCtKwh : null,
+      chargeLineCtKwh: batteryEnabled && point.chargeKwh > 0 ? point.priceCtKwh : null,
+      dischargeLineCtKwh: batteryEnabled && point.dischargeKwh > 0 ? point.priceCtKwh : null,
       visibleSocPct: batteryEnabled ? point.socPct : 0,
     }))
   }, [batteryEnabled, chartData])
-  const selectedDayTotals = useMemo(() => {
-    if (!dayResult || chartData.length === 0) return null
+
+  const summary = useMemo(() => {
+    if (!windowResult || chartData.length === 0) return null
     const consumptionKwh = chartData.reduce((sum, point) => sum + point.loadKwh, 0)
     const chargeKwh = chartData.reduce((sum, point) => sum + point.chargeKwh, 0)
     const dischargeKwh = chartData.reduce((sum, point) => sum + point.dischargeKwh, 0)
-    const baselineAvgCt = consumptionKwh > 0 ? (dayResult.summary.baselineCostEur / consumptionKwh) * 100 : 0
-    const batteryAvgCt = consumptionKwh > 0 ? (dayResult.summary.optimizedCostEur / consumptionKwh) * 100 : 0
+    const baselineAvgCt = consumptionKwh > 0 ? (windowResult.summary.baselineCostEur / consumptionKwh) * 100 : 0
+    const batteryAvgCt = consumptionKwh > 0 ? (windowResult.summary.optimizedCostEur / consumptionKwh) * 100 : 0
     return {
       consumptionKwh,
       chargeKwh,
       dischargeKwh,
-      savingsEur: dayResult.summary.savingsEur,
-      baselineCostEur: dayResult.summary.baselineCostEur,
-      optimizedCostEur: dayResult.summary.optimizedCostEur,
+      savingsEur: windowResult.summary.savingsEur,
       baselineAvgCt,
       batteryAvgCt,
     }
-  }, [chartData, dayResult])
+  }, [chartData, windowResult])
 
-  // --- Empty / loading state ------------------------------------------------
+  const xAxisInterval = useMemo(
+    () => Math.max(0, Math.floor(displayData.length / 8) - 1),
+    [displayData.length],
+  )
+  const showPv = variant.includePv
+  const capPerSlotKwh = scenario.feedInCapKw * slotHours
+
   if (!prices.selectedDate || chartData.length === 0) {
     const msg = profiles.error
       ? `Could not load profile data: ${profiles.error}`
       : profiles.loading || prices.loading
         ? 'Loading…'
-        : 'No price data available for this date.'
+        : 'No price data available for this cycle window.'
     return (
       <Card className="shadow-sm border-gray-200/80">
         <CardContent className="pt-6 pb-6">
@@ -206,37 +191,90 @@ export function BatteryDayChart({ scenario, prices }: Props) {
   return (
     <Card className="shadow-sm border-gray-200/80">
       <CardHeader className="pb-2 border-b border-gray-100">
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-              Day schedule — {variant.shortLabel}
+              Battery cycle view — {variant.shortLabel}
             </p>
             <p className="text-[12px] text-gray-500 mt-1">
-              Household demand stays unchanged. Battery charging, discharging, and SoC are shown separately against the day-ahead price path.
+              No feed-in revenue is modeled. The battery only shifts your own household demand across a continuous {windowHours}-hour cycle window.
             </p>
           </div>
-          <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
-            <button
-              type="button"
-              onClick={() => setBatteryEnabled(false)}
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
-                !batteryEnabled ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              Battery off
-            </button>
-            <button
-              type="button"
-              onClick={() => setBatteryEnabled(true)}
-              className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
-                batteryEnabled ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              Battery on
-            </button>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+              <button
+                type="button"
+                onClick={() => setWindowHours(24)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  windowHours === 24 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                24h
+              </button>
+              <button
+                type="button"
+                onClick={() => setWindowHours(36)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  windowHours === 36 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                36h
+              </button>
+              <button
+                type="button"
+                onClick={() => setWindowHours(72)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  windowHours === 72 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                72h
+              </button>
+            </div>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+              <button
+                type="button"
+                onClick={() => setResolution('hour')}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                60 min
+              </button>
+              <button
+                type="button"
+                disabled={prices.hourlyQH.length === 0}
+                onClick={() => setResolution('quarterhour')}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                } disabled:opacity-30 disabled:cursor-not-allowed`}
+              >
+                15 min
+              </button>
+            </div>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+              <button
+                type="button"
+                onClick={() => setBatteryEnabled(false)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  !batteryEnabled ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                Battery off
+              </button>
+              <button
+                type="button"
+                onClick={() => setBatteryEnabled(true)}
+                className={`text-[10px] font-bold px-2 py-0.5 rounded-full transition-colors ${
+                  batteryEnabled ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'
+                }`}
+              >
+                Battery on
+              </button>
+            </div>
           </div>
         </div>
       </CardHeader>
+
       <CardContent className={`pt-4 ${prices.loading ? 'animate-pulse' : ''}`}>
         <div className="mb-3 rounded-xl border border-gray-200 bg-gray-50/70 px-3 py-2">
           <div className="flex items-center justify-between mb-1">
@@ -268,26 +306,23 @@ export function BatteryDayChart({ scenario, prices }: Props) {
         </div>
 
         <div className="relative h-[300px]">
-          {batteryEnabled && selectedDayTotals && selectedDayTotals.consumptionKwh > 0 && (() => {
-            const diffCt = selectedDayTotals.baselineAvgCt - selectedDayTotals.batteryAvgCt
-            const isCheaper = diffCt >= 0
-            return (
-              <div className="absolute left-14 top-1 z-20 pointer-events-none flex items-center gap-1.5">
-                <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5 ${isCheaper ? 'bg-emerald-50/80 border-emerald-300/50' : 'bg-red-50/80 border-red-300/50'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isCheaper ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                  <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {isCheaper ? '+' : ''}{selectedDayTotals.savingsEur.toFixed(2)} EUR
-                  </span>
-                  <span className={`text-[9px] font-semibold whitespace-nowrap ${isCheaper ? 'text-emerald-600' : 'text-red-600'}`}>
-                    {isCheaper ? 'saved with battery today' : 'battery adds cost today'}
-                  </span>
-                </div>
-                <span className="text-[9px] text-gray-400 tabular-nums">
-                  {selectedDayTotals.batteryAvgCt.toFixed(1)} vs {selectedDayTotals.baselineAvgCt.toFixed(1)} ct/kWh
+          {batteryEnabled && summary && summary.consumptionKwh > 0 && (
+            <div className="absolute left-14 top-1 z-20 pointer-events-none flex items-center gap-1.5">
+              <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5 ${summary.savingsEur >= 0 ? 'bg-emerald-50/80 border-emerald-300/50' : 'bg-red-50/80 border-red-300/50'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${summary.savingsEur >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${summary.savingsEur >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {summary.savingsEur >= 0 ? '+' : ''}{summary.savingsEur.toFixed(2)} EUR
+                </span>
+                <span className={`text-[9px] font-semibold whitespace-nowrap ${summary.savingsEur >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {summary.savingsEur >= 0 ? `saved over ${windowHours}h` : `adds cost over ${windowHours}h`}
                 </span>
               </div>
-            )
-          })()}
+              <span className="text-[9px] text-gray-400 tabular-nums">
+                {summary.batteryAvgCt.toFixed(1)} vs {summary.baselineAvgCt.toFixed(1)} ct/kWh
+              </span>
+            </div>
+          )}
+
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={displayData} margin={{ top: 36, right: 48, bottom: 20, left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
@@ -296,14 +331,14 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                 tick={{ fontSize: 10, fill: '#6B7280' }}
                 tickLine={false}
                 axisLine={false}
-                interval={chartData.length === 96 ? 11 : 2}
+                interval={xAxisInterval}
               />
               <YAxis
                 yAxisId="left"
                 tick={{ fontSize: 10, fill: '#9CA3AF' }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))}
+                tickFormatter={(value) => (typeof value === 'number' ? value.toFixed(2) : String(value))}
                 label={{
                   value: 'kWh / slot',
                   angle: -90,
@@ -319,7 +354,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                 tick={{ fontSize: 10, fill: '#9CA3AF' }}
                 tickLine={false}
                 axisLine={false}
-                tickFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(0)} ct` : String(v))}
+                tickFormatter={(value) => (typeof value === 'number' ? `${value.toFixed(0)} ct` : String(value))}
               />
 
               <Area
@@ -349,13 +384,14 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                   name="PV generation"
                 />
               )}
+
               <Line
                 yAxisId="right"
                 type="monotone"
                 dataKey="priceCtKwh"
                 stroke="#EA1C0A"
                 strokeWidth={1.5}
-                strokeOpacity={0.55}
+                strokeOpacity={0.5}
                 dot={false}
                 isAnimationActive={false}
                 name="Day-ahead price"
@@ -363,7 +399,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
               <Line
                 yAxisId="right"
                 type="monotone"
-                dataKey="chargeMarkerCtKwh"
+                dataKey="chargeLineCtKwh"
                 stroke="#2563EB"
                 strokeWidth={2.5}
                 connectNulls={false}
@@ -375,7 +411,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
               <Line
                 yAxisId="right"
                 type="monotone"
-                dataKey="dischargeMarkerCtKwh"
+                dataKey="dischargeLineCtKwh"
                 stroke="#10B981"
                 strokeWidth={2.5}
                 connectNulls={false}
@@ -388,42 +424,42 @@ export function BatteryDayChart({ scenario, prices }: Props) {
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null
-                  const d = payload[0].payload as ChartPoint
+                  const point = payload[0].payload as ChartPoint
                   return (
                     <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
-                      <p className="text-gray-500 text-[10px]">{d.label}</p>
+                      <p className="text-gray-500 text-[10px]">{point.label}</p>
                       <p className="tabular-nums text-[#EA1C0A] font-semibold">
-                        {d.priceCtKwh.toFixed(1)} ct/kWh
+                        {point.priceCtKwh.toFixed(1)} ct/kWh
                       </p>
                       <p className="tabular-nums text-gray-600">
-                        Household demand: {d.loadKwh.toFixed(3)} kWh
+                        Household demand: {point.loadKwh.toFixed(3)} kWh
                       </p>
                       <p className="tabular-nums text-slate-600">
-                        SoC: {d.socPct.toFixed(0)}%
+                        SoC: {point.socPct.toFixed(0)}%
                       </p>
                       {showPv && (
                         <p className="tabular-nums text-amber-600">
-                          PV generation: {d.pvKwh.toFixed(3)} kWh
+                          PV generation: {point.pvKwh.toFixed(3)} kWh
                         </p>
                       )}
-                      {d.chargeKwh > 0 && (
+                      {point.chargeKwh > 0 && (
                         <p className="tabular-nums text-blue-600">
-                          Battery charging: {d.chargeKwh.toFixed(3)} kWh
-                          {d.chargeFromGridKwh > 0 ? ' from grid' : ' from PV'}
+                          Battery charging: {point.chargeKwh.toFixed(3)} kWh
+                          {point.chargeFromGridKwh > 0 ? ' from grid' : ' from PV'}
                         </p>
                       )}
-                      {d.dischargeKwh > 0 && (
+                      {point.dischargeKwh > 0 && (
                         <p className="tabular-nums text-emerald-600">
-                          Battery support: {d.dischargeKwh.toFixed(3)} kWh
+                          Battery discharging: {point.dischargeKwh.toFixed(3)} kWh
                         </p>
                       )}
                       <p
                         className={`tabular-nums font-semibold ${
-                          d.slotSavingsEur < 0 ? 'text-red-600' : 'text-emerald-600'
+                          point.slotSavingsEur < 0 ? 'text-red-600' : 'text-emerald-600'
                         }`}
                       >
-                        {d.slotSavingsEur >= 0 ? '+' : ''}
-                        {d.slotSavingsEur.toFixed(4)} EUR vs no battery
+                        {point.slotSavingsEur >= 0 ? '+' : ''}
+                        {point.slotSavingsEur.toFixed(4)} EUR vs no battery
                       </p>
                     </div>
                   )
@@ -432,6 +468,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+
         <div className="flex flex-wrap items-center gap-4 mt-2 text-[10px] text-gray-500">
           <span className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#E5E7EB' }} /> Household demand unchanged
@@ -446,7 +483,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
             <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#EA1C0A' }} /> Day-ahead price
           </span>
           <span className="text-gray-400">
-            Profile: {loadProfile.label} · Battery cap {dischargeCapPerSlotKwh.toFixed(2)} kWh/slot
+            Profile: {loadProfile.label} · Battery cap {capPerSlotKwh.toFixed(2)} kWh/slot
           </span>
         </div>
       </CardContent>
