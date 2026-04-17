@@ -27,6 +27,8 @@ created: 2026-04-17
 
 shadcn already initialized. No new npm packages required. All computation is client-side.
 
+**Primary visual anchor:** BatteryVariantPicker at the top of the page — variant selection drives all downstream computation (day chart, ROI card, management table). It must be above the fold on desktop 1440px and be the first interactive element in tab order.
+
 ---
 
 ## Spacing Scale
@@ -54,16 +56,16 @@ Exceptions:
 
 All numeric displays use `tabular-nums`. Code-like labels (timestamps, prices, slot indices) use `font-mono`. Matches existing /v2 codebase conventions exactly.
 
+Exactly 4 font sizes and 2 font weights are used. No other sizes or weights.
+
 | Role | Size | Weight | Line Height | Usage |
 |------|------|--------|-------------|-------|
-| Card title | 16px (text-base) | 700 (font-bold) | 1.3 | CardTitle in every Card header |
-| Body / descriptor | 11px (text-[11px]) | 400 (font-normal) | 1.6 | Subtitle lines under card titles, parameter labels |
-| Micro label | 10px (text-[10px]) | 700 (font-bold) | 1.4 | Section section headers (uppercase + tracking-wider), column headers |
-| Data / number | 12px (text-[12px]) | 600 (font-semibold) | 1.4 | Inline data values in tables and breakdown lists |
-| Display metric | 20px (text-xl) | 700 (font-bold) | 1.2 | Hero ROI numbers: annual savings, payback period, NPV |
-| Small annotation | 9px (text-[9px]) | 600 (font-semibold) | 1.4 | Sub-table section headers (e.g. "Quarterly"), assumption footnotes |
+| Display metric | 20px (`text-xl`) | 600 (`font-semibold`) | 1.2 | Hero ROI numbers: annual savings, payback period, NPV |
+| Card title | 16px (`text-base`) | 600 (`font-semibold`) | 1.3 | CardTitle in every Card header, product name in variant picker |
+| Body / descriptor | 12px (`text-[12px]`) | 400 (`font-normal`) | 1.5 | Subtitle lines under card titles, parameter labels, table body, market framing text, assumption footnotes |
+| Micro label | 10px (`text-[10px]`) | 600 (`font-semibold`) | 1.4 | Section headers (uppercase + tracking-wider), column headers, descriptor lines under controls, annotation footnotes |
 
-Font weights used: 400 (regular) and 600/700 (semibold/bold). No other weights.
+Font weights used: **400 (regular) + 600 (semibold) only.** `font-bold` (700) is not used anywhere in Phase 8. All instances that would otherwise use `font-bold` use `font-semibold` instead — consistent with the existing /v2 codebase pattern.
 
 ---
 
@@ -100,7 +102,7 @@ CSS custom properties via HSL vars (`hsl(var(--...))`) — all existing tokens. 
 **Component: `BatteryVariantPicker`**
 
 Three cards arranged in a horizontal flex row (gap-4) on desktop 1440px. Each card is a shadcn `<Card>` with:
-- Product name in `text-base font-bold text-[#313131]`
+- Product name in `text-base font-semibold text-[#313131]`
 - Install type badge: "Plug-in" (gray pill) or "Electrician req." (amber pill with ⚠ icon from lucide-react)
 - Spec grid (2 columns, 10px font): Capacity / Power / RTE / Price (incl. VAT) / Warranty
 - Assumption marker on price fields with LOW confidence (asterisk + footnote below picker)
@@ -159,10 +161,10 @@ Upper half — per-session equivalent (daily arbitrage summary):
 - Arbitrage stream and PV stream shown as separate rows within the "With battery" column
 
 Lower half — annual ROI metrics (4 large display numbers in a 2×2 grid):
-- Annual savings EUR: `text-xl font-bold text-emerald-700 tabular-nums`
-- Payback period (years): `text-xl font-bold text-[#313131] tabular-nums`
-- Break-even year: `text-xl font-bold text-[#313131] tabular-nums`
-- 10-year NPV EUR: `text-xl font-bold` — `text-emerald-700` if positive, `text-red-600` if negative
+- Annual savings EUR: `text-xl font-semibold text-emerald-700 tabular-nums`
+- Payback period (years): `text-xl font-semibold text-[#313131] tabular-nums`
+- Break-even year: `text-xl font-semibold text-[#313131] tabular-nums`
+- 10-year NPV EUR: `text-xl font-semibold` — `text-emerald-700` if positive, `text-red-600` if negative
 
 Below each metric: `text-[10px] text-gray-400` descriptor line.
 
@@ -192,7 +194,7 @@ View toggle: Month / Day (same as MonthlySavingsCard). Day view shows tabular sl
 
 **Component: `RegulationPanel`**
 
-Inline collapsible card (not a modal). Open by default on first load, collapsible via chevron toggle.
+Inline collapsible card (not a modal). Open by default on first load, collapsible via chevron toggle. The chevron `<button>` must carry `aria-label="Toggle regulation settings"`.
 
 DE controls (shown when country = DE):
 - Feed-in cap toggle: "800W (current)" / "2000W (proposed)" — segmented control, same pill pattern. Active 2000W state: `ring-2 ring-[#EA1C0A]` + amber badge "Proposed — not enacted (Apr 2026)".
@@ -206,7 +208,7 @@ NL controls (shown when country = NL):
 - Export compensation: inline number input (shadcn Input), labeled "% of market rate". Default: 50 (minimum floor until 2030). Range 50–115 (Frank Energie at ~115).
 - BTW note: `text-[10px] text-amber-600` inline — "21% BTW assumed for standalone battery (Belastingdienst source pending)."
 
-Layout: 2-column responsive grid (single column below 768px). Each control has a `text-[11px] text-gray-400` descriptor line below the control.
+Layout: 2-column responsive grid (single column below 768px). Each control has a `text-[12px] text-gray-400` descriptor line below the control.
 
 ---
 
@@ -214,13 +216,13 @@ Layout: 2-column responsive grid (single column below 768px). Each control has a
 
 **Component: `ManagementView`**
 
-Separated from consumer section by a `border-t border-gray-200` divider with section header: `text-[10px] font-bold text-gray-400 uppercase tracking-wider py-4` "Investor / Management View".
+Separated from consumer section by a `border-t border-gray-200` divider with section header: `text-[10px] font-semibold text-gray-400 uppercase tracking-wider py-4` "Investor / Management View".
 
 Sub-section A — Unit Economics Table (DE vs NL, per variant):
 
 Dense tabular layout. Columns: Variant / Country / Annual savings EUR / Hardware cost EUR / Simple payback yrs / 10yr NPV EUR / Arbitrage share % / PV share %.
 - Row grouping: Variant A (DE), Variant A (NL), Variant B (DE), Variant B (NL), Variant C (DE), Variant C (NL).
-- `text-[11px] tabular-nums`. Column headers `text-[10px] font-semibold text-gray-400 uppercase`.
+- `text-[12px] tabular-nums`. Column headers `text-[10px] font-semibold text-gray-400 uppercase`.
 - Conditional row formatting: NPV < 0 rows use `text-red-600` for NPV column only.
 - Active scenario row (current picker state): `bg-emerald-50/30` highlight.
 
@@ -269,7 +271,7 @@ Omit params that match their default (same as /v2 pattern — keeps URLs shareab
 - Switching country: updates price source (SMARD → ENTSO-E), swaps regulation panel controls, swaps tariff dropdown options.
 - NL activation: immediately shows amber "post-2027 regime" badge. Does NOT show a modal — inline change only.
 - Loading state while ENTSO-E fetches: price curve in chart shows `opacity-50` + `animate-pulse` shimmer on the Line series. Other chart series (load, PV, SoC) remain visible from static data.
-- ENTSO-E error (503): non-blocking banner at top of BatteryDayChart: `bg-amber-50 border border-amber-200 text-amber-700 text-[11px] rounded px-3 py-2` "NL prices unavailable — ENTSO-E returned an error. Showing last cached data." No fallback to DE automatically (user must switch manually if desired).
+- ENTSO-E error (503): non-blocking banner at top of BatteryDayChart: `bg-amber-50 border border-amber-200 text-amber-700 text-[12px] rounded px-3 py-2` "NL prices unavailable — ENTSO-E returned an error. Showing last cached data." No fallback to DE automatically (user must switch manually if desired).
 
 ### Feed-in Cap Toggle (DE 800W / 2000W)
 - Toggle re-runs optimizer client-side (< 5ms). All downstream components update synchronously.
@@ -285,7 +287,7 @@ Omit params that match their default (same as /v2 pattern — keeps URLs shareab
 
 ### Collapsible Sections
 - Formula section in BatteryRoiCard: same `<button>` chevron toggle as SessionCostCard. State is local (not URL-synced).
-- RegulationPanel: chevron button with `text-[10px] font-bold text-gray-400 uppercase tracking-wider`. Open by default. State is local.
+- RegulationPanel: chevron `<button aria-label="Toggle regulation settings">` with `text-[10px] font-semibold text-gray-400 uppercase tracking-wider`. Open by default. State is local.
 
 ---
 
@@ -295,7 +297,7 @@ Omit params that match their default (same as /v2 pattern — keeps URLs shareab
 |-------|-----------|-----------|
 | Prices loading (DE SMARD) | BatteryDayChart | Price Line: `opacity-30 animate-pulse`. Static series remain. |
 | Prices loading (NL ENTSO-E) | BatteryDayChart | Same as above + amber banner (see above). |
-| No price data for selected date | BatteryDayChart | Empty chart area with centered `text-[11px] text-gray-400` "No price data available for this date." |
+| No price data for selected date | BatteryDayChart | Empty chart area with centered `text-[12px] text-gray-400` "No price data available for this date." |
 | Optimizer result zero | BatteryRoiCard | Show all metrics as `— EUR` / `— yr`. Note: "No price spread on this day — battery did not cycle." |
 | PV profile not loaded | BatteryDayChart | PV Area series hidden. Variant B shows inline note: `text-[10px] text-amber-600` "PV profile loading…" |
 | Static profile load error | page | Sonner toast: "Could not load load profile data. Showing estimates." (uses existing `sonner` package) |
@@ -312,7 +314,7 @@ Omit params that match their default (same as /v2 pattern — keeps URLs shareab
 | Variant A label | "Schuko Steckerspeicher" |
 | Variant B label | "Balkonkraftwerk + Speicher" |
 | Variant C label | "Wandbatterie (Elektriker)" |
-| Primary CTA (variant selection) | "Analyse this variant" (button inside each variant card, becomes "Selected" when active) |
+| Primary CTA (variant selection) | "Analyse this variant" (button inside each variant card, becomes "Variant selected" when active) |
 | ROI card: savings line | "Annual savings" |
 | ROI card: payback line | "Simple payback" |
 | ROI card: break-even line | "Break-even year" |
