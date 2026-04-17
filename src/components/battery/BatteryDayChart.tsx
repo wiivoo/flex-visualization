@@ -29,7 +29,6 @@
 import { useMemo, useState } from 'react'
 import {
   ComposedChart,
-  Bar,
   Area,
   Line,
   XAxis,
@@ -37,7 +36,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
 } from 'recharts'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import {
@@ -59,9 +57,7 @@ interface ChartPoint {
   label: string // 'HH:MM'
   priceCtKwh: number
   loadKwh: number
-  baselineGridKwh: number
   pvKwh: number
-  meterDrawKwh: number
   /** positive when charging (PV or grid) */
   chargeKwh: number
   chargeFromGridKwh: number
@@ -69,7 +65,7 @@ interface ChartPoint {
   dischargeKwh: number
   slotSavingsEur: number
   pvSelfKwh: number
-  gridImportKwh: number
+  socPct: number
 }
 
 function buildParamsFromScenario(scenario: BatteryScenario): BatteryParams {
@@ -149,17 +145,15 @@ export function BatteryDayChart({ scenario, prices }: Props) {
       label: `${String(s.hour).padStart(2, '0')}:${String(s.minute).padStart(2, '0')}`,
       priceCtKwh: s.priceCtKwh,
       loadKwh: s.loadKwh,
-      baselineGridKwh: s.gridImportKwh + s.dischargeToLoadKwh,
       pvKwh: s.pvKwh,
-      meterDrawKwh: s.gridImportKwh + s.chargeFromGridKwh,
       chargeKwh: s.chargeFromGridKwh + s.chargeFromPvKwh,
       chargeFromGridKwh: s.chargeFromGridKwh,
       dischargeKwh: s.dischargeToLoadKwh,
       slotSavingsEur: s.baselineCostEur - s.slotCostEur,
       pvSelfKwh: s.pvSelfKwh,
-      gridImportKwh: s.gridImportKwh,
+      socPct: variant.usableKwh > 0 ? (s.socKwhEnd / variant.usableKwh) * 100 : 0,
     }))
-  }, [dayResult])
+  }, [dayResult, variant.usableKwh])
 
   const showPv = variant.includePv
   const dischargeCapPerSlotKwh =
@@ -167,24 +161,20 @@ export function BatteryDayChart({ scenario, prices }: Props) {
   const displayData = useMemo(() => {
     return chartData.map((point) => ({
       ...point,
-      displayedGridKwh: batteryEnabled ? point.meterDrawKwh : point.baselineGridKwh,
       chargeMarkerCtKwh: batteryEnabled && point.chargeKwh > 0 ? point.priceCtKwh : null,
       dischargeMarkerCtKwh: batteryEnabled && point.dischargeKwh > 0 ? point.priceCtKwh : null,
-      visibleChargeKwh: batteryEnabled ? point.chargeKwh : 0,
-      visibleDischargeKwh: batteryEnabled ? point.dischargeKwh : 0,
+      visibleSocPct: batteryEnabled ? point.socPct : 0,
     }))
   }, [batteryEnabled, chartData])
   const selectedDayTotals = useMemo(() => {
     if (!dayResult || chartData.length === 0) return null
     const consumptionKwh = chartData.reduce((sum, point) => sum + point.loadKwh, 0)
-    const meteredDrawKwh = chartData.reduce((sum, point) => sum + point.meterDrawKwh, 0)
     const chargeKwh = chartData.reduce((sum, point) => sum + point.chargeKwh, 0)
     const dischargeKwh = chartData.reduce((sum, point) => sum + point.dischargeKwh, 0)
     const baselineAvgCt = consumptionKwh > 0 ? (dayResult.summary.baselineCostEur / consumptionKwh) * 100 : 0
     const batteryAvgCt = consumptionKwh > 0 ? (dayResult.summary.optimizedCostEur / consumptionKwh) * 100 : 0
     return {
       consumptionKwh,
-      meteredDrawKwh,
       chargeKwh,
       dischargeKwh,
       savingsEur: dayResult.summary.savingsEur,
@@ -222,7 +212,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
               Day schedule — {variant.shortLabel}
             </p>
             <p className="text-[12px] text-gray-500 mt-1">
-              Left axis shows kWh per slot. Household demand stays unchanged; battery activity only changes the metered grid draw.
+              Household demand stays unchanged. Battery charging, discharging, and SoC are shown separately against the day-ahead price path.
             </p>
           </div>
           <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
@@ -248,7 +238,36 @@ export function BatteryDayChart({ scenario, prices }: Props) {
         </div>
       </CardHeader>
       <CardContent className={`pt-4 ${prices.loading ? 'animate-pulse' : ''}`}>
-        <div className="relative h-[320px]">
+        <div className="mb-3 rounded-xl border border-gray-200 bg-gray-50/70 px-3 py-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              Battery state of charge
+            </span>
+            <span className="text-[10px] text-gray-400">
+              {batteryEnabled ? `${variant.usableKwh.toFixed(1)} kWh usable` : 'Battery disabled'}
+            </span>
+          </div>
+          <div className="h-[72px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={displayData} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+                <XAxis dataKey="label" hide />
+                <YAxis hide domain={[0, 100]} />
+                <Area
+                  type="monotone"
+                  dataKey="visibleSocPct"
+                  fill="#DBEAFE"
+                  fillOpacity={0.65}
+                  stroke="#2563EB"
+                  strokeWidth={1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="relative h-[300px]">
           {batteryEnabled && selectedDayTotals && selectedDayTotals.consumptionKwh > 0 && (() => {
             const diffCt = selectedDayTotals.baselineAvgCt - selectedDayTotals.batteryAvgCt
             const isCheaper = diffCt >= 0
@@ -302,19 +321,6 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                 axisLine={false}
                 tickFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(0)} ct` : String(v))}
               />
-              <ReferenceLine
-                yAxisId="left"
-                y={dischargeCapPerSlotKwh}
-                stroke="#9CA3AF"
-                strokeDasharray="4 4"
-                ifOverflow="extendDomain"
-                label={{
-                  value: `Battery cap ${dischargeCapPerSlotKwh.toFixed(2)} kWh/slot`,
-                  position: 'insideTopRight',
-                  fill: '#6B7280',
-                  fontSize: 10,
-                }}
-              />
 
               <Area
                 yAxisId="left"
@@ -327,18 +333,6 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                 dot={false}
                 isAnimationActive={false}
                 name="Household demand"
-              />
-              <Area
-                yAxisId="left"
-                type="monotone"
-                dataKey="displayedGridKwh"
-                fill="#DBEAFE"
-                fillOpacity={0.18}
-                stroke="#2563EB"
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-                name={batteryEnabled ? 'Grid draw with battery' : 'Grid draw without battery'}
               />
 
               {showPv && (
@@ -355,33 +349,13 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                   name="PV generation"
                 />
               )}
-
-              <Bar
-                yAxisId="left"
-                dataKey="visibleChargeKwh"
-                fill="#2563EB"
-                fillOpacity={0.55}
-                maxBarSize={8}
-                isAnimationActive={false}
-                name="Battery charging"
-              />
-
-              <Bar
-                yAxisId="left"
-                dataKey="visibleDischargeKwh"
-                fill="#10B981"
-                fillOpacity={0.55}
-                maxBarSize={8}
-                isAnimationActive={false}
-                name="Battery support"
-              />
               <Line
                 yAxisId="right"
                 type="monotone"
                 dataKey="priceCtKwh"
                 stroke="#EA1C0A"
-                strokeWidth={2}
-                strokeOpacity={0.9}
+                strokeWidth={1.5}
+                strokeOpacity={0.55}
                 dot={false}
                 isAnimationActive={false}
                 name="Day-ahead price"
@@ -390,21 +364,25 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                 yAxisId="right"
                 type="monotone"
                 dataKey="chargeMarkerCtKwh"
-                stroke="none"
-                dot={{ r: 2.5, fill: '#2563EB', stroke: '#2563EB' }}
+                stroke="#2563EB"
+                strokeWidth={2.5}
+                connectNulls={false}
+                dot={{ r: 2, fill: '#2563EB', stroke: '#2563EB' }}
                 activeDot={{ r: 4, fill: '#2563EB', stroke: '#2563EB' }}
                 isAnimationActive={false}
-                name="Charge slots"
+                name="Battery charging"
               />
               <Line
                 yAxisId="right"
                 type="monotone"
                 dataKey="dischargeMarkerCtKwh"
-                stroke="none"
-                dot={{ r: 2.5, fill: '#10B981', stroke: '#10B981' }}
+                stroke="#10B981"
+                strokeWidth={2.5}
+                connectNulls={false}
+                dot={{ r: 2, fill: '#10B981', stroke: '#10B981' }}
                 activeDot={{ r: 4, fill: '#10B981', stroke: '#10B981' }}
                 isAnimationActive={false}
-                name="Discharge slots"
+                name="Battery discharging"
               />
 
               <Tooltip
@@ -421,10 +399,7 @@ export function BatteryDayChart({ scenario, prices }: Props) {
                         Household demand: {d.loadKwh.toFixed(3)} kWh
                       </p>
                       <p className="tabular-nums text-slate-600">
-                        Grid draw without battery: {d.baselineGridKwh.toFixed(3)} kWh
-                      </p>
-                      <p className="tabular-nums text-blue-700">
-                        Grid draw with battery: {d.meterDrawKwh.toFixed(3)} kWh
+                        SoC: {d.socPct.toFixed(0)}%
                       </p>
                       {showPv && (
                         <p className="tabular-nums text-amber-600">
@@ -462,13 +437,10 @@ export function BatteryDayChart({ scenario, prices }: Props) {
             <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#E5E7EB' }} /> Household demand unchanged
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#DBEAFE' }} /> Metered grid draw
+            <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#2563EB' }} /> Battery charging
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#2563EB' }} /> Battery charging
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#10B981' }} /> Battery support
+            <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#10B981' }} /> Battery discharging
           </span>
           <span className="flex items-center gap-1">
             <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#EA1C0A' }} /> Day-ahead price
