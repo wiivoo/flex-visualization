@@ -191,6 +191,30 @@ function V2Inner() {
         <div className="max-w-[1440px] mx-auto px-8 py-2 flex items-center justify-between">
           <h1 className="text-sm font-semibold text-gray-400">EV Flex Charging — Load Shifting Visualization</h1>
           <div className="flex items-center gap-2">
+            <details className="relative">
+              <summary className="list-none flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors cursor-pointer select-none">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                More
+              </summary>
+              <div className="absolute right-0 top-full mt-2 w-44 rounded-xl border border-gray-200 bg-white shadow-lg p-1.5 z-20">
+                <Link
+                  href="/dynamic"
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Dynamic
+                  <span className="text-[10px] text-gray-400">Tariff view</span>
+                </Link>
+                <Link
+                  href="/battery"
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Battery
+                  <span className="text-[10px] text-gray-400">Home storage</span>
+                </Link>
+              </div>
+            </details>
             <Link
               href="/v2/insights"
               className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">

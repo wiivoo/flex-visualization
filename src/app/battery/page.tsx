@@ -15,7 +15,7 @@ import { BatteryDayChart } from '@/components/battery/BatteryDayChart'
 import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
 import { RegulationPanel } from '@/components/battery/RegulationPanel'
 import { ManagementView } from '@/components/battery/ManagementView'
-import { MiniCalendar } from '@/components/v2/MiniCalendar'
+import { DateStrip } from '@/components/v2/DateStrip'
 
 // ---------------------------------------------------------------------------
 // URL parse — untrusted search params → typed scenario
@@ -126,10 +126,6 @@ function BatteryInner() {
     router.replace(qs ? `/battery?${qs}` : '/battery', { scroll: false })
   }, [scenario, router])
 
-  const handleDateSelect = useCallback((date: string) => {
-    prices.setSelectedDate(date)
-  }, [prices])
-
   return (
     <div className="min-h-screen bg-[#F5F5F2]">
       {/* Header — matches /v2 pill style */}
@@ -151,33 +147,40 @@ function BatteryInner() {
       </header>
 
       <main className="max-w-[1440px] mx-auto px-8 py-8 space-y-6">
-        <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
-          <aside className="space-y-4">
-            <div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Pick a real battery
-              </p>
-              <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
-            </div>
+        <section>
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+            Battery scenario
+          </p>
+          <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
+        </section>
 
-            <div className="rounded-2xl border border-gray-200/80 bg-white p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Select date</p>
-                {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
-                {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
-              </div>
-              <MiniCalendar
+        {prices.daily.length > 0 && (
+          <section>
+            <div className="rounded-2xl border border-gray-200/80 bg-white p-3">
+              <DateStrip
                 daily={prices.daily}
                 selectedDate={prices.selectedDate}
-                onSelect={handleDateSelect}
-                compact
+                onSelect={prices.setSelectedDate}
+                requireNextDay={false}
+                latestDate={(() => {
+                  const now = new Date()
+                  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+                })()}
+                forecastAfter={prices.lastRealDate || undefined}
               />
             </div>
-          </aside>
-
-          <section data-slot="day-chart" className="min-h-[320px]">
-            <BatteryDayChart scenario={scenario} prices={prices} />
           </section>
+        )}
+
+        <section data-slot="day-chart" className="min-h-[320px]">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+              Day schedule
+            </p>
+            {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
+            {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
+          </div>
+          <BatteryDayChart scenario={scenario} prices={prices} />
         </section>
 
         {/* Section 4: ROI card + Regulation panel (filled by plan 08-07) */}
