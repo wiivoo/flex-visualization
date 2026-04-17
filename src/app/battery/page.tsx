@@ -9,6 +9,9 @@ import {
   type BatteryScenario,
 } from '@/lib/battery-config'
 import { BatteryVariantPicker } from '@/components/battery/BatteryVariantPicker'
+import { BatteryDayChart } from '@/components/battery/BatteryDayChart'
+import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
+import { RegulationPanel } from '@/components/battery/RegulationPanel'
 import { MiniCalendar } from '@/components/v2/MiniCalendar'
 
 // ---------------------------------------------------------------------------
@@ -160,19 +163,15 @@ function BatteryInner() {
         {/* Section 3: Day chart (filled by plan 08-06) */}
         <section
           data-slot="day-chart"
-          className="min-h-[320px] border border-dashed border-gray-200 rounded-lg p-6 flex items-center justify-center"
+          className="min-h-[320px]"
         >
-          <p className="text-[12px] text-gray-400">Day chart will render here (plan 08-06).</p>
+          <BatteryDayChart scenario={scenario} prices={prices} />
         </section>
 
         {/* Section 4: ROI card + Regulation panel (filled by plan 08-07) */}
         <section data-slot="roi-regulation" className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="min-h-[320px] border border-dashed border-gray-200 rounded-lg p-6 flex items-center justify-center">
-            <p className="text-[12px] text-gray-400">ROI card (plan 08-07).</p>
-          </div>
-          <div className="min-h-[320px] border border-dashed border-gray-200 rounded-lg p-6 flex items-center justify-center">
-            <p className="text-[12px] text-gray-400">Regulation panel (plan 08-07).</p>
-          </div>
+          <BatteryRoiCard scenario={scenario} prices={prices} />
+          <RegulationPanel scenario={scenario} setScenario={setScenario} />
         </section>
 
         {/* Section 5: Management view (filled by plan 08-08) */}
