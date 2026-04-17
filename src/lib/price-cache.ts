@@ -53,6 +53,7 @@ export async function getCachedPrices(
   type: CacheType
 ): Promise<CachedPriceData | null> {
   try {
+    if (!supabase) return null
     const { data, error } = await supabase
       .from('price_cache')
       .select('*')
@@ -88,6 +89,7 @@ export async function setCachedPrices(
   prices: Array<{ timestamp: string; price_ct_kwh: number | null }>
 ): Promise<void> {
   try {
+    if (!supabase) return
     const { error } = await supabase
       .from('price_cache')
       .upsert({
@@ -113,6 +115,7 @@ export async function setCachedPrices(
  */
 export async function cleanupExpiredCache(): Promise<void> {
   try {
+    if (!supabase) return
     const cutoffDate = new Date()
     cutoffDate.setDate(cutoffDate.getDate() - 30)
 

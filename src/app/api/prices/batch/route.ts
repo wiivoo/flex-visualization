@@ -265,6 +265,7 @@ async function getCachedDays(
   indexField?: string
 ): Promise<Map<string, PricePoint[]>> {
   const cachedDays = new Map<string, PricePoint[]>()
+  if (!supabase) return cachedDays
   const typeKey = cacheTypeKey(type, resolution)
   const startStr = format(startDate, 'yyyy-MM-dd')
   const endStr = format(endDate, 'yyyy-MM-dd')
@@ -324,6 +325,7 @@ async function getCachedIntradayFull(
   cachePrefix: string
 ): Promise<Map<string, IntradayPoint[]>> {
   const cachedDays = new Map<string, IntradayPoint[]>()
+  if (!supabase) return cachedDays
   const typeKey = `${cachePrefix}intraday`
   const startStr = format(startDate, 'yyyy-MM-dd')
   const endStr = format(endDate, 'yyyy-MM-dd')
