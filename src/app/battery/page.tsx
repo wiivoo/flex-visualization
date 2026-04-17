@@ -46,7 +46,7 @@ function parseScenario(params: URLSearchParams): BatteryScenario {
     ? (loadProfileRaw as BatteryScenario['loadProfileId'])
     : getDefaultLoadProfileId(country)
 
-  const feedInCapKw = getNum('feedin', DEFAULT_BATTERY_SCENARIO.feedInCapKw, 0.8, 2.5)
+  const feedInCapKw = getNum('feedin', DEFAULT_BATTERY_SCENARIO.feedInCapKw, 0, 2.5)
 
   return {
     ...DEFAULT_BATTERY_SCENARIO,
@@ -185,9 +185,14 @@ function BatteryInner() {
               <BatteryDayChart scenario={scenario} prices={prices} />
             </section>
 
-            <section data-slot="roi-regulation" className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <section
+              data-slot="roi-regulation"
+              className={`grid grid-cols-1 gap-4 ${scenario.country === 'NL' ? 'xl:grid-cols-2' : ''}`}
+            >
               <BatteryRoiCard scenario={scenario} prices={prices} />
-              <RegulationPanel scenario={scenario} setScenario={setScenario} />
+              {scenario.country === 'NL' && (
+                <RegulationPanel scenario={scenario} setScenario={setScenario} />
+              )}
             </section>
 
             <section data-slot="management-view" className="border-t border-gray-200 pt-6">
