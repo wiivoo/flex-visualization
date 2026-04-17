@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
@@ -16,6 +16,7 @@ import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
 import { RegulationPanel } from '@/components/battery/RegulationPanel'
 import { ManagementView } from '@/components/battery/ManagementView'
 import { DateStrip } from '@/components/v2/DateStrip'
+import { Card, CardContent } from '@/components/ui/card'
 
 // ---------------------------------------------------------------------------
 // URL parse — untrusted search params → typed scenario
@@ -146,56 +147,57 @@ function BatteryInner() {
         </div>
       </header>
 
-      <main className="max-w-[1440px] mx-auto px-8 py-8 space-y-6">
-        <section>
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Battery scenario
-          </p>
-          <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
-        </section>
+      <main className="max-w-[1440px] mx-auto px-8 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
+            <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
+          </aside>
 
-        {prices.daily.length > 0 && (
-          <section>
-            <div className="rounded-2xl border border-gray-200/80 bg-white p-3">
-              <DateStrip
-                daily={prices.daily}
-                selectedDate={prices.selectedDate}
-                onSelect={prices.setSelectedDate}
-                requireNextDay={false}
-                latestDate={(() => {
-                  const now = new Date()
-                  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-                })()}
-                forecastAfter={prices.lastRealDate || undefined}
-              />
-            </div>
-          </section>
-        )}
+          <div className="lg:col-span-3 space-y-4">
+            {prices.daily.length > 0 && (
+              <Card className="overflow-hidden shadow-sm border-gray-200/80">
+                <CardContent className="py-2 px-3">
+                  <DateStrip
+                    daily={prices.daily}
+                    selectedDate={prices.selectedDate}
+                    onSelect={prices.setSelectedDate}
+                    requireNextDay={false}
+                    latestDate={(() => {
+                      const now = new Date()
+                      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+                    })()}
+                    forecastAfter={prices.lastRealDate || undefined}
+                  />
+                </CardContent>
+              </Card>
+            )}
 
-        <section data-slot="day-chart" className="min-h-[320px]">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-              Day schedule
-            </p>
-            {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
-            {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
+            <section data-slot="day-chart" className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                  Day schedule
+                </p>
+                <div className="flex items-center gap-2">
+                  {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
+                  {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
+                </div>
+              </div>
+              <BatteryDayChart scenario={scenario} prices={prices} />
+            </section>
+
+            <section data-slot="roi-regulation" className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <BatteryRoiCard scenario={scenario} prices={prices} />
+              <RegulationPanel scenario={scenario} setScenario={setScenario} />
+            </section>
+
+            <section data-slot="management-view" className="border-t border-gray-200 pt-6">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                Investor / Management View
+              </p>
+              <ManagementView scenario={scenario} />
+            </section>
           </div>
-          <BatteryDayChart scenario={scenario} prices={prices} />
-        </section>
-
-        {/* Section 4: ROI card + Regulation panel (filled by plan 08-07) */}
-        <section data-slot="roi-regulation" className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <BatteryRoiCard scenario={scenario} prices={prices} />
-          <RegulationPanel scenario={scenario} setScenario={setScenario} />
-        </section>
-
-        {/* Section 5: Management view (filled by plan 08-08) */}
-        <section data-slot="management-view" className="border-t border-gray-200 pt-6">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Investor / Management View
-          </p>
-          <ManagementView scenario={scenario} />
-        </section>
+        </div>
       </main>
     </div>
   )
