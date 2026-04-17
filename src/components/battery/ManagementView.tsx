@@ -13,6 +13,8 @@ import {
 import {
   BATTERY_VARIANTS,
   DEFAULT_BATTERY_SCENARIO,
+  getDefaultDischargeCapKw,
+  getDefaultLoadProfileId,
   getVariant,
   type BatteryScenario,
 } from '@/lib/battery-config'
@@ -64,14 +66,18 @@ function buildScenario(
   country: 'DE' | 'NL',
 ): BatteryScenario {
   const defaults = getTariffDefaults(country)
+  const variant = getVariant(variantId)
+  const defaultCap = getDefaultDischargeCapKw(variant)
   if (current.variantId === variantId && current.country === country) return current
 
   return {
     ...DEFAULT_BATTERY_SCENARIO,
     variantId,
     country,
+    loadProfileId:
+      current.country === country ? current.loadProfileId : getDefaultLoadProfileId(country),
     annualLoadKwh: current.annualLoadKwh,
-    feedInCapKw: country === 'DE' ? current.feedInCapKw : DEFAULT_BATTERY_SCENARIO.feedInCapKw,
+    feedInCapKw: defaultCap,
     tariffId: defaults.tariffId,
     terugleverCostEur: country === 'NL' ? 0 : 0,
     exportCompensationPct: defaults.exportCompensationPct,
@@ -126,8 +132,26 @@ function perHundredKMarketValue(rows: ManagementRow[]) {
 export function ManagementView({ scenario }: Props) {
   const dePrices = usePrices('DE')
   const nlPrices = usePrices('NL')
-  const deProfiles = useBatteryProfiles('DE')
-  const nlProfiles = useBatteryProfiles('NL')
+  const deProfileYear = useMemo(() => {
+    const dateLike = dePrices.hourly[0]?.date ?? dePrices.hourlyQH[0]?.date
+    const parsed = Number(dateLike?.slice(0, 4))
+    return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getUTCFullYear()
+  }, [dePrices.hourly, dePrices.hourlyQH])
+  const nlProfileYear = useMemo(() => {
+    const dateLike = nlPrices.hourly[0]?.date ?? nlPrices.hourlyQH[0]?.date
+    const parsed = Number(dateLike?.slice(0, 4))
+    return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getUTCFullYear()
+  }, [nlPrices.hourly, nlPrices.hourlyQH])
+  const deProfiles = useBatteryProfiles(
+    'DE',
+    scenario.country === 'DE' ? scenario.loadProfileId : 'H0',
+    deProfileYear,
+  )
+  const nlProfiles = useBatteryProfiles(
+    'NL',
+    scenario.country === 'NL' ? scenario.loadProfileId : 'E1A',
+    nlProfileYear,
+  )
 
   const rows = useMemo(() => {
     if (

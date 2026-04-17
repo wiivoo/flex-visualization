@@ -39,13 +39,6 @@ interface Props {
 export function RegulationPanel({ scenario, setScenario }: Props) {
   const [open, setOpen] = useState(true)    // open-by-default per UI-SPEC §Screen 5
 
-  const setFeedInCap = useCallback(
-    (cap: 0.8 | 2.0) => {
-      setScenario({ ...scenario, feedInCapKw: cap })
-    },
-    [scenario, setScenario],
-  )
-
   const setTerugleverkosten = useCallback(
     (eurYear: number) => {
       setScenario({ ...scenario, terugleverCostEur: eurYear })
@@ -83,7 +76,7 @@ export function RegulationPanel({ scenario, setScenario }: Props) {
       {open && (
         <CardContent className="pt-4">
           {scenario.country === 'DE' ? (
-            <DeControls scenario={scenario} setFeedInCap={setFeedInCap} />
+            <DeControls scenario={scenario} />
           ) : (
             <NlControls
               scenario={scenario}
@@ -103,51 +96,21 @@ export function RegulationPanel({ scenario, setScenario }: Props) {
 
 function DeControls({
   scenario,
-  setFeedInCap,
 }: {
   scenario: BatteryScenario
-  setFeedInCap: (cap: 0.8 | 2.0) => void
 }) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      {/* Feed-in cap toggle — 800W (current) vs 2000W (proposed) */}
+      {/* Discharge cap summary */}
       <div>
         <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">
-          Feed-in cap
+          Discharge cap
         </p>
-        <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 w-fit">
-          <button
-            type="button"
-            onClick={() => setFeedInCap(0.8)}
-            className={
-              'text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ' +
-              (scenario.feedInCapKw === 0.8
-                ? 'bg-white text-[#313131] shadow-sm'
-                : 'text-gray-400 hover:text-gray-600')
-            }
-          >
-            800W (current)
-          </button>
-          <button
-            type="button"
-            onClick={() => setFeedInCap(2.0)}
-            className={
-              'text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ' +
-              (scenario.feedInCapKw === 2.0
-                ? 'bg-white text-[#313131] shadow-sm ring-2 ring-[#EA1C0A]'
-                : 'text-gray-400 hover:text-gray-600')
-            }
-          >
-            2000W (proposed)
-          </button>
-        </div>
-        {scenario.feedInCapKw === 2.0 && (
-          <p className="mt-1 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 w-fit">
-            Proposed — not enacted (Apr 2026)
-          </p>
-        )}
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-100 border border-gray-200 text-[11px] text-[#313131] font-medium">
+          {scenario.feedInCapKw.toFixed(1)} kW
+        </span>
         <p className="text-[12px] text-gray-400 mt-1">
-          Sets the AC feed-in ceiling for battery discharge-to-load.
+          Set in the left control bar. For plug-in products this stays locked at 0.8 kW.
         </p>
       </div>
 

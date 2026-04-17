@@ -23,7 +23,11 @@ import { useMemo } from 'react'
 import {
   type AnnualBatteryResult,
 } from '@/lib/battery-optimizer'
-import { type BatteryScenario } from '@/lib/battery-config'
+import {
+  getDefaultLoadProfileId,
+  isLoadProfileValidForCountry,
+  type BatteryScenario,
+} from '@/lib/battery-config'
 import {
   deriveAnnualBatteryResult,
   getAnnualModelPrices,
@@ -35,7 +39,16 @@ export function useBatteryYear(
   scenario: BatteryScenario,
   prices: PriceData,
 ): AnnualBatteryResult | null {
-  const profiles = useBatteryProfiles(scenario.country)
+  const profileYear = useMemo(() => {
+    const pricesToUse = getAnnualModelPrices(prices)
+    const dateLike = pricesToUse[0]?.date ?? prices.selectedDate
+    const parsed = Number(dateLike?.slice(0, 4))
+    return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getUTCFullYear()
+  }, [prices])
+  const loadProfileId = isLoadProfileValidForCountry(scenario.loadProfileId, scenario.country)
+    ? scenario.loadProfileId
+    : getDefaultLoadProfileId(scenario.country)
+  const profiles = useBatteryProfiles(scenario.country, loadProfileId, profileYear)
 
   return useMemo(() => {
     // Guard 1 — profiles still loading or errored.
@@ -65,6 +78,7 @@ export function useBatteryYear(
     prices.loading,
     scenario.variantId,
     scenario.country,
+    scenario.loadProfileId,
     scenario.annualLoadKwh,
     scenario.feedInCapKw,
   ])

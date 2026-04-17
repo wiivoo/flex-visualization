@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
 import {
   DEFAULT_BATTERY_SCENARIO,
+  getDefaultLoadProfileId,
+  isLoadProfileValidForCountry,
   type BatteryScenario,
 } from '@/lib/battery-config'
 import { BatteryVariantPicker } from '@/components/battery/BatteryVariantPicker'
@@ -38,15 +40,19 @@ function parseScenario(params: URLSearchParams): BatteryScenario {
 
   const countryRaw = params.get('country')
   const country: 'DE' | 'NL' = countryRaw === 'NL' ? 'NL' : 'DE'
+  const loadProfileRaw = params.get('profile')
+  const loadProfileId: BatteryScenario['loadProfileId'] = isLoadProfileValidForCountry(loadProfileRaw ?? '', country)
+    ? (loadProfileRaw as BatteryScenario['loadProfileId'])
+    : getDefaultLoadProfileId(country)
 
-  const feedInRaw = params.get('feedin')
-  const feedInCapKw: 0.8 | 2.0 = feedInRaw === '2' || feedInRaw === '2.0' ? 2.0 : 0.8
+  const feedInCapKw = getNum('feedin', DEFAULT_BATTERY_SCENARIO.feedInCapKw, 0.8, 2.5)
 
   return {
     ...DEFAULT_BATTERY_SCENARIO,
     variantId,
     country,
     tariffId: params.get('tariff') ?? (country === 'NL' ? 'frank-energie' : 'awattar-de'),
+    loadProfileId,
     annualLoadKwh: getNum('load', DEFAULT_BATTERY_SCENARIO.annualLoadKwh, 500, 15000),
     feedInCapKw,
     terugleverCostEur: getNum('teruglever', DEFAULT_BATTERY_SCENARIO.terugleverCostEur, 0, 1000),
@@ -111,6 +117,7 @@ function BatteryInner() {
     if (scenario.country !== 'DE') p.set('country', scenario.country)
     const defaultTariff = scenario.country === 'DE' ? 'awattar-de' : 'frank-energie'
     if (scenario.tariffId !== defaultTariff) p.set('tariff', scenario.tariffId)
+    if (scenario.loadProfileId !== getDefaultLoadProfileId(scenario.country)) p.set('profile', scenario.loadProfileId)
     if (scenario.annualLoadKwh !== DEFAULT_BATTERY_SCENARIO.annualLoadKwh) p.set('load', String(scenario.annualLoadKwh))
     if (scenario.feedInCapKw !== 0.8) p.set('feedin', String(scenario.feedInCapKw))
     if (scenario.terugleverCostEur !== 0) p.set('teruglever', String(scenario.terugleverCostEur))
@@ -144,35 +151,33 @@ function BatteryInner() {
       </header>
 
       <main className="max-w-[1440px] mx-auto px-8 py-8 space-y-6">
-        {/* Section 1: Variant picker + country/tariff/load */}
-        <section>
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Is a plug-in battery worth it?
-          </p>
-          <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
-        </section>
+        <section className="grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <aside className="space-y-4">
+            <div>
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
+                Pick a real battery
+              </p>
+              <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
+            </div>
 
-        {/* Section 2: Date picker */}
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Select date</p>
-            {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
-            {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
-          </div>
-          <MiniCalendar
-            daily={prices.daily}
-            selectedDate={prices.selectedDate}
-            onSelect={handleDateSelect}
-            compact
-          />
-        </section>
+            <div className="rounded-2xl border border-gray-200/80 bg-white p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Select date</p>
+                {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
+                {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
+              </div>
+              <MiniCalendar
+                daily={prices.daily}
+                selectedDate={prices.selectedDate}
+                onSelect={handleDateSelect}
+                compact
+              />
+            </div>
+          </aside>
 
-        {/* Section 3: Day chart (filled by plan 08-06) */}
-        <section
-          data-slot="day-chart"
-          className="min-h-[320px]"
-        >
-          <BatteryDayChart scenario={scenario} prices={prices} />
+          <section data-slot="day-chart" className="min-h-[320px]">
+            <BatteryDayChart scenario={scenario} prices={prices} />
+          </section>
         </section>
 
         {/* Section 4: ROI card + Regulation panel (filled by plan 08-07) */}

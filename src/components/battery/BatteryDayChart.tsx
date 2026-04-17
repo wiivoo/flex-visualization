@@ -38,6 +38,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ReferenceLine,
 } from 'recharts'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import {
@@ -46,7 +47,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { getVariant, type BatteryScenario } from '@/lib/battery-config'
+import {
+  getLoadProfile,
+  getVariant,
+  type BatteryScenario,
+} from '@/lib/battery-config'
 import { runBatteryDay, type BatteryParams, type SlotResult } from '@/lib/battery-optimizer'
 import { useBatteryProfiles } from '@/lib/use-battery-profiles'
 import type { PriceData } from '@/lib/use-prices'
@@ -88,7 +93,19 @@ function buildParamsFromScenario(scenario: BatteryScenario): BatteryParams {
 
 export function BatteryDayChart({ scenario, prices }: Props) {
   const variant = getVariant(scenario.variantId)
-  const profiles = useBatteryProfiles(scenario.country)
+  const profileYear = useMemo(() => {
+    const dateLike = prices.selectedDate
+      ?? prices.daily[0]?.date
+      ?? prices.hourly[0]?.date
+      ?? prices.hourlyQH[0]?.date
+    const parsed = Number(dateLike?.slice(0, 4))
+    return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getUTCFullYear()
+  }, [prices.selectedDate, prices.daily, prices.hourly, prices.hourlyQH])
+  const profiles = useBatteryProfiles(scenario.country, scenario.loadProfileId, profileYear)
+  const loadProfile = useMemo(
+    () => getLoadProfile(scenario.loadProfileId, scenario.country),
+    [scenario.country, scenario.loadProfileId],
+  )
 
   // Prefer QH (96 slots); fall back to hourly (24 slots).
   const daySlots = useMemo(() => {
@@ -150,6 +167,8 @@ export function BatteryDayChart({ scenario, prices }: Props) {
 
   const showPv = variant.includePv
   const isDe = scenario.country === 'DE'
+  const dischargeCapPerSlotKwh =
+    chartData.length === 96 ? scenario.feedInCapKw * 0.25 : scenario.feedInCapKw * (24 / chartData.length)
 
   // --- Empty / loading state ------------------------------------------------
   if (!prices.selectedDate || chartData.length === 0) {
@@ -173,25 +192,45 @@ export function BatteryDayChart({ scenario, prices }: Props) {
     <Card className="shadow-sm border-gray-200/80">
       <CardHeader className="pb-2 border-b border-gray-100">
         <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-            Day schedule — {variant.label}
-          </p>
-          {isDe && (
-            <TooltipProvider>
-              <ShadTooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center text-[10px] font-medium text-gray-400 line-through cursor-help border border-gray-200 rounded-full px-2 py-0.5">
-                    Grid export (prohibited DE)
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-[11px] max-w-[260px]">
-                  VDE-AR-N 4105:2026-03 — battery discharge to the grid is not
-                  permitted under the Steckerspeicher regime. Optimizer enforces
-                  self-consumption only.
-                </TooltipContent>
-              </ShadTooltip>
-            </TooltipProvider>
-          )}
+          <div>
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+              Day schedule — {variant.shortLabel}
+            </p>
+            <p className="text-[12px] text-gray-500 mt-1">
+              Household curve:{' '}
+              <span className="font-semibold text-[#313131]">{loadProfile.label}</span>
+              {' · '}
+              The key constraint is output power: this setup is capped at{' '}
+              <span className="font-semibold text-[#313131]">{scenario.feedInCapKw.toFixed(1)} kW</span>
+              {' '}which equals{' '}
+              <span className="font-semibold text-[#313131]">{dischargeCapPerSlotKwh.toFixed(2)} kWh per slot</span>
+              {chartData.length === 96 ? ' on quarter-hour data.' : ' on hourly data.'}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center text-[10px] font-medium text-gray-500 border border-gray-200 rounded-full px-2 py-0.5">
+              {loadProfile.label}
+            </span>
+            <span className="inline-flex items-center text-[10px] font-medium text-gray-500 border border-gray-200 rounded-full px-2 py-0.5">
+              Output cap {scenario.feedInCapKw.toFixed(1)} kW
+            </span>
+            {isDe && (
+              <TooltipProvider>
+                <ShadTooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center text-[10px] font-medium text-gray-400 line-through cursor-help border border-gray-200 rounded-full px-2 py-0.5">
+                      Grid export prohibited
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[11px] max-w-[260px]">
+                    VDE-AR-N 4105:2026-03 — battery discharge to the grid is not
+                    permitted under the plug-in regime. Optimizer enforces
+                    self-consumption only.
+                  </TooltipContent>
+                </ShadTooltip>
+              </TooltipProvider>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className={`pt-4 ${prices.loading ? 'animate-pulse' : ''}`}>
@@ -227,6 +266,19 @@ export function BatteryDayChart({ scenario, prices }: Props) {
               tickLine={false}
               axisLine={false}
               tickFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(0)} ct` : String(v))}
+            />
+            <ReferenceLine
+              yAxisId="left"
+              y={dischargeCapPerSlotKwh}
+              stroke="#9CA3AF"
+              strokeDasharray="4 4"
+              ifOverflow="extendDomain"
+              label={{
+                value: `${scenario.feedInCapKw.toFixed(1)} kW cap`,
+                position: 'insideTopRight',
+                fill: '#6B7280',
+                fontSize: 10,
+              }}
             />
 
             {/* 1. Household load (gray Area) */}

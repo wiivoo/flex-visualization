@@ -32,11 +32,10 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { getVariant, type BatteryScenario } from '@/lib/battery-config'
+import { getLoadProfile, getVariant, type BatteryScenario } from '@/lib/battery-config'
 import {
   computeBatteryEconomics,
   computeMonthlyEconomics,
-  getTariffLabelForScenario,
 } from '@/lib/battery-economics'
 import { useBatteryYear } from '@/lib/use-battery-year'
 import type { PriceData } from '@/lib/use-prices'
@@ -72,9 +71,9 @@ function computeNpv10(hardwareCostEur: number, annualSavings: number): number {
 
 export function BatteryRoiCard({ scenario, prices }: Props) {
   const variant = getVariant(scenario.variantId)
+  const loadProfile = getLoadProfile(scenario.loadProfileId, scenario.country)
   const annual = useBatteryYear(scenario, prices)
   const [formulaOpen, setFormulaOpen] = useState(false)
-  const tariffLabel = getTariffLabelForScenario(scenario)
   const economics = useMemo(
     () => (annual ? computeBatteryEconomics(annual, scenario) : null),
     [annual, scenario],
@@ -146,7 +145,7 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
     <Card className="shadow-sm border-gray-200/80">
       <CardHeader className="pb-2 border-b border-gray-100">
         <CardTitle className="text-base font-semibold text-[#313131]">
-          Consumer ROI — {variant.label}
+          Consumer ROI — {variant.shortLabel}
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-4 space-y-5">
@@ -161,11 +160,14 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
               Reference case
             </p>
             <p className="tabular-nums text-[#313131] text-[12px]">
-              Dynamic tariff:{' '}
-              <span className="font-semibold">{tariffLabel}</span>
+              Market pricing:{' '}
+              <span className="font-semibold">same dynamic day-ahead curve as `/dynamic`</span>
             </p>
             <p className="tabular-nums text-[#313131] text-[12px]">
-              Country mode: <span className="font-semibold">{scenario.country}</span>
+              Battery type: <span className="font-semibold">{variant.typeLabel}</span>
+            </p>
+            <p className="tabular-nums text-[#313131] text-[12px]">
+              Household curve: <span className="font-semibold">{loadProfile.label}</span>
             </p>
           </div>
 

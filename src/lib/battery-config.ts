@@ -21,7 +21,13 @@ export type { HourlyPrice }
 export interface BatteryVariant {
   id: 'schuko-2kwh' | 'balcony-pv-1.6kwh' | 'wall-5kwh'
   label: string
+  shortLabel: string
+  typeLabel: string
   description: string
+  merchantLabel: string
+  buyUrl: string
+  currentPriceEur: number
+  priceAsOf: string
   // Physical specs
   usableKwh: number
   maxChargeKw: number
@@ -37,6 +43,7 @@ export interface BatteryVariant {
   cycleLife: number
   // Regulation
   feedInCapKw: number
+  lockedDischargeCapKw: number | null
   electricianRequired: boolean
   priceConfidence: 'HIGH' | 'MEDIUM' | 'LOW'
 }
@@ -44,8 +51,14 @@ export interface BatteryVariant {
 export const BATTERY_VARIANTS: BatteryVariant[] = [
   {
     id: 'schuko-2kwh',
-    label: 'Schuko Steckerspeicher',
-    description: 'Marstek Venus B — 2 kWh, Schuko plug, no PV',
+    label: 'Marstek Venus B',
+    shortLabel: 'Venus B',
+    typeLabel: 'Plug-in balcony storage',
+    description: '2.12 kWh all-in-one balcony battery with integrated inverter. Good for showing the 800 W discharge bottleneck.',
+    merchantLabel: 'Marstek Power EU',
+    buyUrl: 'https://marstek-power.eu/en/marstek-venus-b-2kwh-plug-in-home-battery',
+    currentPriceEur: 599,
+    priceAsOf: 'Apr 2026',
     usableKwh: 2.0,
     maxChargeKw: 1.5,
     maxDischargeKw: 0.8,     // DE self-consumption cap; no grid export allowed
@@ -53,37 +66,51 @@ export const BATTERY_VARIANTS: BatteryVariant[] = [
     standbyWatts: 10,
     includePv: false,
     pvCapacityWp: 0,
-    hardwareCostEurIncVat: 595,  // €499 placeholder × 1.19 VAT — see priceConfidence LOW
-    vatRate: 0.19,
-    warrantyYears: 5,
-    cycleLife: 6000,
-    feedInCapKw: 0.8,
-    electricianRequired: false,
-    priceConfidence: 'LOW',
-  },
-  {
-    id: 'balcony-pv-1.6kwh',
-    label: 'Balkonkraftwerk + Speicher',
-    description: 'Anker SOLIX Solarbank 2 E1600 Pro — 800 Wp PV + 1.52 kWh',
-    usableKwh: 1.52,
-    maxChargeKw: 2.0,
-    maxDischargeKw: 1.0,
-    roundTripEff: 0.88,
-    standbyWatts: 8,
-    includePv: true,
-    pvCapacityWp: 800,
-    hardwareCostEurIncVat: 1499,  // €1,199 unit + ~€300 panels, 0% VAT (PV + battery bundle)
+    hardwareCostEurIncVat: 599,
     vatRate: 0.00,
     warrantyYears: 10,
     cycleLife: 6000,
     feedInCapKw: 0.8,
+    lockedDischargeCapKw: 0.8,
+    electricianRequired: false,
+    priceConfidence: 'MEDIUM',
+  },
+  {
+    id: 'balcony-pv-1.6kwh',
+    label: 'Anker SOLIX Solarbank 2 E1600 Pro',
+    shortLabel: 'Solarbank 2 E1600 Pro',
+    typeLabel: 'Balcony PV + battery',
+    description: '1.6 kWh balcony storage that pairs directly with small PV. Same dynamic-price story, plus PV self-consumption.',
+    merchantLabel: 'idealo lowest offer',
+    buyUrl: 'https://www.idealo.de/preisvergleich/OffersOfProduct/205580737_-solix-solarbank-2-e1600-pro-solix-smart-meter-anker-tech.html',
+    currentPriceEur: 471.9,
+    priceAsOf: 'Apr 2026',
+    usableKwh: 1.52,
+    maxChargeKw: 2.0,
+    maxDischargeKw: 0.8,
+    roundTripEff: 0.88,
+    standbyWatts: 8,
+    includePv: true,
+    pvCapacityWp: 800,
+    hardwareCostEurIncVat: 471.9,
+    vatRate: 0.00,
+    warrantyYears: 10,
+    cycleLife: 6000,
+    feedInCapKw: 0.8,
+    lockedDischargeCapKw: 0.8,
     electricianRequired: false,
     priceConfidence: 'HIGH',
   },
   {
     id: 'wall-5kwh',
-    label: 'Wandbatterie (Elektriker)',
-    description: 'Marstek Venus E 3.0 — 5.12 kWh, requires electrician',
+    label: 'Marstek Venus E Gen 3.0',
+    shortLabel: 'Venus E 3.0',
+    typeLabel: 'AC-coupled home battery',
+    description: '5.12 kWh AC-coupled storage with much higher output power. This is the variant where the discharge cap becomes a real user control.',
+    merchantLabel: 'idealo lowest offer',
+    buyUrl: 'https://www.idealo.de/preisvergleich/Liste/122399645/marstek-venus-e-version-3-0.html',
+    currentPriceEur: 961.8,
+    priceAsOf: 'Apr 2026',
     usableKwh: 4.6,            // ~90% DoD of 5.12 kWh nominal
     maxChargeKw: 2.5,
     maxDischargeKw: 2.5,
@@ -91,11 +118,12 @@ export const BATTERY_VARIANTS: BatteryVariant[] = [
     standbyWatts: 12,
     includePv: false,
     pvCapacityWp: 0,
-    hardwareCostEurIncVat: 1570,  // €1,319 sale × 1.19 VAT (standalone, no PV)
+    hardwareCostEurIncVat: 961.8,
     vatRate: 0.19,
     warrantyYears: 10,
     cycleLife: 6000,
-    feedInCapKw: 0.8,
+    feedInCapKw: 2.5,
+    lockedDischargeCapKw: null,
     electricianRequired: true,
     priceConfidence: 'MEDIUM',
   },
@@ -129,6 +157,57 @@ export const NL_TARIFFS: Tariff[] = [
 ]
 
 // ---------------------------------------------------------------------------
+// Household load profiles
+// ---------------------------------------------------------------------------
+
+export type DeBatteryLoadProfileId = 'H0' | 'H25'
+export type NlBatteryLoadProfileId = 'E1A' | 'E1B' | 'E1C'
+export type BatteryLoadProfileId = DeBatteryLoadProfileId | NlBatteryLoadProfileId
+
+export interface BatteryLoadProfileOption {
+  id: BatteryLoadProfileId
+  label: string
+  description: string
+  detail: string
+}
+
+export const DE_BATTERY_LOAD_PROFILES: BatteryLoadProfileOption[] = [
+  {
+    id: 'H0',
+    label: 'H0 apartment',
+    description: 'Apartment baseline',
+    detail: 'BDEW apartment-style curve with the classic morning and evening peaks.',
+  },
+  {
+    id: 'H25',
+    label: 'H25 household',
+    description: 'Standard household SLP',
+    detail: 'Broader all-day household curve from the 2025 BDEW H25 profile.',
+  },
+]
+
+export const NL_BATTERY_LOAD_PROFILES: BatteryLoadProfileOption[] = [
+  {
+    id: 'E1A',
+    label: 'E1A standard',
+    description: 'Standard flat / household',
+    detail: 'Balanced Dutch residential curve. Good default for apartment-style demand.',
+  },
+  {
+    id: 'E1B',
+    label: 'E1B night',
+    description: 'Night-heavier household',
+    detail: 'More overnight consumption, which makes cheap-night charging easier to capture.',
+  },
+  {
+    id: 'E1C',
+    label: 'E1C evening peak',
+    description: 'Evening-peaking household',
+    detail: 'Sharper evening demand peak. This makes the 800 W discharge limit more visible.',
+  },
+]
+
+// ---------------------------------------------------------------------------
 // Scenario state (URL-synced)
 // ---------------------------------------------------------------------------
 
@@ -136,8 +215,9 @@ export interface BatteryScenario {
   variantId: 'schuko-2kwh' | 'balcony-pv-1.6kwh' | 'wall-5kwh'
   country: 'DE' | 'NL'
   tariffId: string
+  loadProfileId: BatteryLoadProfileId
   annualLoadKwh: number
-  feedInCapKw: 0.8 | 2.0
+  feedInCapKw: number
   terugleverCostEur: number           // NL only; 0 in DE
   exportCompensationPct: number       // NL only; 0 in DE
   selectedDate: string                // 'YYYY-MM-DD' or ''
@@ -148,6 +228,7 @@ export const DEFAULT_BATTERY_SCENARIO: BatteryScenario = {
   variantId: 'schuko-2kwh',
   country: 'DE',
   tariffId: 'awattar-de',
+  loadProfileId: 'H0',
   annualLoadKwh: 2500,
   feedInCapKw: 0.8,
   terugleverCostEur: 0,
@@ -172,4 +253,34 @@ export function getTariffsFor(country: 'DE' | 'NL'): Tariff[] {
 
 export function getTariff(id: string, country: 'DE' | 'NL'): Tariff | undefined {
   return getTariffsFor(country).find(t => t.id === id)
+}
+
+export function getDefaultDischargeCapKw(variant: BatteryVariant): number {
+  return variant.lockedDischargeCapKw ?? variant.feedInCapKw
+}
+
+export function getLoadProfilesForCountry(country: 'DE' | 'NL'): BatteryLoadProfileOption[] {
+  return country === 'DE' ? DE_BATTERY_LOAD_PROFILES : NL_BATTERY_LOAD_PROFILES
+}
+
+export function getDefaultLoadProfileId(country: 'DE' | 'NL'): BatteryLoadProfileId {
+  return country === 'DE' ? 'H0' : 'E1A'
+}
+
+export function isLoadProfileValidForCountry(
+  loadProfileId: string,
+  country: 'DE' | 'NL',
+): loadProfileId is BatteryLoadProfileId {
+  return getLoadProfilesForCountry(country).some((profile) => profile.id === loadProfileId)
+}
+
+export function getLoadProfile(
+  loadProfileId: BatteryLoadProfileId,
+  country: 'DE' | 'NL',
+): BatteryLoadProfileOption {
+  const profile = getLoadProfilesForCountry(country).find((option) => option.id === loadProfileId)
+  if (!profile) {
+    throw new Error(`Unknown load profile ${loadProfileId} for country ${country}`)
+  }
+  return profile
 }
