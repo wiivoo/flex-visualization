@@ -59,6 +59,19 @@
 - [ ] **INTRA-04**: Convergence funnel visualization showing price narrowing DA → ID3 → ID1 → settlement — Phase 5
 - [ ] **INTRA-05**: Animated re-optimization showing charging blocks shifting at each intraday stage — Phase 5
 
+### Battery Business Case (Phase 8)
+- [ ] **BATT-01**: Static profile JSON assets (BDEW H0 DE, NEDU E1a NL, PVGIS DE, PVGIS NL) — Phase 8
+- [ ] **BATT-02**: Battery config types and variants (Marstek Venus B, Anker SOLIX Solarbank 2 E1600 Pro, Marstek Venus E 3.0) — Phase 8
+- [ ] **BATT-03**: Battery day optimizer with DE grid-export prohibition enforced (`gridExportKwh = 0`) — Phase 8
+- [ ] **BATT-04**: Battery annual roll-up (`runBatteryYear`) producing monthly + annual results — Phase 8
+- [ ] **BATT-05**: `/battery` page route with URL↔state sync (variant, country, tariff, date, feed-in cap) — Phase 8
+- [ ] **BATT-06**: BatteryVariantPicker component with three-variant selection + inline country/tariff/load controls — Phase 8
+- [ ] **BATT-07**: BatteryDayChart (ComposedChart: price, load, PV, charge/discharge, SoC) — Phase 8
+- [ ] **BATT-08**: BatteryRoiCard with annual savings, simple payback, break-even year, 10yr NPV, 12-month breakdown — Phase 8
+- [ ] **BATT-09**: RegulationPanel (DE 800W/2000W toggle, NL terugleverkosten + export compensation) — Phase 8
+- [ ] **BATT-10**: ManagementView (DE vs NL unit-economics table + revenue-stream breakdown + market framing) — Phase 8
+- [ ] **BATT-11**: Feature spec PROJ-39 + INDEX.md update — Phase 8
+
 ## v2 Requirements (Deferred)
 
 - Theory/education overlay explaining load shifting concepts
@@ -87,6 +100,7 @@
 | V2G-01..02 | Phase 1 | In Progress |
 | INTL-01..03 | Phase 2 | Implemented, UI disabled |
 | INTRA-01 | Phase 3 | Scraper exists |
+| BATT-01..11 | Phase 8 | In Progress |
 
 ---
 *Last updated: 2026-03-26 after initialization*
