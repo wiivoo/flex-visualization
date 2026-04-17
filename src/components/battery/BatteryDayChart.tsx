@@ -37,7 +37,6 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  Legend,
   ReferenceLine,
 } from 'recharts'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
@@ -67,12 +66,12 @@ interface ChartPoint {
   priceCtKwh: number
   loadKwh: number
   pvKwh: number
+  meterDrawKwh: number
   /** positive when charging (PV or grid) */
   chargeKwh: number
+  chargeFromGridKwh: number
   /** positive when discharging to load */
   dischargeKwh: number
-  socKwhStart: number
-  socKwhEnd: number
   slotSavingsEur: number
   pvSelfKwh: number
   gridImportKwh: number
@@ -155,10 +154,10 @@ export function BatteryDayChart({ scenario, prices }: Props) {
       priceCtKwh: s.priceCtKwh,
       loadKwh: s.loadKwh,
       pvKwh: s.pvKwh,
+      meterDrawKwh: s.gridImportKwh + s.chargeFromGridKwh,
       chargeKwh: s.chargeFromGridKwh + s.chargeFromPvKwh,
+      chargeFromGridKwh: s.chargeFromGridKwh,
       dischargeKwh: s.dischargeToLoadKwh,
-      socKwhStart: s.socKwhStart,
-      socKwhEnd: s.socKwhEnd,
       slotSavingsEur: s.baselineCostEur - s.slotCostEur,
       pvSelfKwh: s.pvSelfKwh,
       gridImportKwh: s.gridImportKwh,
@@ -169,6 +168,26 @@ export function BatteryDayChart({ scenario, prices }: Props) {
   const isDe = scenario.country === 'DE'
   const dischargeCapPerSlotKwh =
     chartData.length === 96 ? scenario.feedInCapKw * 0.25 : scenario.feedInCapKw * (24 / chartData.length)
+  const selectedDayTotals = useMemo(() => {
+    if (!dayResult || chartData.length === 0) return null
+    const consumptionKwh = chartData.reduce((sum, point) => sum + point.loadKwh, 0)
+    const meteredDrawKwh = chartData.reduce((sum, point) => sum + point.meterDrawKwh, 0)
+    const chargeKwh = chartData.reduce((sum, point) => sum + point.chargeKwh, 0)
+    const dischargeKwh = chartData.reduce((sum, point) => sum + point.dischargeKwh, 0)
+    const baselineAvgCt = consumptionKwh > 0 ? (dayResult.summary.baselineCostEur / consumptionKwh) * 100 : 0
+    const batteryAvgCt = consumptionKwh > 0 ? (dayResult.summary.optimizedCostEur / consumptionKwh) * 100 : 0
+    return {
+      consumptionKwh,
+      meteredDrawKwh,
+      chargeKwh,
+      dischargeKwh,
+      savingsEur: dayResult.summary.savingsEur,
+      baselineCostEur: dayResult.summary.baselineCostEur,
+      optimizedCostEur: dayResult.summary.optimizedCostEur,
+      baselineAvgCt,
+      batteryAvgCt,
+    }
+  }, [chartData, dayResult])
 
   // --- Empty / loading state ------------------------------------------------
   if (!prices.selectedDate || chartData.length === 0) {
@@ -234,177 +253,221 @@ export function BatteryDayChart({ scenario, prices }: Props) {
         </div>
       </CardHeader>
       <CardContent className={`pt-4 ${prices.loading ? 'animate-pulse' : ''}`}>
-        <ResponsiveContainer width="100%" height={320}>
-          <ComposedChart data={chartData} margin={{ top: 12, right: 48, bottom: 25, left: 20 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
-            <XAxis
-              dataKey="label"
-              tick={{ fontSize: 10, fill: '#6B7280' }}
-              tickLine={false}
-              axisLine={false}
-              interval={chartData.length === 96 ? 11 : 2}
-            />
-            <YAxis
-              yAxisId="left"
-              tick={{ fontSize: 10, fill: '#9CA3AF' }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))}
-              label={{
-                value: 'kWh / slot',
-                angle: -90,
-                position: 'insideLeft',
-                fill: '#9CA3AF',
-                fontSize: 10,
-                dy: 20,
-              }}
-            />
-            <YAxis
-              yAxisId="right"
-              orientation="right"
-              tick={{ fontSize: 10, fill: '#9CA3AF' }}
-              tickLine={false}
-              axisLine={false}
-              tickFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(0)} ct` : String(v))}
-            />
-            <ReferenceLine
-              yAxisId="left"
-              y={dischargeCapPerSlotKwh}
-              stroke="#9CA3AF"
-              strokeDasharray="4 4"
-              ifOverflow="extendDomain"
-              label={{
-                value: `${scenario.feedInCapKw.toFixed(1)} kW cap`,
-                position: 'insideTopRight',
-                fill: '#6B7280',
-                fontSize: 10,
-              }}
-            />
+        <div className="relative h-[320px]">
+          {selectedDayTotals && selectedDayTotals.consumptionKwh > 0 && (() => {
+            const diffCt = selectedDayTotals.baselineAvgCt - selectedDayTotals.batteryAvgCt
+            const isCheaper = diffCt >= 0
+            return (
+              <div className="absolute left-14 top-1 z-20 pointer-events-none flex items-center gap-1.5">
+                <div className={`backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1.5 ${isCheaper ? 'bg-emerald-50/80 border-emerald-300/50' : 'bg-red-50/80 border-red-300/50'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isCheaper ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <span className={`text-[12px] font-bold tabular-nums whitespace-nowrap ${isCheaper ? 'text-emerald-700' : 'text-red-700'}`}>
+                    {isCheaper ? '+' : ''}{selectedDayTotals.savingsEur.toFixed(2)} EUR
+                  </span>
+                  <span className={`text-[9px] font-semibold whitespace-nowrap ${isCheaper ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {isCheaper ? 'saved with battery today' : 'battery adds cost today'}
+                  </span>
+                </div>
+                <span className="text-[9px] text-gray-400 tabular-nums">
+                  {selectedDayTotals.batteryAvgCt.toFixed(1)} vs {selectedDayTotals.baselineAvgCt.toFixed(1)} ct/kWh
+                </span>
+              </div>
+            )
+          })()}
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartData} margin={{ top: 36, right: 48, bottom: 20, left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 10, fill: '#6B7280' }}
+                tickLine={false}
+                axisLine={false}
+                interval={chartData.length === 96 ? 11 : 2}
+              />
+              <YAxis
+                yAxisId="left"
+                tick={{ fontSize: 10, fill: '#9CA3AF' }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => (typeof v === 'number' ? v.toFixed(2) : String(v))}
+                label={{
+                  value: 'kWh / slot',
+                  angle: -90,
+                  position: 'insideLeft',
+                  fill: '#9CA3AF',
+                  fontSize: 10,
+                  dy: 20,
+                }}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                tick={{ fontSize: 10, fill: '#9CA3AF' }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(0)} ct` : String(v))}
+              />
+              <ReferenceLine
+                yAxisId="left"
+                y={dischargeCapPerSlotKwh}
+                stroke="#9CA3AF"
+                strokeDasharray="4 4"
+                ifOverflow="extendDomain"
+                label={{
+                  value: `${scenario.feedInCapKw.toFixed(1)} kW cap`,
+                  position: 'insideTopRight',
+                  fill: '#6B7280',
+                  fontSize: 10,
+                }}
+              />
 
-            {/* 1. Household load (gray Area) */}
-            <Area
-              yAxisId="left"
-              type="monotone"
-              dataKey="loadKwh"
-              fill="#E5E7EB"
-              fillOpacity={0.5}
-              stroke="#9CA3AF"
-              strokeWidth={1}
-              dot={false}
-              isAnimationActive={false}
-              name="Household load"
-            />
-
-            {/* 2. PV generation (amber Area) — only when variant has PV */}
-            {showPv && (
               <Area
                 yAxisId="left"
                 type="monotone"
-                dataKey="pvKwh"
-                fill="#FEF3C7"
-                fillOpacity={0.6}
-                stroke="#F59E0B"
+                dataKey="loadKwh"
+                fill="#E5E7EB"
+                fillOpacity={0.5}
+                stroke="#9CA3AF"
+                strokeWidth={1}
+                dot={false}
+                isAnimationActive={false}
+                name="Household demand"
+              />
+              <Area
+                yAxisId="left"
+                type="monotone"
+                dataKey="meterDrawKwh"
+                fill="#DBEAFE"
+                fillOpacity={0.45}
+                stroke="#2563EB"
                 strokeWidth={1.5}
                 dot={false}
                 isAnimationActive={false}
-                name="PV generation"
+                name="Metered grid draw"
               />
-            )}
 
-            {/* 3. Battery charge bars (blue) */}
-            <Bar
-              yAxisId="left"
-              dataKey="chargeKwh"
-              fill="#3B82F6"
-              fillOpacity={0.65}
-              maxBarSize={8}
-              isAnimationActive={false}
-              name="Battery charge"
-            />
+              {showPv && (
+                <Area
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="pvKwh"
+                  fill="#FEF3C7"
+                  fillOpacity={0.35}
+                  stroke="#F59E0B"
+                  strokeWidth={1.2}
+                  dot={false}
+                  isAnimationActive={false}
+                  name="PV generation"
+                />
+              )}
 
-            {/* 4. Battery discharge-to-load bars (emerald) */}
-            <Bar
-              yAxisId="left"
-              dataKey="dischargeKwh"
-              fill="#10B981"
-              fillOpacity={0.65}
-              maxBarSize={8}
-              isAnimationActive={false}
-              name="Battery discharge"
-            />
+              <Bar
+                yAxisId="left"
+                dataKey="chargeKwh"
+                fill="#2563EB"
+                fillOpacity={0.7}
+                maxBarSize={8}
+                isAnimationActive={false}
+                name="Battery charging"
+              />
 
-            {/* 5. Day-ahead price line (brand red) — right YAxis in ct/kWh */}
-            <Line
-              yAxisId="right"
-              type="monotone"
-              dataKey="priceCtKwh"
-              stroke="#EA1C0A"
-              strokeWidth={2}
-              strokeOpacity={prices.loading ? 0.3 : 1}
-              dot={false}
-              isAnimationActive={false}
-              name="Day-ahead price"
-            />
+              <Bar
+                yAxisId="left"
+                dataKey="dischargeKwh"
+                fill="#10B981"
+                fillOpacity={0.7}
+                maxBarSize={8}
+                isAnimationActive={false}
+                name="Battery support"
+              />
 
-            {/* 6. Battery SoC line (blue dashed) — left YAxis in kWh */}
-            <Line
-              yAxisId="left"
-              type="monotone"
-              dataKey="socKwhEnd"
-              stroke="#3B82F6"
-              strokeWidth={1.5}
-              strokeDasharray="4 3"
-              dot={false}
-              isAnimationActive={false}
-              name="Battery SoC"
-            />
+              <Area
+                yAxisId="right"
+                dataKey="priceCtKwh"
+                type="monotone"
+                fill="#EA1C0A"
+                fillOpacity={0.08}
+                stroke="none"
+                dot={false}
+                isAnimationActive={false}
+                name="Price band"
+              />
+              <Line
+                yAxisId="right"
+                type="monotone"
+                dataKey="priceCtKwh"
+                stroke="#EA1C0A"
+                strokeWidth={2}
+                strokeOpacity={0.9}
+                dot={false}
+                isAnimationActive={false}
+                name="Day-ahead price"
+              />
 
-            <Tooltip
-              content={({ active, payload }) => {
-                if (!active || !payload?.length) return null
-                const d = payload[0].payload as ChartPoint
-                return (
-                  <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
-                    <p className="text-gray-500 text-[10px]">{d.label}</p>
-                    <p className="tabular-nums text-[#EA1C0A] font-semibold">
-                      {d.priceCtKwh.toFixed(1)} ct/kWh
-                    </p>
-                    <p className="tabular-nums text-gray-600">
-                      Load: {d.loadKwh.toFixed(3)} kWh
-                    </p>
-                    {showPv && (
-                      <p className="tabular-nums text-amber-600">
-                        PV: {d.pvKwh.toFixed(3)} kWh
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (!active || !payload?.length) return null
+                  const d = payload[0].payload as ChartPoint
+                  return (
+                    <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
+                      <p className="text-gray-500 text-[10px]">{d.label}</p>
+                      <p className="tabular-nums text-[#EA1C0A] font-semibold">
+                        {d.priceCtKwh.toFixed(1)} ct/kWh
                       </p>
-                    )}
-                    {d.chargeKwh > 0 && (
-                      <p className="tabular-nums text-blue-600">
-                        Charge: {d.chargeKwh.toFixed(3)} kWh
+                      <p className="tabular-nums text-gray-600">
+                        Household demand: {d.loadKwh.toFixed(3)} kWh
                       </p>
-                    )}
-                    {d.dischargeKwh > 0 && (
-                      <p className="tabular-nums text-emerald-600">
-                        Discharge: {d.dischargeKwh.toFixed(3)} kWh
+                      <p className="tabular-nums text-blue-700">
+                        Metered grid draw: {d.meterDrawKwh.toFixed(3)} kWh
                       </p>
-                    )}
-                    <p className="tabular-nums text-blue-600">
-                      SoC: {d.socKwhStart.toFixed(2)} → {d.socKwhEnd.toFixed(2)} kWh
-                    </p>
-                    <p
-                      className={`tabular-nums font-semibold ${
-                        d.slotSavingsEur < 0 ? 'text-red-600' : 'text-emerald-600'
-                      }`}
-                    >
-                      {d.slotSavingsEur >= 0 ? '+' : ''}
-                      {d.slotSavingsEur.toFixed(4)} EUR
-                    </p>
-                  </div>
-                )
-              }}
-            />
-            <Legend wrapperStyle={{ fontSize: '10px', paddingTop: '8px' }} iconType="rect" />
-          </ComposedChart>
-        </ResponsiveContainer>
+                      {showPv && (
+                        <p className="tabular-nums text-amber-600">
+                          PV generation: {d.pvKwh.toFixed(3)} kWh
+                        </p>
+                      )}
+                      {d.chargeKwh > 0 && (
+                        <p className="tabular-nums text-blue-600">
+                          Battery charging: {d.chargeKwh.toFixed(3)} kWh
+                          {d.chargeFromGridKwh > 0 ? ' from grid' : ' from PV'}
+                        </p>
+                      )}
+                      {d.dischargeKwh > 0 && (
+                        <p className="tabular-nums text-emerald-600">
+                          Battery support: {d.dischargeKwh.toFixed(3)} kWh
+                        </p>
+                      )}
+                      <p
+                        className={`tabular-nums font-semibold ${
+                          d.slotSavingsEur < 0 ? 'text-red-600' : 'text-emerald-600'
+                        }`}
+                      >
+                        {d.slotSavingsEur >= 0 ? '+' : ''}
+                        {d.slotSavingsEur.toFixed(4)} EUR vs no battery
+                      </p>
+                    </div>
+                  )
+                }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="flex flex-wrap items-center gap-4 mt-2 text-[10px] text-gray-500">
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#E5E7EB' }} /> Household demand
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#DBEAFE' }} /> Metered grid draw with battery
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#2563EB' }} /> Battery charging
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-sm inline-block" style={{ backgroundColor: '#10B981' }} /> Battery support
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-3 inline-block" style={{ height: 2, backgroundColor: '#EA1C0A' }} /> Day-ahead price
+          </span>
+        </div>
       </CardContent>
     </Card>
   )
