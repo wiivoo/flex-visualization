@@ -12,6 +12,7 @@ import { BatteryVariantPicker } from '@/components/battery/BatteryVariantPicker'
 import { BatteryDayChart } from '@/components/battery/BatteryDayChart'
 import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
 import { RegulationPanel } from '@/components/battery/RegulationPanel'
+import { ManagementView } from '@/components/battery/ManagementView'
 import { MiniCalendar } from '@/components/v2/MiniCalendar'
 
 // ---------------------------------------------------------------------------
@@ -77,7 +78,13 @@ function BatteryInner() {
   useEffect(() => {
     if (prices.error && scenario.country !== 'DE') {
       console.warn(`[battery/country] ${scenario.country} failed: ${prices.error} — reverting to DE`)
-      setScenario(s => ({ ...s, country: 'DE', tariffId: 'awattar-de' }))
+      setScenario(s => ({
+        ...s,
+        country: 'DE',
+        tariffId: 'awattar-de',
+        terugleverCostEur: 0,
+        exportCompensationPct: DEFAULT_BATTERY_SCENARIO.exportCompensationPct,
+      }))
     }
   }, [prices.error, scenario.country])
 
@@ -179,9 +186,7 @@ function BatteryInner() {
           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
             Investor / Management View
           </p>
-          <div className="min-h-[240px] border border-dashed border-gray-200 rounded-lg p-6 flex items-center justify-center">
-            <p className="text-[12px] text-gray-400">Management view (plan 08-08).</p>
-          </div>
+          <ManagementView scenario={scenario} />
         </section>
       </main>
     </div>

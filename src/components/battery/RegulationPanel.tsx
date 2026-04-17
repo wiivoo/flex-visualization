@@ -53,12 +53,12 @@ export function RegulationPanel({ scenario, setScenario }: Props) {
     [scenario, setScenario],
   )
 
-  // Untrusted numeric input — clamp to [0, 200]. Non-finite rejected outright.
+  // Untrusted numeric input — clamp to the modeled post-2027 range [50, 115].
   const setExportCompensation = useCallback(
     (raw: string) => {
       const n = Number(raw)
       if (!Number.isFinite(n)) return
-      const clamped = Math.max(0, Math.min(200, n))
+      const clamped = Math.max(50, Math.min(115, n))
       setScenario({ ...scenario, exportCompensationPct: clamped })
     },
     [scenario, setScenario],
@@ -263,7 +263,7 @@ function NlControls({
         </p>
       </div>
 
-      {/* Export compensation % — shadcn Input, clamped 0-200 in handler */}
+      {/* Export compensation % — shadcn Input, clamped 50-115 in handler */}
       <div>
         <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-1">
           Export compensation
@@ -272,8 +272,8 @@ function NlControls({
           <Input
             type="number"
             value={scenario.exportCompensationPct}
-            min={0}
-            max={200}
+            min={50}
+            max={115}
             step={5}
             onChange={(e) => setExportCompensation(e.target.value)}
             className="w-[80px] h-8 text-[12px] tabular-nums"

@@ -17,6 +17,7 @@ import {
   type BatteryScenario,
   type BatteryVariant,
 } from '@/lib/battery-config'
+import { getTariffDefaults } from '@/lib/battery-economics'
 
 interface Props {
   scenario: BatteryScenario
@@ -33,12 +34,15 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
 
   const setCountry = useCallback(
     (country: 'DE' | 'NL') => {
+      const defaults = getTariffDefaults(country)
       // Reset tariff to the country's default so we never leave it pointing
       // at a DE tariff while NL is active (or vice versa).
       setScenario({
         ...scenario,
         country,
-        tariffId: country === 'DE' ? 'awattar-de' : 'frank-energie',
+        tariffId: defaults.tariffId,
+        terugleverCostEur: country === 'NL' ? scenario.terugleverCostEur : 0,
+        exportCompensationPct: defaults.exportCompensationPct,
       })
     },
     [scenario, setScenario],
@@ -46,7 +50,12 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
 
   const setTariff = useCallback(
     (tariffId: string) => {
-      setScenario({ ...scenario, tariffId })
+      const defaults = getTariffDefaults(scenario.country, tariffId)
+      setScenario({
+        ...scenario,
+        tariffId: defaults.tariffId,
+        exportCompensationPct: defaults.exportCompensationPct,
+      })
     },
     [scenario, setScenario],
   )

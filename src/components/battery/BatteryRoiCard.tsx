@@ -33,6 +33,11 @@ import {
 } from 'recharts'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { getVariant, type BatteryScenario } from '@/lib/battery-config'
+import {
+  computeBatteryEconomics,
+  computeMonthlyEconomics,
+  getTariffLabelForScenario,
+} from '@/lib/battery-economics'
 import { useBatteryYear } from '@/lib/use-battery-year'
 import type { PriceData } from '@/lib/use-prices'
 
@@ -44,9 +49,8 @@ interface Props {
 interface MonthChartPoint {
   displayLabel: string          // 'MM' — mirrors MonthlySavingsCard tick style
   arbitrageEur: number
-  pvSelfEur: number
-  standbyCostNeg: number
-  totalEur: number
+  pvGrossEur: number
+  valueDragNeg: number
   cumulative: number
 }
 
@@ -70,10 +74,15 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
   const variant = getVariant(scenario.variantId)
   const annual = useBatteryYear(scenario, prices)
   const [formulaOpen, setFormulaOpen] = useState(false)
+  const tariffLabel = getTariffLabelForScenario(scenario)
+  const economics = useMemo(
+    () => (annual ? computeBatteryEconomics(annual, scenario) : null),
+    [annual, scenario],
+  )
 
   const metrics = useMemo(() => {
-    if (!annual) return null
-    const annualSavingsEur = annual.annualSavingsEur
+    if (!annual || !economics) return null
+    const annualSavingsEur = economics.netAnnualSavingsEur
     const hardwareCost = variant.hardwareCostEurIncVat
     // Guard against zero/negative savings → non-finite payback → render em-dash.
     const paybackYears =
@@ -91,26 +100,25 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
       npv10,
       hardwareCost,
     }
-  }, [annual, variant])
+  }, [annual, economics, variant])
 
   const monthChartData: MonthChartPoint[] = useMemo(() => {
     if (!annual) return []
     let cum = 0
-    return annual.months.map((m) => {
-      cum += m.savingsEur
+    return computeMonthlyEconomics(annual.months, scenario).map((m) => {
+      cum += m.netSavingsEur
       return {
         displayLabel: m.month.slice(5),    // 'YYYY-MM' → 'MM'
-        arbitrageEur: m.arbitrageSavingsEur,
-        pvSelfEur: m.pvSelfConsumptionValueEur,
-        standbyCostNeg: -m.standbyCostEur,
-        totalEur: m.savingsEur,
+        arbitrageEur: m.arbitrageEur,
+        pvGrossEur: m.pvGrossEur,
+        valueDragNeg: -m.valueDragEur,
         cumulative: cum,
       }
     })
-  }, [annual])
+  }, [annual, scenario])
 
   // Loading / empty — render a single placeholder card.
-  if (!annual || !metrics) {
+  if (!annual || !metrics || !economics) {
     return (
       <Card className="shadow-sm border-gray-200/80">
         <CardHeader className="pb-2 border-b border-gray-100">
@@ -150,16 +158,14 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
           {/* No battery */}
           <div className="bg-red-50/60 rounded-lg p-3 border border-red-100/80">
             <p className="text-[10px] font-semibold text-red-500 uppercase tracking-wider mb-2.5">
-              No battery
+              Reference case
             </p>
             <p className="tabular-nums text-[#313131] text-[12px]">
-              Grid import:{' '}
-              <span className="font-semibold">
-                {(annual.gridImportKwh + annual.annualSavingsEur * 0).toFixed(0)} kWh/yr
-              </span>
+              Dynamic tariff:{' '}
+              <span className="font-semibold">{tariffLabel}</span>
             </p>
             <p className="tabular-nums text-[#313131] text-[12px]">
-              Annual bill uplift: <span className="font-semibold">baseline</span>
+              Country mode: <span className="font-semibold">{scenario.country}</span>
             </p>
           </div>
 
@@ -174,11 +180,17 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
                 {annual.arbitrageSavingsEur.toFixed(0)} EUR/yr
               </span>
             </p>
+            <p className="tabular-nums text-[#313131] text-[12px]">
+              Residual grid import:{' '}
+              <span className="font-semibold">
+                {annual.gridImportKwh.toFixed(0)} kWh/yr
+              </span>
+            </p>
             {showPv && (
               <p className="tabular-nums text-[#313131] text-[12px]">
-                PV self-consumption:{' '}
+                PV self-consumption (gross):{' '}
                 <span className="font-semibold text-amber-700">
-                  {annual.pvSelfConsumptionValueEur.toFixed(0)} EUR/yr
+                  {economics.pvSelfConsumptionGrossEur.toFixed(0)} EUR/yr
                 </span>
               </p>
             )}
@@ -188,6 +200,14 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
                 -{annual.standbyCostEur.toFixed(0)} EUR/yr
               </span>
             </p>
+            {economics.fixedRegulationCostEur > 0 && (
+              <p className="tabular-nums text-[#313131] text-[12px]">
+                Return-delivery fee:{' '}
+                <span className="font-semibold text-red-600">
+                  -{economics.fixedRegulationCostEur.toFixed(0)} EUR/yr
+                </span>
+              </p>
+            )}
           </div>
         </div>
 
@@ -280,7 +300,7 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
               {showPv && (
                 <Bar
                   yAxisId="left"
-                  dataKey="pvSelfEur"
+                  dataKey="pvGrossEur"
                   stackId="rev"
                   fill="#F59E0B"
                   fillOpacity={0.7}
@@ -289,6 +309,15 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
                   radius={[3, 3, 0, 0]}
                 />
               )}
+              <Bar
+                yAxisId="left"
+                dataKey="valueDragNeg"
+                stackId="rev"
+                fill="#F87171"
+                fillOpacity={0.45}
+                maxBarSize={22}
+                isAnimationActive={false}
+              />
               {/* Cumulative savings line (dashed, right axis) */}
               <Line
                 yAxisId="right"
@@ -312,9 +341,12 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
                       </p>
                       {showPv && (
                         <p className="tabular-nums text-amber-700">
-                          PV self: {d.pvSelfEur.toFixed(1)} EUR
+                          PV self: {d.pvGrossEur.toFixed(1)} EUR
                         </p>
                       )}
+                      <p className="tabular-nums text-red-500">
+                        Value drag: {Math.abs(d.valueDragNeg).toFixed(1)} EUR
+                      </p>
                       <p className="tabular-nums text-gray-600">
                         Cumulative: {d.cumulative.toFixed(1)} EUR
                       </p>
@@ -361,7 +393,15 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
                 <div className="flex justify-between">
                   <span className="text-gray-500">PV self-consumption / yr</span>
                   <span className="font-semibold text-amber-700">
-                    {annual.pvSelfConsumptionValueEur.toFixed(1)} EUR
+                    {economics.pvSelfConsumptionGrossEur.toFixed(1)} EUR
+                  </span>
+                </div>
+              )}
+              {economics.pvOpportunityCostEur > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Foregone export value / yr</span>
+                  <span className="font-semibold text-red-600">
+                    -{economics.pvOpportunityCostEur.toFixed(1)} EUR
                   </span>
                 </div>
               )}
@@ -371,10 +411,18 @@ export function BatteryRoiCard({ scenario, prices }: Props) {
                   -{annual.standbyCostEur.toFixed(1)} EUR
                 </span>
               </div>
+              {economics.fixedRegulationCostEur > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Terugleverkosten / yr</span>
+                  <span className="font-semibold text-red-600">
+                    -{economics.fixedRegulationCostEur.toFixed(1)} EUR
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between border-t border-gray-200 pt-1">
                 <span className="text-gray-500">Net annual savings</span>
                 <span className="font-semibold text-[#313131]">
-                  {metrics.annualSavingsEur.toFixed(1)} EUR
+                  {economics.netAnnualSavingsEur.toFixed(1)} EUR
                 </span>
               </div>
               <div className="flex justify-between">
