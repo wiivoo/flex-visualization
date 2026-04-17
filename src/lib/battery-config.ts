@@ -174,15 +174,15 @@ export interface BatteryLoadProfileOption {
 export const DE_BATTERY_LOAD_PROFILES: BatteryLoadProfileOption[] = [
   {
     id: 'H0',
-    label: 'H0 apartment',
-    description: 'Apartment baseline',
-    detail: 'BDEW apartment-style curve with the classic morning and evening peaks.',
+    label: 'BDEW H0',
+    description: 'Classical residential SLP',
+    detail: 'Official BDEW H0 household profile with the familiar morning and evening demand pattern.',
   },
   {
     id: 'H25',
-    label: 'H25 household',
-    description: 'Standard household SLP',
-    detail: 'Broader all-day household curve from the 2025 BDEW H25 profile.',
+    label: 'BDEW H25',
+    description: '2025 household SLP',
+    detail: 'Official BDEW H25 profile with a broader all-day residential demand shape.',
   },
 ]
 

@@ -13,7 +13,6 @@ import {
 import { BatteryVariantPicker } from '@/components/battery/BatteryVariantPicker'
 import { BatteryDayChart } from '@/components/battery/BatteryDayChart'
 import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
-import { RegulationPanel } from '@/components/battery/RegulationPanel'
 import { ManagementView } from '@/components/battery/ManagementView'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { Card, CardContent } from '@/components/ui/card'
@@ -187,12 +186,9 @@ function BatteryInner() {
 
             <section
               data-slot="roi-regulation"
-              className={`grid grid-cols-1 gap-4 ${scenario.country === 'NL' ? 'xl:grid-cols-2' : ''}`}
+              className="grid grid-cols-1 gap-4"
             >
               <BatteryRoiCard scenario={scenario} prices={prices} />
-              {scenario.country === 'NL' && (
-                <RegulationPanel scenario={scenario} setScenario={setScenario} />
-              )}
             </section>
 
             <section data-slot="management-view" className="border-t border-gray-200 pt-6">

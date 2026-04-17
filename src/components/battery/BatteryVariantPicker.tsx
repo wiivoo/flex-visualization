@@ -1,10 +1,8 @@
 'use client'
 
 import { useCallback, useMemo, useState } from 'react'
-import Link from 'next/link'
 import { AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import {
   BATTERY_VARIANTS,
   getDefaultLoadProfileId,
@@ -66,16 +64,6 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
     [scenario, setScenario],
   )
 
-  const setDischargeCap = useCallback(
-    (raw: string) => {
-      const n = Number(raw)
-      if (!Number.isFinite(n)) return
-      const clamped = Math.max(0, Math.min(activeVariant.maxDischargeKw, n))
-      setScenario({ ...scenario, feedInCapKw: Math.round(clamped * 10) / 10 })
-    },
-    [activeVariant, scenario, setScenario],
-  )
-
   const annualLoadPreview = useMemo(() => {
     if (!profileData.loadProfile) return null
     const days = Math.floor(profileData.loadProfile.length / 24)
@@ -87,33 +75,32 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
         .reduce((sum, value) => sum + value, 0)
       dailyKwh.push(dayShare * scenario.annualLoadKwh)
     }
-    const min = Math.min(...dailyKwh)
-    const max = Math.max(...dailyKwh)
+    const smoothed = dailyKwh.map((_, index) => {
+      const from = Math.max(0, index - 7)
+      const to = Math.min(dailyKwh.length - 1, index + 7)
+      const window = dailyKwh.slice(from, to + 1)
+      return window.reduce((sum, value) => sum + value, 0) / window.length
+    })
+    const min = Math.min(...smoothed)
+    const max = Math.max(...smoothed)
     const width = 280
     const height = 76
-    const path = dailyKwh.map((value, index) => {
-      const x = (index / Math.max(1, dailyKwh.length - 1)) * width
+    const path = smoothed.map((value, index) => {
+      const x = (index / Math.max(1, smoothed.length - 1)) * width
       const y = max === min ? height / 2 : height - ((value - min) / (max - min)) * height
       return `${index === 0 ? 'M' : 'L'}${x.toFixed(2)},${y.toFixed(2)}`
     }).join(' ')
     const fillPath = `${path} L ${width},${height} L 0,${height} Z`
     return {
-      min,
-      max,
       width,
       height,
       path,
       fillPath,
-      januaryKwh: dailyKwh[0] ?? 0,
-      julyKwh: dailyKwh[Math.floor(dailyKwh.length / 2)] ?? 0,
-      decemberKwh: dailyKwh[dailyKwh.length - 1] ?? 0,
+      januaryKwh: smoothed[0] ?? 0,
+      julyKwh: smoothed[Math.floor(smoothed.length / 2)] ?? 0,
+      decemberKwh: smoothed[smoothed.length - 1] ?? 0,
     }
   }, [profileData.loadProfile, scenario.annualLoadKwh])
-
-  const regulationThresholdPct = Math.min(
-    100,
-    activeVariant.maxDischargeKw > 0 ? (0.8 / activeVariant.maxDischargeKw) * 100 : 0,
-  )
 
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80 lg:max-h-[calc(100vh-6rem)] lg:flex lg:flex-col">
@@ -187,16 +174,6 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
               <span>15,000</span>
             </div>
           </div>
-          <Input
-            id="battery-load-input"
-            type="number"
-            value={scenario.annualLoadKwh}
-            min={500}
-            max={15000}
-            step={100}
-            onChange={(e) => setAnnualLoad(e.target.value)}
-            className="w-[140px] h-8 text-[12px] tabular-nums"
-          />
         </div>
 
         <div className="space-y-2 pt-1 border-t border-gray-100">
@@ -278,17 +255,10 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
                   {activeVariant.label}
                 </p>
                 <p className="text-[10px] text-gray-400">
-                  {activeVariant.merchantLabel} · {activeVariant.priceAsOf}
+                  {activeVariant.currentPriceEur} EUR · {activeVariant.priceAsOf}
                 </p>
               </div>
-              <Link
-                href={activeVariant.buyUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] font-semibold text-[#EA1C0A] hover:underline shrink-0"
-              >
-                Buy / compare
-              </Link>
+              <span className="text-[10px] text-gray-400 shrink-0">{activeVariant.merchantLabel}</span>
             </div>
           </div>
         </div>
@@ -315,7 +285,7 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
                   <span>Dec {annualLoadPreview.decemberKwh.toFixed(1)} kWh/day</span>
                 </div>
                 <p className="text-[10px] text-gray-500 leading-relaxed">
-                  Real annual shape from the selected {scenario.country} SLP, scaled to {scenario.annualLoadKwh.toLocaleString()} kWh/year.
+                  Yearly profile preview, smoothed over two weeks from the selected {scenario.country} standard load profile and scaled to {scenario.annualLoadKwh.toLocaleString()} kWh/year.
                 </p>
               </div>
             ) : (
@@ -348,46 +318,6 @@ export function BatteryVariantPicker({ scenario, setScenario }: Props) {
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="flex flex-col gap-2 pt-1 border-t border-gray-100">
-          <div className="flex items-baseline justify-between h-8">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Max discharge power</span>
-            <span className="text-2xl font-bold text-[#313131] tabular-nums">
-              {scenario.feedInCapKw.toFixed(1)}
-              <span className="text-xs font-normal text-gray-400 ml-1">kW</span>
-            </span>
-          </div>
-          <div>
-            <input
-              type="range"
-              min={0}
-              max={activeVariant.maxDischargeKw}
-              step={0.1}
-              value={scenario.feedInCapKw}
-              onChange={(e) => setDischargeCap(e.target.value)}
-              className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-[#EA1C0A] [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
-            />
-            <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-              <span>0 kW</span>
-              <span>{activeVariant.maxDischargeKw.toFixed(1)} kW</span>
-            </div>
-            <div className="relative mt-2 h-5">
-              <div
-                className="absolute top-0 bottom-0 border-l border-dashed border-[#EA1C0A]/70"
-                style={{ left: `${regulationThresholdPct}%` }}
-              />
-              <span
-                className="absolute top-0 -translate-x-1/2 text-[10px] font-semibold text-[#EA1C0A] whitespace-nowrap"
-                style={{ left: `${regulationThresholdPct}%` }}
-              >
-                0.8 kW regulation threshold
-              </span>
-            </div>
-          </div>
-          <p className="text-[10px] text-gray-400 leading-relaxed">
-            Plug-in storage in Germany hits a practical regulatory threshold at 0.8 kW. Use the slider to test anything from zero support up to the selected battery’s technical ceiling.
-          </p>
         </div>
       </CardContent>
     </Card>
