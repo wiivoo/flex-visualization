@@ -270,6 +270,7 @@ Plans:
 | PROC-01 | Phase 6 | Planned |
 | PROC-02 | Phase 6 | Planned |
 | PROC-03 | Phase 6 | Planned |
+| MGMT-01..10 | Phase 9 | Planned |
 
 ### Phase 7: Insights tab — Ideal Parameters Sweep (BD heatmap + product sensitivity at /v2/insights, both views in one tab with toggle, sweep over optimizer.ts; pinned defaults sourcing TBD — see .planning/research/questions.md and .planning/notes/ideal-parameters-feature.md)
 
@@ -325,13 +326,17 @@ Plans:
 
 ### Phase 9: Management Dashboard (PROJ-40) — exec-facing /management page with fixed scenario, three time-period views (Month / Rolling 365d / Full year), KPI tiles, YoY grouped bars, and avg QH-price explainer panel that reconciles headline savings via spread × kWh × sessions audit trail
 
-**Goal:** [To be planned]
-**Requirements**: TBD
+**Goal:** Ship an exec-facing `/management` dashboard (password-gated, fixed scenario) that surfaces four KPI tiles, a YoY grouped bar chart, and an avg-QH-price explainer panel which reconciles headline savings via `spread × energy-per-session × sessions` within 1%. Scenario overrides persist to localStorage via a shadcn Sheet drawer. Monthly aggregates precomputed from `public/data/smard-prices-qh.json` and served as static JSON, refreshed daily by the existing GitHub Actions SMARD workflow.
+
+**Requirements**: MGMT-01, MGMT-02, MGMT-03, MGMT-04, MGMT-05, MGMT-06, MGMT-07, MGMT-08, MGMT-09, MGMT-10
 **Depends on:** Phase 8
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 9 to break down)
+- [ ] 09-01-PLAN.md — Data foundations: types, pure helpers, precompute script, initial JSON, CI workflow step
+- [ ] 09-02-PLAN.md — KpiTile + YoyBarChart presentational components
+- [ ] 09-03-PLAN.md — ExplainerPanel + SettingsDrawer (shadcn Sheet) + localStorage persistence
+- [ ] 09-04-PLAN.md — /management page wiring, middleware password gate, empty-state, smoke test
 
 ---
-*Last updated: 2026-04-09 — Phase 6 plans created (2 plans, 2 waves)*
+*Last updated: 2026-04-18 — Phase 9 plans created (4 plans, 3 waves)*
