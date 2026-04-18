@@ -1,0 +1,84 @@
+name: Scrape EPEX Intraday
+
+on:
+  schedule:
+    # Run daily at 07:00 UTC = 08:00 CET / 09:00 CEST
+    # EPEX publishes intraday continuous results the morning after delivery day.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      area:
+        description: 'Market area (DE | NL | GB). Leave blank to run all.'
+        required: false
+        default: ''
+      date:
+        description: 'Specific delivery date (YYYY-MM-DD). Leave blank for default (yesterday + day before).'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Scrape DE intraday
+        if: ${{ inputs.area == '' || inputs.area == 'DE' }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            node scripts/scrape-epex-intraday.mjs --area DE --date ${{ inputs.date }}
+          else
+            node scripts/scrape-epex-intraday.mjs --area DE
+          fi
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        continue-on-error: true
+
+      - name: Wait between scrapes (WAF gap)
+        if: ${{ inputs.area == '' }}
+        run: sleep 30
+
+      - name: Scrape NL intraday
+        if: ${{ inputs.area == '' || inputs.area == 'NL' }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            node scripts/scrape-epex-intraday.mjs --area NL --date ${{ inputs.date }}
+          else
+            node scripts/scrape-epex-intraday.mjs --area NL
+          fi
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        continue-on-error: true
+
+      - name: Wait between scrapes (WAF gap)
+        if: ${{ inputs.area == '' }}
+        run: sleep 30
+
+      - name: Scrape GB intraday
+        if: ${{ inputs.area == '' || inputs.area == 'GB' }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            node scripts/scrape-epex-intraday.mjs --area GB --date ${{ inputs.date }}
+          else
+            node scripts/scrape-epex-intraday.mjs --area GB
+          fi
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        continue-on-error: true

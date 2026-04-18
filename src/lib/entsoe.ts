@@ -16,10 +16,12 @@ import { format, addDays } from 'date-fns'
 const ENTSOE_BASE_URL = 'https://web-api.tp.entsoe.eu/api'
 const DE_LU_DOMAIN = '10Y1001A1001A82H'
 const NL_DOMAIN = '10YNL----------L'
+const GB_DOMAIN = '10YGB----------A'
 
 export const ENTSOE_DOMAINS: Record<string, string> = {
   'DE': DE_LU_DOMAIN,
   'NL': NL_DOMAIN,
+  'GB': GB_DOMAIN,
 }
 
 /**

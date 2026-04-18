@@ -51,6 +51,7 @@ const EPEX_URL = 'https://www.epexspot.com/en/market-results'
 const MARKET_AREAS = {
   DE: { epexCode: 'DE', cachePrefix: '', label: 'Germany' },
   NL: { epexCode: 'NL', cachePrefix: 'nl:', label: 'Netherlands' },
+  GB: { epexCode: 'GB', cachePrefix: 'gb:', label: 'United Kingdom' },
 }
 
 // --- Column indices (from EPEX table headers) ---
@@ -393,6 +394,13 @@ async function main() {
 
   await browser.close()
   console.log(`\nDone. ${scraped}/${toScrape.length} days scraped.`)
+
+  // Implicit heartbeat: every successful scrape already updates `cached_at`
+  // on the corresponding price_cache row, so dashboards can monitor freshness
+  // with:
+  //   SELECT max(cached_at) FROM price_cache WHERE type IN ('intraday','nl:intraday','gb:intraday')
+  // No separate heartbeat row is needed (and price_cache.type has a CHECK
+  // constraint that rejects 'meta:*' values).
 }
 
 main().catch(e => { console.error('Error:', e.message); process.exit(1) })

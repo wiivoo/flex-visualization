@@ -67,6 +67,7 @@ import { convertSmardPrice, SMARD_FILTER } from '@/lib/smard'
 import type { SmardPricePoint } from '@/lib/smard'
 import { fetchAwattarRange } from '@/lib/awattar'
 import { fetchEntsoeRange, ENTSOE_DOMAINS } from '@/lib/entsoe'
+import { fetchElexonMidRange } from '@/lib/elexon'
 import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { fetchCsvPrices } from '@/lib/csv-prices'
@@ -81,7 +82,7 @@ const batchQuerySchema = z.object({
   type: z.enum(['day-ahead', 'intraday', 'forward']).default('day-ahead'),
   resolution: z.enum(['hour', 'quarterhour']).default('hour'),
   index: z.enum(['id_full', 'id1', 'id3']).optional(),
-  country: z.enum(['DE', 'NL']).default('DE'),
+  country: z.enum(['DE', 'NL', 'GB']).default('DE'),
 })
 
 interface PricePoint {
@@ -413,16 +414,34 @@ async function cachePricesByDay(
   )
 }
 
-/** Expand hourly prices to quarter-hourly (×4, same price per slot) */
-function expandHourlyToQH(hourlyPrices: PricePoint[]): PricePoint[] {
-  return hourlyPrices.flatMap(p => {
-    const base = new Date(p.timestamp)
-    return [0, 15, 30, 45].map(min => {
-      const ts = new Date(base)
-      ts.setMinutes(min, 0, 0)
-      return { timestamp: ts.toISOString(), price_ct_kwh: p.price_ct_kwh }
-    })
-  })
+/**
+ * Expand hourly or half-hourly prices to quarter-hourly.
+ * Detects input resolution from the minute offsets in the data.
+ * - Hourly input  (minutes all 00)          → 4 QH entries per hour (×4)
+ * - Half-hour input (minutes 00, 30)        → 2 QH entries per slot (×2)
+ * Deduplicates by timestamp so callers can safely rely on 96 slots per day.
+ */
+function expandHourlyToQH(prices: PricePoint[]): PricePoint[] {
+  if (prices.length === 0) return prices
+  const minuteSet = new Set(prices.slice(0, 20).map(p => new Date(p.timestamp).getUTCMinutes()))
+  const isHalfHourly = minuteSet.has(30)
+
+  const byTs = new Map<number, PricePoint>()
+  for (const p of prices) {
+    const base = new Date(p.timestamp).getTime()
+    // Half-hourly slot covers 30 minutes → 2 × 15-min sub-slots.
+    // Hourly slot covers 60 minutes → 4 × 15-min sub-slots.
+    const subSlots = isHalfHourly ? [0, 15] : [0, 15, 30, 45]
+    for (const offsetMin of subSlots) {
+      const ts = base + offsetMin * 60 * 1000
+      if (!byTs.has(ts)) {
+        byTs.set(ts, { timestamp: new Date(ts).toISOString(), price_ct_kwh: p.price_ct_kwh })
+      }
+    }
+  }
+  return [...byTs.values()].sort(
+    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+  )
 }
 
 // ─── Hourly Fallback Chain ──────────────────────────────────────────
@@ -505,10 +524,15 @@ export async function GET(request: NextRequest) {
       const cached = intradayDays.get(dateStr)
       if (cached) allIntradayPrices.push(...cached)
     }
+    const currencyI = country === 'GB' ? 'GBP' : 'EUR'
+    const priceUnitI = country === 'GB' ? 'GBp/kWh' : 'ct/kWh'
     return NextResponse.json({
       type: 'intraday',
       startDate: startDateStr,
       endDate: endDateStr,
+      country,
+      currency: currencyI,
+      priceUnit: priceUnitI,
       source: intradayDays.size > 0 ? 'cache' : 'none',
       count: allIntradayPrices.length,
       prices: allIntradayPrices,
@@ -533,17 +557,31 @@ export async function GET(request: NextRequest) {
     const uncachedEnd = uncachedDays[uncachedDays.length - 1]
 
     if (country !== 'DE') {
-      // Non-DE countries: ENTSO-E only
-      const domain = ENTSOE_DOMAINS[country]
-      if (domain && type === 'day-ahead') {
-        try {
-          fetchedPrices = await fetchEntsoeRange(uncachedStart, uncachedEnd, domain)
-          if (fetchedPrices?.length) source = 'smard' as const // reuse type for cache
-        } catch (error) {
-          console.error(`ENTSO-E ${country} error:`, error)
+      // Non-DE countries. GB uses Elexon first (most reliable UK source),
+      // other countries use ENTSO-E directly.
+      if (type === 'day-ahead') {
+        if (country === 'GB') {
+          try {
+            fetchedPrices = await fetchElexonMidRange(uncachedStart, uncachedEnd)
+            if (fetchedPrices?.length) source = 'smard' as const // reuse type for cache
+          } catch (error) {
+            console.error(`Elexon GB error:`, error)
+          }
+        }
+        if (!fetchedPrices?.length) {
+          const domain = ENTSOE_DOMAINS[country]
+          if (domain) {
+            try {
+              fetchedPrices = await fetchEntsoeRange(uncachedStart, uncachedEnd, domain)
+              if (fetchedPrices?.length) source = 'smard' as const
+            } catch (error) {
+              console.error(`ENTSO-E ${country} error:`, error)
+            }
+          }
         }
         if (resolution === 'quarterhour' && fetchedPrices?.length) {
-          // ENTSO-E NL only has hourly — expand to QH
+          // Upstream sources are hourly (ENTSO-E NL) or half-hourly (GB Elexon).
+          // Expand to QH by duplicating the closest upstream slot.
           fetchedPrices = expandHourlyToQH(fetchedPrices)
           isHourlyAvg = true
         }
@@ -613,9 +651,15 @@ export async function GET(request: NextRequest) {
   // Determines where actual EPEX data ends and EnergyForecast.de predictions begin.
   // Always uses HOURLY API to get a consistent boundary for both resolutions.
   // Also appends forecast prices for any gaps at the end of the range.
+  // Only DE + NL are supported by EnergyForecast.de — for other countries
+  // (e.g. GB) we skip the forecast step entirely so we never return DE-zone
+  // prices mislabeled with the wrong currency.
+  const FORECAST_COUNTRIES = new Set(['DE', 'NL'])
   let forecastStart: string | null = null
-  if (type === 'day-ahead') {
+  let forecastAppended = false
+  if (type === 'day-ahead' && FORECAST_COUNTRIES.has(country)) {
     try {
+      const startRangeTs = startOfDay(startDate).getTime()
       const endRangeTs = startOfDay(endDate).getTime() + 86400000
       if (endRangeTs > Date.now()) {
         // Get forecast boundary from HOURLY API (consistent for both resolutions)
@@ -631,12 +675,15 @@ export async function GET(request: NextRequest) {
           } catch { /* fall back to hourly */ }
         }
 
-        // Append forecast prices not already in dataset
+        // Append forecast prices that fall inside the requested window and
+        // are not already in the dataset. The start-bound check prevents
+        // today's forecast from leaking into far-future queries.
         const existingTs = new Set(allPrices.map(p => new Date(p.timestamp).getTime()))
         for (const fp of pricesToAppend) {
           const fpTs = new Date(fp.timestamp).getTime()
-          if (!existingTs.has(fpTs) && fpTs <= endRangeTs) {
+          if (!existingTs.has(fpTs) && fpTs >= startRangeTs && fpTs <= endRangeTs) {
             allPrices.push(fp)
+            forecastAppended = true
           }
         }
         allPrices.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
@@ -647,13 +694,31 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Step 6: Response ──
+  // Currency is derived from the country code so clients do not have to hardcode it.
+  const currency = country === 'GB' ? 'GBP' : 'EUR'
+  const priceUnit = country === 'GB' ? 'GBp/kWh' : 'ct/kWh'
+  // Report 'none' instead of the default 'demo' when there is truly no data
+  // (empty prices and nothing cached). Report 'forecast' when only the
+  // EnergyForecast.de append produced prices — otherwise the default 'demo'
+  // misleads clients into thinking demo data was used.
+  const fetchSucceeded = uncachedDays.length > 0 && fetchedPrices != null && fetchedPrices.length > 0
+  const resolvedSource = cachedDays.size > 0 && uncachedDays.length > 0 && fetchSucceeded
+    ? `mixed (${cachedDays.size} cached)`
+    : cachedDays.size > 0 && !fetchSucceeded
+      ? (forecastAppended ? 'cache+forecast' : 'cache')
+      : allPrices.length === 0
+        ? 'none'
+        : forecastAppended && !fetchSucceeded
+          ? 'forecast'
+          : source
   return NextResponse.json({
     type,
     startDate: startDateStr,
     endDate: endDateStr,
-    source: cachedDays.size > 0 && uncachedDays.length > 0
-      ? `mixed (${cachedDays.size} cached)`
-      : cachedDays.size > 0 ? 'cache' : source,
+    country,
+    currency,
+    priceUnit,
+    source: resolvedSource,
     count: allPrices.length,
     prices: allPrices,
     forecastStart,

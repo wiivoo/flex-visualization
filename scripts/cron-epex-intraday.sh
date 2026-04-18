@@ -6,21 +6,35 @@
 # Retries up to 3 times with increasing delays (2min, 5min, 10min)
 # to handle EPEX WAF rate limiting.
 #
-# Crontab entry (run daily at 08:00 CET):
-#   0 8 * * * /Users/lars/claude/projects/mmm/scripts/cron-epex-intraday.sh >> /Users/lars/claude/projects/mmm/logs/epex-scraper.log 2>&1
+# Crontab entry (run daily at 08:00 CET). The script self-manages its log file,
+# so the `>>` redirect in the crontab line is optional (it is still harmless).
+#   0 8 * * * /Users/lars/claude/projects/mmm/scripts/cron-epex-intraday.sh
 #
 
 set -euo pipefail
 
 PROJECT_DIR="/Users/lars/claude/projects/mmm"
 LOG_DIR="$PROJECT_DIR/logs"
+LOG_FILE="$LOG_DIR/epex-scraper.log"
 SCRIPT="$PROJECT_DIR/scripts/scrape-epex-intraday.mjs"
 NODE="/opt/homebrew/bin/node"
 MAX_RETRIES=3
 DELAYS=(120 300 600) # seconds: 2min, 5min, 10min
+LOG_MAX_BYTES=10485760 # rotate at 10 MB
+LOG_KEEP=30            # keep up to 30 rotated files
 
 # Ensure log directory exists
 mkdir -p "$LOG_DIR"
+
+# Rotate log before redirect so rotation isn't defeated by an open fd
+if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE")" -gt "$LOG_MAX_BYTES" ]; then
+  mv "$LOG_FILE" "$LOG_FILE.$(date +%Y%m%d-%H%M%S)"
+fi
+# Prune old rotations
+ls -1t "$LOG_FILE".* 2>/dev/null | tail -n +$((LOG_KEEP + 1)) | xargs -I{} rm -f {} 2>/dev/null || true
+
+# Redirect all subsequent output to the log file so cron doesn't need to
+exec >> "$LOG_FILE" 2>&1
 
 echo ""
 echo "===== EPEX Intraday Scraper — $(date '+%Y-%m-%d %H:%M:%S') ====="
