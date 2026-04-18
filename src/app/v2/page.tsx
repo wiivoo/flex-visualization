@@ -92,7 +92,7 @@ function V2Inner() {
     fleetConfig: FleetConfig
     resolution: 'hour' | 'quarterhour'
   } | null>(null)
-  const [country, setCountry] = useState<'DE' | 'NL'>('DE')
+  const [country, setCountry] = useState<'DE' | 'NL' | 'GB'>('DE')
   const prevCountryRef = useRef(country)
 
   const prices = usePrices(country)

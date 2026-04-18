@@ -67,8 +67,8 @@ interface Props {
   scenario: ChargingScenario
   setScenario: (s: ChargingScenario) => void
   optimization: OptimizeResult | null
-  country?: 'DE' | 'NL'
-  setCountry?: (c: 'DE' | 'NL') => void
+  country?: 'DE' | 'NL' | 'GB'
+  setCountry?: (c: 'DE' | 'NL' | 'GB') => void
   onExportReady?: (data: { overnightWindows: import('@/lib/excel-export').EnrichedWindow[]; showFleet: boolean; fleetConfig: import('@/lib/v2-config').FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => void
 }
 
@@ -2143,6 +2143,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'NL' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
                     <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]"><rect width="14" height="3.33" fill="#AE1C28"/><rect y="3.33" width="14" height="3.34" fill="#FFF"/><rect y="6.67" width="14" height="3.33" fill="#21468B"/></svg>
                     NL
+                  </button>
+                  <button
+                    onClick={() => { if (!prices.loading) setCountry?.('GB') }}
+                    disabled={prices.loading && country !== 'GB'}
+                    title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom — Elexon BMRS MID (prices in GBp/kWh)'}
+                    className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'GB' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+                    <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]">
+                      <rect width="14" height="10" fill="#012169"/>
+                      <path d="M0,0 L14,10 M14,0 L0,10" stroke="#FFF" strokeWidth="1.5"/>
+                      <path d="M0,0 L14,10 M14,0 L0,10" stroke="#C8102E" strokeWidth="0.75"/>
+                      <path d="M7,0 V10 M0,5 H14" stroke="#FFF" strokeWidth="2.5"/>
+                      <path d="M7,0 V10 M0,5 H14" stroke="#C8102E" strokeWidth="1.25"/>
+                    </svg>
+                    GB
                   </button>
                 </div>
                 {/* Mode toggle */}
