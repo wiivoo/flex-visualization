@@ -34,6 +34,8 @@ Status: Ready to execute
 
 - Phase 7 added: Insights tab — Ideal Parameters Sweep (BD heatmap + product sensitivity at /v2/insights)
 - Phase 8 added: Plug-in Battery Business Case (DE/NL) — sub-page modeling home-battery economics across three variants with split consumer ROI + management view; research prerequisites logged 2026-04-17
+- Phase 8 scope narrowed 2026-04-18: single variant (Marstek Venus B plug-and-play), pure arbitrage, apartments without PV; DE/NL regulation corrected (see quick task 260418-wgz)
+- Phase 9 added 2026-04-18: Management Dashboard (PROJ-40) — exec-facing /management page with fixed scenario, three time-period views, KPI tiles, YoY bars, and avg QH-price explainer reconciling headline savings via spread × kWh × sessions audit trail
 
 ### Quick Tasks Completed
 

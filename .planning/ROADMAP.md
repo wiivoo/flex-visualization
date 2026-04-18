@@ -323,5 +323,15 @@ Not in scope: V2G, backup/resilience, C&I batteries, marketing landing page.
 Plans:
 - [ ] TBD (run /gsd-plan-phase 8 to break down)
 
+### Phase 9: Management Dashboard (PROJ-40) — exec-facing /management page with fixed scenario, three time-period views (Month / Rolling 365d / Full year), KPI tiles, YoY grouped bars, and avg QH-price explainer panel that reconciles headline savings via spread × kWh × sessions audit trail
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 9 to break down)
+
 ---
 *Last updated: 2026-04-09 — Phase 6 plans created (2 plans, 2 waves)*
