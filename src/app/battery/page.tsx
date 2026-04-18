@@ -14,8 +14,15 @@ import { BatteryVariantPicker } from '@/components/battery/BatteryVariantPicker'
 import { BatteryDayChart } from '@/components/battery/BatteryDayChart'
 import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
 import { ManagementView } from '@/components/battery/ManagementView'
+import { BatteryIntroCard } from '@/components/battery/BatteryIntroCard'
+import { BatteryCycleKpiStrip } from '@/components/battery/BatteryCycleKpiStrip'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  useBatteryWindow,
+  type BatteryResolution,
+  type BatteryWindowHours,
+} from '@/lib/use-battery-window'
 
 // ---------------------------------------------------------------------------
 // URL parse — untrusted search params → typed scenario
@@ -78,7 +85,10 @@ function BatteryInner() {
   const searchParams = useSearchParams()
 
   const [scenario, setScenario] = useState<BatteryScenario>(() => parseScenario(searchParams))
+  const [windowHours, setWindowHours] = useState<BatteryWindowHours>(36)
+  const [resolution, setResolution] = useState<BatteryResolution>('hour')
   const prices = usePrices(scenario.country)
+  const battery = useBatteryWindow(scenario, prices, windowHours, resolution)
 
   // NL failure → auto-revert to DE (identical to /v2 pattern)
   useEffect(() => {
@@ -146,7 +156,8 @@ function BatteryInner() {
         </div>
       </header>
 
-      <main className="max-w-[1440px] mx-auto px-8 py-8">
+      <main className="max-w-[1440px] mx-auto px-8 py-8 space-y-6">
+        <BatteryIntroCard />
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
             <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
@@ -171,17 +182,40 @@ function BatteryInner() {
               </Card>
             )}
 
+            <BatteryCycleKpiStrip
+              summary={battery.summary}
+              variant={battery.variant}
+              windowHours={windowHours}
+              setWindowHours={setWindowHours}
+            />
+
             <section data-slot="day-chart" className="space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-                  Day schedule
+                  Cycle view
                 </p>
                 <div className="flex items-center gap-2">
                   {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
                   {prices.error && <span className="text-[10px] text-amber-600">{prices.error}</span>}
                 </div>
               </div>
-              <BatteryDayChart scenario={scenario} prices={prices} />
+              <BatteryDayChart
+                chartData={battery.chartData}
+                summary={battery.summary}
+                variant={battery.variant}
+                windowHours={windowHours}
+                resolution={resolution}
+                setResolution={setResolution}
+                hasQuarterHour={prices.hourlyQH.length > 0}
+                showPv={battery.showPv}
+                capPerSlotKwh={battery.capPerSlotKwh}
+                loadProfile={battery.loadProfile}
+                loading={prices.loading}
+                profilesError={battery.profilesError}
+                profilesLoading={battery.profilesLoading}
+                hasPriceData={battery.hasPriceData}
+                selectedDate={prices.selectedDate}
+              />
             </section>
 
             <section
