@@ -36,6 +36,7 @@
 | PROJ-36 | Flex Band Overlay | In Review | [spec](PROJ-36-flex-band-overlay.md) | `lib/fleet-optimizer.ts`, `components/v2/steps/Step2ChargingScenario.tsx` |
 | PROJ-37 | Fleet Optimized Schedule | In Review | [spec](PROJ-37-fleet-optimized-schedule.md) | `lib/fleet-optimizer.ts`, `components/v2/FleetConfigPanel.tsx`, `components/v2/steps/Step2ChargingScenario.tsx` |
 | PROJ-39 | Plug-in Battery Business Case (DE/NL) | In Progress | [spec](PROJ-39-plug-in-battery-business-case.md) | `app/battery/`, `components/battery/`, `lib/battery-*.ts` |
+| PROJ-40 | Management Dashboard | Planned | [spec](PROJ-40-management-dashboard.md) | `app/management/`, `components/management/`, `lib/management-*.ts`, `public/data/management-monthly.json` |
 
 ## Archived Features (v1 — code in `src/_archive/`)
 
@@ -53,7 +54,7 @@
 | PROJ-14 | Portfolio Scale (unbuilt) | [archived](_archive/PROJ-14-v2-portfolio-scale.md) |
 | PROJ-15 | Market Context (unbuilt) | [archived](_archive/PROJ-15-v2-market-context.md) |
 
-## Next Available ID: PROJ-40
+## Next Available ID: PROJ-41
 
 ## Architecture
 
