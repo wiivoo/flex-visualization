@@ -333,9 +333,9 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — Data foundations: types, pure helpers, precompute script, initial JSON, CI workflow step
-- [ ] 09-02-PLAN.md — KpiTile + YoyBarChart presentational components
-- [ ] 09-03-PLAN.md — ExplainerPanel + SettingsDrawer (shadcn Sheet) + localStorage persistence
+- [x] 09-01-PLAN.md — Data foundations: types, pure helpers, precompute script, initial JSON, CI workflow step
+- [x] 09-02-PLAN.md — KpiTile + YoyBarChart presentational components
+- [x] 09-03-PLAN.md — ExplainerPanel + SettingsDrawer (shadcn Sheet) + localStorage persistence
 - [ ] 09-04-PLAN.md — /management page wiring, middleware password gate, empty-state, smoke test
 
 ---
