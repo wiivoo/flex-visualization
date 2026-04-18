@@ -36,6 +36,9 @@ jobs:
         run: node scripts/update-gb.mjs
         continue-on-error: true
 
+      - name: Precompute management monthly aggregates
+        run: node scripts/precompute-management-monthly.mjs
+
       - name: Check for changes
         id: changes
         run: |
@@ -46,8 +49,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add public/data/smard-prices.json public/data/smard-prices-qh.json public/data/smard-generation.json public/data/smard-meta.json public/data/nl-prices.json public/data/nl-prices-qh.json public/data/gb-prices.json public/data/gb-prices-qh.json
-          git commit -m "chore: update price data $(date -u '+%Y-%m-%d')"
+          git add public/data/smard-prices.json public/data/smard-prices-qh.json public/data/smard-generation.json public/data/smard-meta.json public/data/nl-prices.json public/data/nl-prices-qh.json public/data/gb-prices.json public/data/gb-prices-qh.json public/data/management-monthly.json
+          git commit -m "chore: update price data and management aggregates $(date -u '+%Y-%m-%d')"
           git push
 
       - name: No changes
