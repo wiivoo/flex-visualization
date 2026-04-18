@@ -244,6 +244,38 @@ function extractQH(deliveryDate, allCells, marketArea = 'DE') {
 }
 
 /**
+ * Sanity-check extracted entries before writing. VWAP (weight_avg, id_full,
+ * id1, id3) must sit inside [low, high] per settlement period. A violation
+ * usually means the EPEX table rendered with a transient column offset or
+ * partial data — we drop the row so Supabase never accepts garbage.
+ * Returns { kept, dropped, fixedIndexFields } where kept is the subset that
+ * passed validation.
+ */
+function validateEntries(entries) {
+  const kept = []
+  let dropped = 0
+  let fixedIndexFields = 0
+  const EPS = 0.51 // EUR/MWh tolerance — ≈ 0.05 ct/kWh rounding slack
+  for (const e of entries) {
+    const lo = e.low, hi = e.high
+    const checkField = (v) => v == null || lo == null || hi == null || (v >= lo - EPS && v <= hi + EPS)
+    const coreOk = checkField(e.weight_avg) && checkField(e.last)
+    if (!coreOk) { dropped++; continue }
+    // Index fields (id_full, id1, id3) are sometimes in a different, still-
+    // bounded range. If they fail the check, drop just those index values
+    // rather than the whole row (price_ct_kwh falls back to weight_avg).
+    const clean = { ...e }
+    let anyIndexDropped = false
+    for (const k of ['id_full', 'id1', 'id3']) {
+      if (!checkField(clean[k])) { clean[k] = null; anyIndexDropped = true }
+    }
+    if (anyIndexDropped) fixedIndexFields++
+    kept.push(clean)
+  }
+  return { kept, dropped, fixedIndexFields }
+}
+
+/**
  * Write to Supabase price_cache.
  * Stores prices in ct/kWh (EUR/MWh ÷ 10).
  * Uses country-prefixed cache type for non-DE areas (e.g., 'nl:intraday').
@@ -366,13 +398,30 @@ async function main() {
 
   let scraped = 0
   for (const dateStr of toScrape) {
-    const entries = await scrapeDate(page, dateStr, area.epexCode)
-    if (!entries) continue
+    const rawEntries = await scrapeDate(page, dateStr, area.epexCode)
+    if (!rawEntries) continue
+
+    // Sanity-gate each row: VWAP/index fields must sit inside [low, high].
+    // Rows where even the core fields fail are dropped; rows where only the
+    // index fields fail keep the row but null out the bad index columns.
+    const { kept: entries, dropped, fixedIndexFields } = validateEntries(rawEntries)
+    if (dropped > 0 || fixedIndexFields > 0) {
+      console.log(`  ${dateStr}: validation dropped ${dropped} rows, nulled index fields on ${fixedIndexFields} rows`)
+    }
 
     // Guard: never overwrite good data with empty scrape results
     const validCount = entries.filter(e => e.id_full !== null || e.weight_avg !== null).length
     if (validCount === 0) {
-      console.log(`  ${dateStr}: 0 valid prices — skipping write to preserve existing data`)
+      console.log(`  ${dateStr}: 0 valid prices after validation — skipping write to preserve existing data`)
+      continue
+    }
+    // Extra guard: drop the write if too many ROWS were dropped entirely
+    // (signals a table-layout regression). Nulled index fields do not count
+    // here — they still leave low/high/last/weight_avg intact which is
+    // useful data on its own, and EPEX sometimes publishes index fields
+    // before they have finished settling.
+    if (dropped > rawEntries.length * 0.25) {
+      console.log(`  ${dateStr}: >25% of rows were dropped — skipping write, investigate EPEX layout`)
       continue
     }
 
