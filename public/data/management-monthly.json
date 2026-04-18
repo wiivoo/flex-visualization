@@ -1,0 +1,934 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-04-18T21:53:44.176Z",
+  "scenario": {
+    "batteryCapacityKwh": 60,
+    "chargePowerKw": 7,
+    "plugInTime": "18:00",
+    "departureTime": "06:00",
+    "sessionsPerWeek": 4
+  },
+  "monthly": [
+    {
+      "year": 2022,
+      "month": 1,
+      "monthKey": "2022-01",
+      "avgSpreadCtKwh": 11.29,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 119.91,
+      "avgDayAheadCtKwh": 16.79
+    },
+    {
+      "year": 2022,
+      "month": 2,
+      "monthKey": "2022-02",
+      "avgSpreadCtKwh": 11.31,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 16,
+      "savingsEur": 108.59,
+      "avgDayAheadCtKwh": 12.88
+    },
+    {
+      "year": 2022,
+      "month": 3,
+      "monthKey": "2022-03",
+      "avgSpreadCtKwh": 15.58,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 165.49,
+      "avgDayAheadCtKwh": 25.18
+    },
+    {
+      "year": 2022,
+      "month": 4,
+      "monthKey": "2022-04",
+      "avgSpreadCtKwh": 11.38,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 116.71,
+      "avgDayAheadCtKwh": 16.6
+    },
+    {
+      "year": 2022,
+      "month": 5,
+      "monthKey": "2022-05",
+      "avgSpreadCtKwh": 9.91,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 105.27,
+      "avgDayAheadCtKwh": 17.75
+    },
+    {
+      "year": 2022,
+      "month": 6,
+      "monthKey": "2022-06",
+      "avgSpreadCtKwh": 12.56,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 128.84,
+      "avgDayAheadCtKwh": 21.82
+    },
+    {
+      "year": 2022,
+      "month": 7,
+      "monthKey": "2022-07",
+      "avgSpreadCtKwh": 18.54,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 196.91,
+      "avgDayAheadCtKwh": 31.53
+    },
+    {
+      "year": 2022,
+      "month": 8,
+      "monthKey": "2022-08",
+      "avgSpreadCtKwh": 21.12,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 224.28,
+      "avgDayAheadCtKwh": 46.55
+    },
+    {
+      "year": 2022,
+      "month": 9,
+      "monthKey": "2022-09",
+      "avgSpreadCtKwh": 25.67,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 263.35,
+      "avgDayAheadCtKwh": 34.49
+    },
+    {
+      "year": 2022,
+      "month": 10,
+      "monthKey": "2022-10",
+      "avgSpreadCtKwh": 13.94,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 148.01,
+      "avgDayAheadCtKwh": 15.27
+    },
+    {
+      "year": 2022,
+      "month": 11,
+      "monthKey": "2022-11",
+      "avgSpreadCtKwh": 12.43,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 127.51,
+      "avgDayAheadCtKwh": 17.39
+    },
+    {
+      "year": 2022,
+      "month": 12,
+      "monthKey": "2022-12",
+      "avgSpreadCtKwh": 13.59,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 144.28,
+      "avgDayAheadCtKwh": 25.12
+    },
+    {
+      "year": 2023,
+      "month": 1,
+      "monthKey": "2023-01",
+      "avgSpreadCtKwh": 8.19,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 86.99,
+      "avgDayAheadCtKwh": 11.79
+    },
+    {
+      "year": 2023,
+      "month": 2,
+      "monthKey": "2023-02",
+      "avgSpreadCtKwh": 6.93,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 16,
+      "savingsEur": 66.5,
+      "avgDayAheadCtKwh": 12.84
+    },
+    {
+      "year": 2023,
+      "month": 3,
+      "monthKey": "2023-03",
+      "avgSpreadCtKwh": 7.4,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 78.63,
+      "avgDayAheadCtKwh": 10.24
+    },
+    {
+      "year": 2023,
+      "month": 4,
+      "monthKey": "2023-04",
+      "avgSpreadCtKwh": 5.93,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 60.8,
+      "avgDayAheadCtKwh": 10.08
+    },
+    {
+      "year": 2023,
+      "month": 5,
+      "monthKey": "2023-05",
+      "avgSpreadCtKwh": 5.18,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 55.06,
+      "avgDayAheadCtKwh": 8.16
+    },
+    {
+      "year": 2023,
+      "month": 6,
+      "monthKey": "2023-06",
+      "avgSpreadCtKwh": 5.79,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 59.41,
+      "avgDayAheadCtKwh": 9.48
+    },
+    {
+      "year": 2023,
+      "month": 7,
+      "monthKey": "2023-07",
+      "avgSpreadCtKwh": 6.94,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 73.74,
+      "avgDayAheadCtKwh": 7.75
+    },
+    {
+      "year": 2023,
+      "month": 8,
+      "monthKey": "2023-08",
+      "avgSpreadCtKwh": 7.29,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 77.45,
+      "avgDayAheadCtKwh": 9.44
+    },
+    {
+      "year": 2023,
+      "month": 9,
+      "monthKey": "2023-09",
+      "avgSpreadCtKwh": 9.75,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 100,
+      "avgDayAheadCtKwh": 10.07
+    },
+    {
+      "year": 2023,
+      "month": 10,
+      "monthKey": "2023-10",
+      "avgSpreadCtKwh": 9.21,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 97.86,
+      "avgDayAheadCtKwh": 8.73
+    },
+    {
+      "year": 2023,
+      "month": 11,
+      "monthKey": "2023-11",
+      "avgSpreadCtKwh": 7.08,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 72.6,
+      "avgDayAheadCtKwh": 9.12
+    },
+    {
+      "year": 2023,
+      "month": 12,
+      "monthKey": "2023-12",
+      "avgSpreadCtKwh": 4.52,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 47.99,
+      "avgDayAheadCtKwh": 6.84
+    },
+    {
+      "year": 2024,
+      "month": 1,
+      "monthKey": "2024-01",
+      "avgSpreadCtKwh": 4.3,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 45.69,
+      "avgDayAheadCtKwh": 7.66
+    },
+    {
+      "year": 2024,
+      "month": 2,
+      "monthKey": "2024-02",
+      "avgSpreadCtKwh": 3.95,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 16.6,
+      "savingsEur": 39.34,
+      "avgDayAheadCtKwh": 6.14
+    },
+    {
+      "year": 2024,
+      "month": 3,
+      "monthKey": "2024-03",
+      "avgSpreadCtKwh": 4.93,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 52.4,
+      "avgDayAheadCtKwh": 6.47
+    },
+    {
+      "year": 2024,
+      "month": 4,
+      "monthKey": "2024-04",
+      "avgSpreadCtKwh": 8.38,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 85.96,
+      "avgDayAheadCtKwh": 6.24
+    },
+    {
+      "year": 2024,
+      "month": 5,
+      "monthKey": "2024-05",
+      "avgSpreadCtKwh": 6.97,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 74.03,
+      "avgDayAheadCtKwh": 6.73
+    },
+    {
+      "year": 2024,
+      "month": 6,
+      "monthKey": "2024-06",
+      "avgSpreadCtKwh": 9.2,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 94.44,
+      "avgDayAheadCtKwh": 7.29
+    },
+    {
+      "year": 2024,
+      "month": 7,
+      "monthKey": "2024-07",
+      "avgSpreadCtKwh": 9.32,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 98.94,
+      "avgDayAheadCtKwh": 6.77
+    },
+    {
+      "year": 2024,
+      "month": 8,
+      "monthKey": "2024-08",
+      "avgSpreadCtKwh": 9.64,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 102.36,
+      "avgDayAheadCtKwh": 8.2
+    },
+    {
+      "year": 2024,
+      "month": 9,
+      "monthKey": "2024-09",
+      "avgSpreadCtKwh": 8.99,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 92.27,
+      "avgDayAheadCtKwh": 7.81
+    },
+    {
+      "year": 2024,
+      "month": 10,
+      "monthKey": "2024-10",
+      "avgSpreadCtKwh": 7.35,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 78.04,
+      "avgDayAheadCtKwh": 8.63
+    },
+    {
+      "year": 2024,
+      "month": 11,
+      "monthKey": "2024-11",
+      "avgSpreadCtKwh": 7.57,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 77.66,
+      "avgDayAheadCtKwh": 11.4
+    },
+    {
+      "year": 2024,
+      "month": 12,
+      "monthKey": "2024-12",
+      "avgSpreadCtKwh": 8.61,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 91.49,
+      "avgDayAheadCtKwh": 10.82
+    },
+    {
+      "year": 2025,
+      "month": 1,
+      "monthKey": "2025-01",
+      "avgSpreadCtKwh": 6.94,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 73.72,
+      "avgDayAheadCtKwh": 11.43
+    },
+    {
+      "year": 2025,
+      "month": 2,
+      "monthKey": "2025-02",
+      "avgSpreadCtKwh": 6.51,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 16,
+      "savingsEur": 62.48,
+      "avgDayAheadCtKwh": 12.85
+    },
+    {
+      "year": 2025,
+      "month": 3,
+      "monthKey": "2025-03",
+      "avgSpreadCtKwh": 7.87,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 83.59,
+      "avgDayAheadCtKwh": 9.47
+    },
+    {
+      "year": 2025,
+      "month": 4,
+      "monthKey": "2025-04",
+      "avgSpreadCtKwh": 7.73,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 79.31,
+      "avgDayAheadCtKwh": 7.79
+    },
+    {
+      "year": 2025,
+      "month": 5,
+      "monthKey": "2025-05",
+      "avgSpreadCtKwh": 7.68,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 81.58,
+      "avgDayAheadCtKwh": 6.73
+    },
+    {
+      "year": 2025,
+      "month": 6,
+      "monthKey": "2025-06",
+      "avgSpreadCtKwh": 9.03,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 92.67,
+      "avgDayAheadCtKwh": 6.4
+    },
+    {
+      "year": 2025,
+      "month": 7,
+      "monthKey": "2025-07",
+      "avgSpreadCtKwh": 5.99,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 63.63,
+      "avgDayAheadCtKwh": 8.78
+    },
+    {
+      "year": 2025,
+      "month": 8,
+      "monthKey": "2025-08",
+      "avgSpreadCtKwh": 7.03,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 74.63,
+      "avgDayAheadCtKwh": 7.69
+    },
+    {
+      "year": 2025,
+      "month": 9,
+      "monthKey": "2025-09",
+      "avgSpreadCtKwh": 10.08,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 103.46,
+      "avgDayAheadCtKwh": 8.35
+    },
+    {
+      "year": 2025,
+      "month": 10,
+      "monthKey": "2025-10",
+      "avgSpreadCtKwh": 10.08,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 107.01,
+      "avgDayAheadCtKwh": 8.43
+    },
+    {
+      "year": 2025,
+      "month": 11,
+      "monthKey": "2025-11",
+      "avgSpreadCtKwh": 7.73,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 79.29,
+      "avgDayAheadCtKwh": 10.19
+    },
+    {
+      "year": 2025,
+      "month": 12,
+      "monthKey": "2025-12",
+      "avgSpreadCtKwh": 5.91,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 62.74,
+      "avgDayAheadCtKwh": 9.34
+    },
+    {
+      "year": 2026,
+      "month": 1,
+      "monthKey": "2026-01",
+      "avgSpreadCtKwh": 6.39,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 67.84,
+      "avgDayAheadCtKwh": 11.01
+    },
+    {
+      "year": 2026,
+      "month": 2,
+      "monthKey": "2026-02",
+      "avgSpreadCtKwh": 5.79,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 16,
+      "savingsEur": 55.57,
+      "avgDayAheadCtKwh": 9.65
+    },
+    {
+      "year": 2026,
+      "month": 3,
+      "monthKey": "2026-03",
+      "avgSpreadCtKwh": 12.18,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.7,
+      "savingsEur": 129.36,
+      "avgDayAheadCtKwh": 9.95
+    },
+    {
+      "year": 2026,
+      "month": 4,
+      "monthKey": "2026-04",
+      "avgSpreadCtKwh": 9.83,
+      "energyPerSessionKwh": 60,
+      "sessionsInMonth": 17.1,
+      "savingsEur": 100.9,
+      "avgDayAheadCtKwh": 8.57
+    }
+  ],
+  "explainer": {
+    "monthKey": "2026-03",
+    "avgQhProfile": [
+      {
+        "qhIndex": 0,
+        "ctKwh": 9.87
+      },
+      {
+        "qhIndex": 1,
+        "ctKwh": 9.52
+      },
+      {
+        "qhIndex": 2,
+        "ctKwh": 9.34
+      },
+      {
+        "qhIndex": 3,
+        "ctKwh": 9.18
+      },
+      {
+        "qhIndex": 4,
+        "ctKwh": 9.43
+      },
+      {
+        "qhIndex": 5,
+        "ctKwh": 9.23
+      },
+      {
+        "qhIndex": 6,
+        "ctKwh": 9.17
+      },
+      {
+        "qhIndex": 7,
+        "ctKwh": 9.12
+      },
+      {
+        "qhIndex": 8,
+        "ctKwh": 9.22
+      },
+      {
+        "qhIndex": 9,
+        "ctKwh": 9.16
+      },
+      {
+        "qhIndex": 10,
+        "ctKwh": 9.24
+      },
+      {
+        "qhIndex": 11,
+        "ctKwh": 9.31
+      },
+      {
+        "qhIndex": 12,
+        "ctKwh": 9.2
+      },
+      {
+        "qhIndex": 13,
+        "ctKwh": 9.29
+      },
+      {
+        "qhIndex": 14,
+        "ctKwh": 9.57
+      },
+      {
+        "qhIndex": 15,
+        "ctKwh": 9.95
+      },
+      {
+        "qhIndex": 16,
+        "ctKwh": 9.53
+      },
+      {
+        "qhIndex": 17,
+        "ctKwh": 10.02
+      },
+      {
+        "qhIndex": 18,
+        "ctKwh": 10.93
+      },
+      {
+        "qhIndex": 19,
+        "ctKwh": 11.81
+      },
+      {
+        "qhIndex": 20,
+        "ctKwh": 10.91
+      },
+      {
+        "qhIndex": 21,
+        "ctKwh": 12.08
+      },
+      {
+        "qhIndex": 22,
+        "ctKwh": 12.93
+      },
+      {
+        "qhIndex": 23,
+        "ctKwh": 13.55
+      },
+      {
+        "qhIndex": 24,
+        "ctKwh": 15.15
+      },
+      {
+        "qhIndex": 25,
+        "ctKwh": 14.48
+      },
+      {
+        "qhIndex": 26,
+        "ctKwh": 12.9
+      },
+      {
+        "qhIndex": 27,
+        "ctKwh": 10.86
+      },
+      {
+        "qhIndex": 28,
+        "ctKwh": 14.58
+      },
+      {
+        "qhIndex": 29,
+        "ctKwh": 11.79
+      },
+      {
+        "qhIndex": 30,
+        "ctKwh": 10.25
+      },
+      {
+        "qhIndex": 31,
+        "ctKwh": 8.43
+      },
+      {
+        "qhIndex": 32,
+        "ctKwh": 10.96
+      },
+      {
+        "qhIndex": 33,
+        "ctKwh": 8.98
+      },
+      {
+        "qhIndex": 34,
+        "ctKwh": 7.87
+      },
+      {
+        "qhIndex": 35,
+        "ctKwh": 6.34
+      },
+      {
+        "qhIndex": 36,
+        "ctKwh": 8.01
+      },
+      {
+        "qhIndex": 37,
+        "ctKwh": 6.35
+      },
+      {
+        "qhIndex": 38,
+        "ctKwh": 5.33
+      },
+      {
+        "qhIndex": 39,
+        "ctKwh": 4.1
+      },
+      {
+        "qhIndex": 40,
+        "ctKwh": 5.01
+      },
+      {
+        "qhIndex": 41,
+        "ctKwh": 4.05
+      },
+      {
+        "qhIndex": 42,
+        "ctKwh": 3.44
+      },
+      {
+        "qhIndex": 43,
+        "ctKwh": 2.84
+      },
+      {
+        "qhIndex": 44,
+        "ctKwh": 3.3
+      },
+      {
+        "qhIndex": 45,
+        "ctKwh": 2.84
+      },
+      {
+        "qhIndex": 46,
+        "ctKwh": 2.63
+      },
+      {
+        "qhIndex": 47,
+        "ctKwh": 2.44
+      },
+      {
+        "qhIndex": 48,
+        "ctKwh": 2.52
+      },
+      {
+        "qhIndex": 49,
+        "ctKwh": 2.6
+      },
+      {
+        "qhIndex": 50,
+        "ctKwh": 2.86
+      },
+      {
+        "qhIndex": 51,
+        "ctKwh": 3.24
+      },
+      {
+        "qhIndex": 52,
+        "ctKwh": 2.86
+      },
+      {
+        "qhIndex": 53,
+        "ctKwh": 3.81
+      },
+      {
+        "qhIndex": 54,
+        "ctKwh": 4.66
+      },
+      {
+        "qhIndex": 55,
+        "ctKwh": 5.61
+      },
+      {
+        "qhIndex": 56,
+        "ctKwh": 4.68
+      },
+      {
+        "qhIndex": 57,
+        "ctKwh": 5.95
+      },
+      {
+        "qhIndex": 58,
+        "ctKwh": 7.44
+      },
+      {
+        "qhIndex": 59,
+        "ctKwh": 9.7
+      },
+      {
+        "qhIndex": 60,
+        "ctKwh": 7.02
+      },
+      {
+        "qhIndex": 61,
+        "ctKwh": 9.46
+      },
+      {
+        "qhIndex": 62,
+        "ctKwh": 11.51
+      },
+      {
+        "qhIndex": 63,
+        "ctKwh": 14.19
+      },
+      {
+        "qhIndex": 64,
+        "ctKwh": 10.63
+      },
+      {
+        "qhIndex": 65,
+        "ctKwh": 13.04
+      },
+      {
+        "qhIndex": 66,
+        "ctKwh": 15.33
+      },
+      {
+        "qhIndex": 67,
+        "ctKwh": 19.34
+      },
+      {
+        "qhIndex": 68,
+        "ctKwh": 16.49
+      },
+      {
+        "qhIndex": 69,
+        "ctKwh": 17.84
+      },
+      {
+        "qhIndex": 70,
+        "ctKwh": 18.2
+      },
+      {
+        "qhIndex": 71,
+        "ctKwh": 18.23
+      },
+      {
+        "qhIndex": 72,
+        "ctKwh": 19.02
+      },
+      {
+        "qhIndex": 73,
+        "ctKwh": 17.03
+      },
+      {
+        "qhIndex": 74,
+        "ctKwh": 16.06
+      },
+      {
+        "qhIndex": 75,
+        "ctKwh": 14.97
+      },
+      {
+        "qhIndex": 76,
+        "ctKwh": 16.04
+      },
+      {
+        "qhIndex": 77,
+        "ctKwh": 14.6
+      },
+      {
+        "qhIndex": 78,
+        "ctKwh": 13.47
+      },
+      {
+        "qhIndex": 79,
+        "ctKwh": 12.57
+      },
+      {
+        "qhIndex": 80,
+        "ctKwh": 13.87
+      },
+      {
+        "qhIndex": 81,
+        "ctKwh": 13.02
+      },
+      {
+        "qhIndex": 82,
+        "ctKwh": 12.2
+      },
+      {
+        "qhIndex": 83,
+        "ctKwh": 11.18
+      },
+      {
+        "qhIndex": 84,
+        "ctKwh": 12.72
+      },
+      {
+        "qhIndex": 85,
+        "ctKwh": 11.96
+      },
+      {
+        "qhIndex": 86,
+        "ctKwh": 11.47
+      },
+      {
+        "qhIndex": 87,
+        "ctKwh": 10.63
+      },
+      {
+        "qhIndex": 88,
+        "ctKwh": 11.59
+      },
+      {
+        "qhIndex": 89,
+        "ctKwh": 10.57
+      },
+      {
+        "qhIndex": 90,
+        "ctKwh": 10.2
+      },
+      {
+        "qhIndex": 91,
+        "ctKwh": 9.43
+      },
+      {
+        "qhIndex": 92,
+        "ctKwh": 10.86
+      },
+      {
+        "qhIndex": 93,
+        "ctKwh": 10.31
+      },
+      {
+        "qhIndex": 94,
+        "ctKwh": 9.87
+      },
+      {
+        "qhIndex": 95,
+        "ctKwh": 9.46
+      }
+    ],
+    "chargingWindow": {
+      "startQh": 72,
+      "endQh": 23
+    },
+    "baselineWindow": {
+      "startQh": 72,
+      "endQh": 10
+    },
+    "spreadCtKwh": 9.9,
+    "energyPerSessionKwh": 60,
+    "sessionsInMonth": 17.7,
+    "reconciledSavingsEur": 105.1
+  }
+}
