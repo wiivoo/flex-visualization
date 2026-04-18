@@ -43,6 +43,6 @@ Status: Ready to execute
 | 260415-c4z | Improve insights page — actionable sensitivity charts and price patterns heatmap | 2026-04-15 | 94c271c |  | [260415-c4z-improve-insights-page-actionable-sensiti](./quick/260415-c4z-improve-insights-page-actionable-sensiti/) |
 | 260415-cjb | Auditable Excel exports for /v2/insights graphs (raw prices → formulas → chart visual) | 2026-04-15 | 7cb7d73 | Needs Review | [260415-cjb-add-auditable-excel-exports-with-formula](./quick/260415-cjb-add-auditable-excel-exports-with-formula/) |
 | 260418-w8p | Management dashboard feature spec (PROJ-40) — docs-only | 2026-04-18 | 3736114 |  | [260418-w8p-management-dashboard-spec](./quick/260418-w8p-management-dashboard-spec/) |
-| 260418-wgz | Narrow PROJ-39 to single plug-and-play variant; correct DE/NL 800W regulation | 2026-04-18 | (pending) |  | [260418-wgz-rewrite-proj-39-spec-to-narrow-scope-to-](./quick/260418-wgz-rewrite-proj-39-spec-to-narrow-scope-to-/) |
+| 260418-wgz | Narrow PROJ-39 to single plug-and-play variant; correct DE/NL 800W regulation | 2026-04-18 | 3babea7 |  | [260418-wgz-rewrite-proj-39-spec-to-narrow-scope-to-](./quick/260418-wgz-rewrite-proj-39-spec-to-narrow-scope-to-/) |
 
 Last activity: 2026-04-18 - Completed quick task 260418-wgz: Narrow PROJ-39 scope + correct DE/NL regulation
