@@ -336,7 +336,7 @@ Plans:
 - [x] 09-01-PLAN.md — Data foundations: types, pure helpers, precompute script, initial JSON, CI workflow step
 - [x] 09-02-PLAN.md — KpiTile + YoyBarChart presentational components
 - [x] 09-03-PLAN.md — ExplainerPanel + SettingsDrawer (shadcn Sheet) + localStorage persistence
-- [ ] 09-04-PLAN.md — /management page wiring, middleware password gate, empty-state, smoke test
+- [x] 09-04-PLAN.md — /management page wiring, middleware password gate, empty-state, smoke test
 
 ---
 *Last updated: 2026-04-18 — Phase 9 plans created (4 plans, 3 waves)*
