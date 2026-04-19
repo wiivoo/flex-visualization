@@ -3,6 +3,7 @@
 import { useMemo, useState, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { getPriceUnits, type Country } from '@/lib/v2-config'
 
 export interface DailyEntry {
   savingsEur: number
@@ -25,6 +26,7 @@ interface Props {
   isFleet?: boolean
   /** Selected plug-in days (JS getUTCDay: 0=Sun..6=Sat). When set, non-matching days are dimmed. */
   plugInDays?: number[]
+  country?: Country
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -75,7 +77,8 @@ function buildBuckets(savings: number[]): { min: number; max: number; color: str
   })
 }
 
-export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost, isFleet = false, plugInDays }: Props) {
+export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, energyPerSession, chargingMode, rollingAvgSavings, sessionsPerYear, selectedDayCost, isFleet = false, plugInDays, country = 'DE' }: Props) {
+  const units = getPriceUnits(country)
   const [hoveredDate, setHoveredDate] = useState<string | null>(null)
   // Filter by spread: null = show all, Set = active bucket indices
   const [activeBuckets, setActiveBuckets] = useState<Set<number> | null>(null)
@@ -267,7 +270,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 return (
                   <button key={i} onClick={() => toggleBucket(i)}
                     className="rounded-sm transition-all relative group cursor-pointer"
-                    title={`${b.label} ct/kWh saving · ${bucketCounts[i]} days`}
+                    title={`${b.label} ${units.priceUnit} saving · ${bucketCounts[i]} days`}
                     style={{
                       width: cellSize + 4, height: cellSize + 4,
                       background: b.color,
@@ -282,7 +285,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 )
               })}
             </div>
-            <span className="text-[8px] text-gray-300 ml-0.5">ct/kWh</span>
+            <span className="text-[8px] text-gray-300 ml-0.5">{units.priceUnit}</span>
             {isFiltering && (
               <button onClick={() => setActiveBuckets(null)}
                 className="text-[9px] text-[#313131] hover:text-gray-600 transition-colors ml-1 underline underline-offset-2">
@@ -363,18 +366,18 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                                   <div className="space-y-1 text-[11px]">
                                     <div className="flex justify-between gap-4">
                                       <span className="text-gray-400">Unmanaged</span>
-                                      <span className="font-mono text-red-600 tabular-nums">{entry.bAvg.toFixed(2)} ct/kWh</span>
+                                      <span className="font-mono text-red-600 tabular-nums">{entry.bAvg.toFixed(2)} {units.priceUnit}</span>
                                     </div>
                                     <div className="flex justify-between gap-4">
                                       <span className="text-gray-400">Optimized</span>
-                                      <span className="font-mono text-emerald-600 tabular-nums">{entry.oAvg.toFixed(2)} ct/kWh</span>
+                                      <span className="font-mono text-emerald-600 tabular-nums">{entry.oAvg.toFixed(2)} {units.priceUnit}</span>
                                     </div>
                                     <div className="flex justify-between gap-4 border-t border-gray-100 pt-1">
                                       <span className="text-gray-500 font-medium">Saving</span>
-                                      <span className="font-bold text-emerald-700 tabular-nums">{(entry.bAvg - entry.oAvg).toFixed(2)} ct/kWh</span>
+                                      <span className="font-bold text-emerald-700 tabular-nums">{(entry.bAvg - entry.oAvg).toFixed(2)} {units.priceUnit}</span>
                                     </div>
                                     <p className="text-[9px] text-gray-400 pt-0.5">
-                                      ({entry.bAvg.toFixed(2)} − {entry.oAvg.toFixed(2)}) × {energyPerSession} kWh ÷ 100 = {entry.savingsEur.toFixed(2)} EUR
+                                      ({entry.bAvg.toFixed(2)} − {entry.oAvg.toFixed(2)}) × {energyPerSession} kWh ÷ 100 = {entry.savingsEur.toFixed(2)} {units.currency}
                                     </p>
                                   </div>
                                 ) : (
@@ -416,11 +419,11 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 <span className="text-[28px] font-bold tabular-nums text-emerald-700 leading-none tracking-tight">
                   {annualSavings.toFixed(0)}
                 </span>
-                <span className="text-sm font-semibold text-emerald-600">EUR{isFleet ? '/EV' : ''}</span>
+                <span className="text-sm font-semibold text-emerald-600">{units.currency}{isFleet ? '/EV' : ''}</span>
                 <span className="text-[10px] text-emerald-500/80 ml-auto">/year</span>
               </div>
               <div className="flex items-center gap-3 mt-1.5 text-[10px] text-emerald-600/70">
-                <span>{avgPerSession.toFixed(2)} EUR/{isFleet ? 'EV/' : ''}session</span>
+                <span>{avgPerSession.toFixed(2)} {units.currency}/{isFleet ? 'EV/' : ''}session</span>
                 {sessionsPerYear != null && <span className="text-emerald-500/50">·</span>}
                 {sessionsPerYear != null && <span>{sessionsPerYear} sessions/yr</span>}
               </div>
@@ -432,14 +435,14 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                 <p className="text-[9px] font-semibold text-gray-400 uppercase tracking-wider">
                   {isFiltering ? `Filtered ${filtered.length}/${allEntries.length} Days` : 'Avg 52 Weeks'}
                 </p>
-                <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{stats.avgCt.toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
+                <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{stats.avgCt.toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">{units.priceUnit}</span></span>
               </div>
               <div className="flex items-center gap-4 mt-1.5 text-[10px]">
                 <span className="text-gray-400">
-                  <span className="text-red-500 font-mono tabular-nums">{stats.avgBAvg.toFixed(2)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{stats.avgOAvg.toFixed(2)}</span> ct
+                  <span className="text-red-500 font-mono tabular-nums">{stats.avgBAvg.toFixed(2)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{stats.avgOAvg.toFixed(2)}</span> {units.priceSym}
                 </span>
                 <span className="text-gray-300">·</span>
-                <span className="text-gray-400">{stats.avgSpread.toFixed(2)} ct spread</span>
+                <span className="text-gray-400">{stats.avgSpread.toFixed(2)} {units.priceSym} spread</span>
               </div>
             </div>
 
@@ -451,14 +454,14 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
                     {fmtDate(displayDateStr)}
                     {previewDate && !hoveredDate && <span className="text-blue-400 ml-1.5 normal-case font-normal">click again to jump</span>}
                   </p>
-                  <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{(displayEntry.bAvg - displayEntry.oAvg).toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">ct/kWh</span></span>
+                  <span className="text-lg font-bold tabular-nums text-emerald-700 leading-none">{(displayEntry.bAvg - displayEntry.oAvg).toFixed(2)} <span className="text-[10px] font-semibold text-gray-400">{units.priceUnit}</span></span>
                 </div>
                 <div className="flex items-center gap-4 mt-1.5 text-[10px]">
                   <span className="text-gray-400">
-                    <span className="text-red-500 font-mono tabular-nums">{displayEntry.bAvg.toFixed(2)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{displayEntry.oAvg.toFixed(2)}</span> ct
+                    <span className="text-red-500 font-mono tabular-nums">{displayEntry.bAvg.toFixed(2)}</span> → <span className="text-emerald-600 font-mono tabular-nums">{displayEntry.oAvg.toFixed(2)}</span> {units.priceSym}
                   </span>
                   <span className="text-gray-300">·</span>
-                  <span className="text-emerald-700 font-semibold tabular-nums">{displayEntry.savingsEur.toFixed(2)} EUR</span>
+                  <span className="text-emerald-700 font-semibold tabular-nums">{displayEntry.savingsEur.toFixed(2)} {units.currency}</span>
                   <span className="text-gray-300">·</span>
                   <span className="text-gray-400">{displayEntry.windowHours}h</span>
                 </div>

@@ -6,6 +6,7 @@ import {
   ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from 'recharts'
+import { getPriceUnits, type Country } from '@/lib/v2-config'
 
 const BAR_COLOR = '#10B981'  // emerald-500
 
@@ -48,6 +49,7 @@ interface Props {
   isV2G?: boolean
   v2gHasNetCharge?: boolean
   plugInDays?: number[]
+  country?: Country
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -59,8 +61,9 @@ const MODE_LABELS: Record<string, string> = {
 export function MonthlySavingsCard({
   monthlySavingsData, weeklyPlugIns, energyPerSession,
   sessionsPerYear, rollingAvgSavings, monthlySavings, avgDailyEur, selectedDate,
-  chargingMode = 'overnight', isV2G = false, v2gHasNetCharge = false, plugInDays,
+  chargingMode = 'overnight', isV2G = false, v2gHasNetCharge = false, plugInDays, country = 'DE',
 }: Props) {
+  const units = getPriceUnits(country)
   const [viewMode, setViewMode] = useState<'month' | 'day'>('month')
   const [dayViewMonth, setDayViewMonth] = useState<string | undefined>(undefined)
 
@@ -146,16 +149,16 @@ export function MonthlySavingsCard({
                     <tr key={d.date} className={`border-t border-gray-50 ${d.isSelected ? '' : 'opacity-30'}`}>
                       <td className="py-0.5 pl-1 pr-2 text-gray-500 font-mono">{d.date.slice(5)}</td>
                       <td className="py-0.5 pr-2 text-gray-500">{d.dowLabel}</td>
-                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.dailySpreadCt.toFixed(1)} ct</td>
-                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.windowSpreadCt.toFixed(1)} ct</td>
-                      <td className={`py-0.5 text-right pr-1 font-semibold ${d.savingsEur >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{d.savingsEur.toFixed(2)} EUR</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.dailySpreadCt.toFixed(1)} {units.priceSym}</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.windowSpreadCt.toFixed(1)} {units.priceSym}</td>
+                      <td className={`py-0.5 text-right pr-1 font-semibold ${d.savingsEur >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>{d.savingsEur.toFixed(2)} {units.currency}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot className="border-t-2 border-gray-200">
                   <tr className="font-semibold">
                     <td colSpan={4} className="py-1 pl-1 text-gray-600">Total ({dayViewData.filter(d => d.isSelected).length} sessions)</td>
-                    <td className="py-1 text-right pr-1 text-emerald-700">{dayViewTotal.toFixed(2)} EUR</td>
+                    <td className="py-1 text-right pr-1 text-emerald-700">{dayViewTotal.toFixed(2)} {units.currency}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -169,9 +172,9 @@ export function MonthlySavingsCard({
               <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
               <XAxis dataKey="displayLabel" tick={{ fontSize: 10, fontWeight: 500, fill: '#6B7280' }} tickLine={false} axisLine={false} interval={0} />
               <YAxis yAxisId="left" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                label={{ value: 'EUR/mo', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                label={{ value: `${units.currency}/mo`, angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9CA3AF' } }} />
               <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10, fill: '#9CA3AF' }} tickLine={false} axisLine={false}
-                label={{ value: 'EUR cumul.', angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#9CA3AF' } }} />
+                label={{ value: `${units.currency} cumul.`, angle: 90, position: 'insideRight', style: { fontSize: 10, fill: '#9CA3AF' } }} />
               <Tooltip
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null
@@ -179,22 +182,22 @@ export function MonthlySavingsCard({
                   return (
                     <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[12px] space-y-0.5">
                       <p className="text-gray-500 text-[10px]">{d.month}</p>
-                      <p className="font-semibold tabular-nums text-emerald-600">{d.savings.toFixed(2)} EUR/mo</p>
+                      <p className="font-semibold tabular-nums text-emerald-600">{d.savings.toFixed(2)} {units.currency}/mo</p>
                       {isV2G && d.loadShiftingEur !== undefined && d.arbitrageEur !== undefined && (
                         <div className="text-[10px] space-y-0.5 mt-0.5">
                           {(v2gHasNetCharge || d.loadShiftingEur > 0) && (
                             <p className="text-emerald-600 tabular-nums flex items-center gap-1">
                               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-sm inline-block flex-shrink-0" />
-                              Load shifting: {d.loadShiftingEur.toFixed(2)} EUR
+                              Load shifting: {d.loadShiftingEur.toFixed(2)} {units.currency}
                             </p>
                           )}
                           <p className="text-blue-600 tabular-nums flex items-center gap-1">
                             <span className="w-1.5 h-1.5 bg-blue-500 rounded-sm inline-block flex-shrink-0" />
-                            Arbitrage: {d.arbitrageEur.toFixed(2)} EUR
+                            Arbitrage: {d.arbitrageEur.toFixed(2)} {units.currency}
                           </p>
                         </div>
                       )}
-                      <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} EUR so far</p>
+                      <p className="text-gray-400 tabular-nums text-[10px]">∑ {d.cumulative.toFixed(1)} {units.currency} so far</p>
                     </div>
                   )
                 }} />
@@ -238,7 +241,7 @@ export function MonthlySavingsCard({
           </div>
           <span className="flex items-center gap-1.5 text-gray-400">
             <span className="inline-block w-6 border-t border-dashed border-gray-400" />
-            ∑ {totalSum.toFixed(0)} EUR ≈ {rollingAvgSavings.toFixed(0)} EUR/yr
+            ∑ {totalSum.toFixed(0)} {units.currency} ≈ {rollingAvgSavings.toFixed(0)} {units.currencyPerYr}
           </span>
         </div>
 
@@ -288,9 +291,9 @@ export function MonthlySavingsCard({
                         {d.displayLabel}
                         {isPartial && <span className="text-[8px] text-amber-500 ml-0.5" title={`${dataDays}/${totalDays} days`}>({dataDays}d)</span>}
                       </td>
-                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgDailySpreadCt?.toFixed(1) ?? '–'} ct</td>
-                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgWindowSpreadCt?.toFixed(1) ?? '–'} ct</td>
-                      <td className="py-0.5 text-right font-semibold text-emerald-600">{d.avgSavingsCtKwh?.toFixed(2) ?? '–'} ct/kWh</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgDailySpreadCt?.toFixed(1) ?? '–'} {units.priceSym}</td>
+                      <td className="py-0.5 pr-2 text-right text-gray-500">{d.avgWindowSpreadCt?.toFixed(1) ?? '–'} {units.priceSym}</td>
+                      <td className="py-0.5 text-right font-semibold text-emerald-600">{d.avgSavingsCtKwh?.toFixed(2) ?? '–'} {units.priceUnit}</td>
                     </tr>
                     )
                   })}
@@ -301,9 +304,9 @@ export function MonthlySavingsCard({
                     {quarterRows.map(q => (
                       <tr key={q.label} className="border-t border-gray-100 bg-gray-50/40">
                         <td className="py-0.5 pr-2 font-semibold text-gray-600">{q.label}</td>
-                        <td className="py-0.5 pr-2 text-right text-gray-500">{q.spread24?.toFixed(1) ?? '–'} ct</td>
-                        <td className="py-0.5 pr-2 text-right text-gray-500">{q.spreadWin?.toFixed(1) ?? '–'} ct</td>
-                        <td className="py-0.5 text-right font-semibold text-emerald-600">{q.savingsCtKwh?.toFixed(2) ?? '–'} ct/kWh</td>
+                        <td className="py-0.5 pr-2 text-right text-gray-500">{q.spread24?.toFixed(1) ?? '–'} {units.priceSym}</td>
+                        <td className="py-0.5 pr-2 text-right text-gray-500">{q.spreadWin?.toFixed(1) ?? '–'} {units.priceSym}</td>
+                        <td className="py-0.5 text-right font-semibold text-emerald-600">{q.savingsCtKwh?.toFixed(2) ?? '–'} {units.priceUnit}</td>
                       </tr>
                     ))}
                   </tfoot>

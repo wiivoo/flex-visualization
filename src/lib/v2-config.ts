@@ -5,6 +5,24 @@
 /** Feature flag: set to true to show the V1G/V2G toggle in the UI */
 export const ENABLE_V2G = false
 
+/** Country code for price-source / currency switching on v2 */
+export type Country = 'DE' | 'NL' | 'GB'
+
+export interface PriceUnits {
+  priceUnit: string      // per-kWh label, e.g. 'ct/kWh' or 'p/kWh'
+  priceSym: string       // per-unit short symbol, e.g. 'ct' or 'p'
+  currency: string       // ISO currency code, e.g. 'EUR' or 'GBP'
+  currencySym: string    // currency symbol, e.g. '€' or '£'
+  currencyPerYr: string  // e.g. 'EUR/yr' or 'GBP/yr'
+}
+
+export function getPriceUnits(country: Country | string = 'DE'): PriceUnits {
+  if (country === 'GB') {
+    return { priceUnit: 'p/kWh', priceSym: 'p', currency: 'GBP', currencySym: '£', currencyPerYr: 'GBP/yr' }
+  }
+  return { priceUnit: 'ct/kWh', priceSym: 'ct', currency: 'EUR', currencySym: '€', currencyPerYr: 'EUR/yr' }
+}
+
 export interface VehiclePreset {
   id: 'compact' | 'mid' | 'suv'
   label: string

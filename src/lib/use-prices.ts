@@ -175,15 +175,20 @@ export function usePrices(country: string = 'DE'): PriceData {
   /** Convert compact price to HourlyPrice */
   const toHourlyPrice = useCallback((p: CompactPrice): HourlyPrice => {
     const d = new Date(p.t)
+    // GB static files (gb-prices*.json) store values already in GBp/kWh;
+    // DE/NL files store values in EUR/MWh and need /10 to convert.
+    const isKwhScale = country === 'GB'
+    const priceCtKwh = isKwhScale ? Math.round(p.p * 100) / 100 : Math.round((p.p / 10) * 100) / 100
+    const priceEurMwh = isKwhScale ? p.p * 10 : p.p
     return {
       timestamp: p.t,
-      priceEurMwh: p.p,
-      priceCtKwh: Math.round((p.p / 10) * 100) / 100,
+      priceEurMwh,
+      priceCtKwh,
       hour: d.getHours(),
       minute: d.getMinutes(),
       date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
     }
-  }, [])
+  }, [country])
 
   /** Get next day string from YYYY-MM-DD */
   const nextDay = useCallback((dateStr: string): string => {

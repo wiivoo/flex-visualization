@@ -4,7 +4,7 @@ import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } f
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
-import { deriveEnergyPerSession, totalWeeklyPlugIns, effectivePlugInDays, splitPlugInDays, DEFAULT_PLUGIN_DAYS, DOW_DISPLAY_ORDER, DOW_LABELS, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats, type DayOfWeek } from '@/lib/v2-config'
+import { deriveEnergyPerSession, totalWeeklyPlugIns, effectivePlugInDays, splitPlugInDays, DEFAULT_PLUGIN_DAYS, DOW_DISPLAY_ORDER, DOW_LABELS, AVG_CONSUMPTION_KWH_PER_100KM, DEFAULT_CHARGE_POWER_KW, getPriceUnits, type ChargingScenario, type HourlyPrice, type DailySummary, type MonthlyStats, type DayOfWeek } from '@/lib/v2-config'
 import type { OptimizeResult } from '@/lib/optimizer'
 import { nextDayStr, fmtDateShort, computeWindowSavings, buildOvernightWindows, computeSpread, buildMultiDayWindow, addDaysStr, computeV2gWindowSavings, type V2gResult } from '@/lib/charging-helpers'
 import { VEHICLE_PRESETS, ENABLE_V2G } from '@/lib/v2-config'
@@ -74,6 +74,7 @@ interface Props {
 
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, onExportReady }: Props) {
+  const units = getPriceUnits(country)
   const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
   const isV2G = scenario.gridMode === 'v2g'
   // V2G: does the battery need net charging? (startSoC < targetSoC)
@@ -897,7 +898,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       const weekly52w = avg52w * deferredPlugInDays.length
       const eur4w = Math.round(weekly4w * 4 * 100) / 100
       const eur52w = Math.round(weekly52w * 52 * 100) / 100
-      // ct/kWh: average savings per matching session ÷ energy
+      // {units.priceUnit}: average savings per matching session ÷ energy
       const ctKwh4w = deferredEnergyPerSession > 0 ? avg4w / deferredEnergyPerSession * 100 : 0
       const ctKwh52w = deferredEnergyPerSession > 0 ? avg52w / deferredEnergyPerSession * 100 : 0
       return { ctKwh4w, eur4w, ctKwh52w, eur52w }
@@ -1973,7 +1974,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 <div className="flex flex-col gap-2">
                   <div className="flex items-baseline justify-between h-8">
                     <span className="text-xs font-semibold uppercase tracking-wide text-gray-500" title="Battery wear cost per kWh discharged — accounts for reduced battery lifespan from V2G cycling">Degradation</span>
-                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.degradationCtKwh.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-1">ct/kWh</span></span>
+                    <span className="text-2xl font-bold text-[#313131] tabular-nums">{scenario.degradationCtKwh.toFixed(1)}<span className="text-xs font-normal text-gray-400 ml-1">{units.priceUnit}</span></span>
                   </div>
                   <div>
                     <input type="range" min={1} max={8} step={0.5}
@@ -1981,8 +1982,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       onChange={(e) => setScenario({ ...scenario, degradationCtKwh: Number(e.target.value) })}
                       className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white" />
                     <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                      <span>1 ct</span>
-                      <span>8 ct</span>
+                      <span>1 {units.priceSym}</span>
+                      <span>8 {units.priceSym}</span>
                     </div>
                   </div>
                 </div>
@@ -2026,6 +2027,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               onSelect={prices.setSelectedDate}
               requireNextDay={true}
               latestDate={latestAvailableDate}
+              country={country}
             />
           </CardContent>
         </Card>
@@ -2044,7 +2046,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       ? `${fmtDateShort(date1)} ${arrivalLabel} → ${fmtDateShort(date2)} 24:00`
                       : `${fmtDateShort(date1)} evening → ${fmtDateShort(date2)} morning`}
                   <span className="text-gray-300 ml-2">·</span>
-                  <span className="text-gray-400 ml-1">ct/kWh</span>
+                  <span className="text-gray-400 ml-1">{units.priceUnit}</span>
                   <span className="text-gray-300 ml-2">·</span>
                   <TooltipProvider delayDuration={100}>
                     <UITooltip>
@@ -2147,16 +2149,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   <button
                     onClick={() => { if (!prices.loading) setCountry?.('GB') }}
                     disabled={prices.loading && country !== 'GB'}
-                    title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom — Elexon BMRS MID (prices in GBp/kWh)'}
+                    title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom (GB) — Elexon BMRS, GBp/kWh'}
                     className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'GB' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
                     <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]">
                       <rect width="14" height="10" fill="#012169"/>
-                      <path d="M0,0 L14,10 M14,0 L0,10" stroke="#FFF" strokeWidth="1.5"/>
-                      <path d="M0,0 L14,10 M14,0 L0,10" stroke="#C8102E" strokeWidth="0.75"/>
-                      <path d="M7,0 V10 M0,5 H14" stroke="#FFF" strokeWidth="2.5"/>
-                      <path d="M7,0 V10 M0,5 H14" stroke="#C8102E" strokeWidth="1.25"/>
+                      <path d="M0 0 L14 10 M14 0 L0 10" stroke="#FFF" strokeWidth="2"/>
+                      <path d="M0 0 L14 10 M14 0 L0 10" stroke="#C8102E" strokeWidth="0.8"/>
+                      <rect x="5.83" width="2.33" height="10" fill="#FFF"/>
+                      <rect y="3.83" width="14" height="2.33" fill="#FFF"/>
+                      <rect x="6.42" width="1.17" height="10" fill="#C8102E"/>
+                      <rect y="4.42" width="14" height="1.17" fill="#C8102E"/>
                     </svg>
-                    GB
+                    UK
                   </button>
                 </div>
                 {/* Mode toggle */}
@@ -2264,6 +2268,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   departureIdx={departureIdx}
                   baselineRanges={baselineRanges}
                   optimizedRanges={optimizedRanges}
+                  country={country}
                 />
               ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -2314,9 +2319,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       return (
                         <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px] max-w-[260px]">
                           <p className="text-gray-500 text-xs mb-1">{fmtDateShort(d.date)} {d.label}</p>
-                          <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} ct/kWh <span className="text-gray-400 font-normal">DA</span>{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
+                          <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} {units.priceUnit} <span className="text-gray-400 font-normal">DA</span>{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
                           {showIntraday && d.intradayId3Price !== null && (
-                            <p className="text-sky-600 text-[12px] tabular-nums">{d.intradayId3Price.toFixed(2)} ct/kWh <span className="font-normal">ID3</span>
+                            <p className="text-sky-600 text-[12px] tabular-nums">{d.intradayId3Price.toFixed(2)} {units.priceUnit} <span className="font-normal">ID3</span>
                               {d.id3OptimizedPrice !== null && <span className="text-sky-500 text-[10px] font-bold ml-1">← new slot</span>}
                               {d.daSoldPrice !== null && <span className="text-red-400 text-[10px] font-bold ml-1">→ sold</span>}
                             </p>
@@ -2825,10 +2830,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {pillSavings.bAvg.toFixed(1)} ct/kWh
+                            {pillSavings.bAvg.toFixed(1)} {units.priceUnit}
                           </span>
                           <span className="text-red-400 text-[9px] tabular-nums whitespace-nowrap">
-                            {(pillSavings.bAvg * energyPerSession / 100).toFixed(2)} €
+                            {(pillSavings.bAvg * energyPerSession / 100).toFixed(2)} {units.currencySym}
                           </span>
                         </div>
                       </div>
@@ -2846,10 +2851,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                             <div className="bg-emerald-50/40 backdrop-blur-[2px] border border-emerald-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full flex-shrink-0" />
                               <span className="text-emerald-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                                {pillV2g.optimizedChargeCostEur > 0 ? (pillV2g.optimizedChargeCostEur * 100 / (pillV2g.totalChargedKwh - pillV2g.totalDischargedKwh || 1)).toFixed(1) : pillSavings.oAvg.toFixed(1)} ct/kWh
+                                {pillV2g.optimizedChargeCostEur > 0 ? (pillV2g.optimizedChargeCostEur * 100 / (pillV2g.totalChargedKwh - pillV2g.totalDischargedKwh || 1)).toFixed(1) : pillSavings.oAvg.toFixed(1)} {units.priceUnit}
                               </span>
                               <span className="text-emerald-400 text-[9px] tabular-nums whitespace-nowrap">
-                                {pillV2g.loadShiftingBenefitEur.toFixed(2)} € saved
+                                {pillV2g.loadShiftingBenefitEur.toFixed(2)} {units.currencySym} saved
                               </span>
                             </div>
                           </div>
@@ -2864,7 +2869,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                               <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
                                 <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                                  {acAvgCt.toFixed(1)} ct/kWh
+                                  {acAvgCt.toFixed(1)} {units.priceUnit}
                                 </span>
                                 <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
                                   arb recharge
@@ -2883,10 +2888,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
                             <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                              {pillSavings.oAvg.toFixed(1)} ct/kWh
+                              {pillSavings.oAvg.toFixed(1)} {units.priceUnit}
                             </span>
                             <span className="text-blue-400 text-[9px] tabular-nums whitespace-nowrap">
-                              {(pillSavings.oAvg * energyPerSession / 100).toFixed(2)} €
+                              {(pillSavings.oAvg * energyPerSession / 100).toFixed(2)} {units.currencySym}
                             </span>
                           </div>
                         </div>
@@ -2901,10 +2906,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           <div className="bg-amber-50/40 backdrop-blur-[2px] border border-amber-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 bg-amber-500 rounded-full flex-shrink-0" />
                             <span className="text-amber-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                              {pillV2g.dischargeAvgCt.toFixed(1)} ct/kWh
+                              {pillV2g.dischargeAvgCt.toFixed(1)} {units.priceUnit}
                             </span>
                             <span className="text-amber-400 text-[9px] tabular-nums whitespace-nowrap">
-                              +{pillV2g.dischargeRevenueEur.toFixed(2)} €
+                              +{pillV2g.dischargeRevenueEur.toFixed(2)} {units.currencySym}
                             </span>
                           </div>
                         </div>
@@ -2917,20 +2922,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="flex items-center gap-1.5 flex-nowrap">
                           <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
                             <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                              {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(1)} ct/kWh
+                              {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(1)} {units.priceUnit}
                             </span>
                             <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                              {totalSavingsEur.toFixed(2)} € {isV2G ? (v2gHasNetCharge ? 'benefit' : 'arbitrage') : 'saved'}
+                              {totalSavingsEur.toFixed(2)} {units.currencySym} {isV2G ? (v2gHasNetCharge ? 'benefit' : 'arbitrage') : 'saved'}
                             </span>
                           </div>
                           {/* Hide ID3 uplift pill when funnel is active (funnel timeline shows its own savings) */}
                           {showIntraday && !showFunnel && hasIntraday && intradayUpliftEur > 0 && (
                             <div className="backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 bg-sky-50/80 border-sky-300/50 flex-shrink-0">
                               <span className="text-[11px] font-bold tabular-nums whitespace-nowrap text-sky-700">
-                                +{intradayUpliftCt.toFixed(1)} ct/kWh
+                                +{intradayUpliftCt.toFixed(1)} {units.priceUnit}
                               </span>
                               <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-sky-600">
-                                {intradayUpliftEur.toFixed(2)} € ID3
+                                {intradayUpliftEur.toFixed(2)} {units.currencySym} ID3
                               </span>
                             </div>
                           )}
@@ -2956,10 +2961,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       style={{ left: '50%', top: plotArea.top + 4, transform: 'translateX(-50%)' }}>
                       <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50">
                         <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                          ▼ {fleetActiveResult.savingsCtKwh.toFixed(1)} ct/kWh
+                          ▼ {fleetActiveResult.savingsCtKwh.toFixed(1)} {units.priceUnit}
                         </span>
                         <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
-                          {fleetActiveResult.savingsEur.toFixed(2)} €/EV saved
+                          {fleetActiveResult.savingsEur.toFixed(2)} {units.currencySym}/EV saved
                         </span>
                       </div>
                     </div>
@@ -2971,7 +2976,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {fleetActiveResult.baselineAvgCt.toFixed(1)} ct/kWh
+                            {fleetActiveResult.baselineAvgCt.toFixed(1)} {units.priceUnit}
                           </span>
                         </div>
                       </div>
@@ -2984,7 +2989,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
                           <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {fleetActiveResult.optimizedAvgCt.toFixed(1)} ct/kWh
+                            {fleetActiveResult.optimizedAvgCt.toFixed(1)} {units.priceUnit}
                           </span>
                         </div>
                       </div>
@@ -3016,7 +3021,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 )
               })()}
 
-              {/* ── Process view savings pill + avg ct/kWh labels ── */}
+              {/* ── Process view savings pill + avg {units.priceUnit} labels ── */}
               {showProcessView && processResult && plotArea && (() => {
                 const pvError = processResult.availabilityDragCtKwh + processResult.priceForecastDragCtKwh
                 const isPerfect = uncertaintyPct === 0
@@ -3028,7 +3033,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   ? Math.max(0, sessionCost.baselineAvgCt - sessionCost.optimizedAvgCt)
                   : processResult.perfectSavingsCtKwh
 
-                // Avg ct/kWh for baseline and forecast-optimized
+                // Avg {units.priceUnit} for baseline and forecast-optimized
                 const forecastOptAvg = processResult.stages.forecast?.avgPriceCtKwh ?? 0
                 const bAvg = isPerfect && sessionCost ? sessionCost.baselineAvgCt
                   : forecastOptAvg + forecastSavings
@@ -3057,14 +3062,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <div className="flex items-center gap-1.5 flex-nowrap">
                         <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
                           <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                            ▼ {forecastSavings.toFixed(1)} ct/kWh
+                            ▼ {forecastSavings.toFixed(1)} {units.priceUnit}
                           </span>
                           <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600 ml-1">
                             forecast
                           </span>
                           {!isPerfect && pvError > 0.01 && (
                             <span className="text-[10px] font-bold tabular-nums whitespace-nowrap text-gray-400 ml-1.5">
-                              · perfect: {perfectSavings.toFixed(1)} ct/kWh
+                              · perfect: {perfectSavings.toFixed(1)} {units.priceUnit}
                             </span>
                           )}
                         </div>
@@ -3078,7 +3083,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-red-50/40 backdrop-blur-[2px] border border-red-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
                           <span className="text-red-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {bAvg.toFixed(1)} ct/kWh
+                            {bAvg.toFixed(1)} {units.priceUnit}
                           </span>
                         </div>
                       </div>
@@ -3091,7 +3096,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <div className="bg-blue-50/40 backdrop-blur-[2px] border border-blue-200/30 rounded-full px-2 py-px flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 bg-blue-500 rounded-full flex-shrink-0" />
                           <span className="text-blue-700 text-[11px] font-bold tabular-nums whitespace-nowrap">
-                            {oAvg.toFixed(1)} ct/kWh
+                            {oAvg.toFixed(1)} {units.priceUnit}
                           </span>
                         </div>
                       </div>
@@ -3288,7 +3293,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 <span className="text-[10px] font-bold tabular-nums text-amber-600 w-8 text-right flex-shrink-0">{uncertaintyPct}%</span>
                 <div className="w-px h-4 bg-gray-200" />
                 <span className="text-[10px] text-gray-400 flex-shrink-0">
-                  {uncertaintyPct === 0 ? 'Perfect foresight' : `±${(uncertaintyPct * 0.02).toFixed(1)}h arrival · ±${(uncertaintyPct * 0.2).toFixed(0)} EUR/MWh price`}
+                  {uncertaintyPct === 0 ? 'Perfect foresight' : `±${(uncertaintyPct * 0.02).toFixed(1)}h arrival · ±${(uncertaintyPct * 0.2).toFixed(0)} {units.currency}/MWh price`}
                 </span>
               </div>
             </div>
@@ -3306,6 +3311,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 prevStage={funnel.prevStage}
                 reoptSavingsCt={funnelReoptSavingsCt}
                 reoptSavingsEur={funnelReoptSavingsEur}
+                country={country}
               />
             </div>
           )}
@@ -3503,9 +3509,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {fm.savingsCtKwh.toFixed(2)}
                       </span>
-                      <span className="text-[10px] text-gray-400 ml-1">ct/kWh cheaper</span>
+                      <span className="text-[10px] text-gray-400 ml-1">{units.priceUnit} cheaper</span>
                       <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        = {(fm.savingsEur * 100).toFixed(1)} ct saved per EV on {fm.totalKwh.toFixed(1)} kWh session
+                        = {(fm.savingsEur * 100).toFixed(1)} {units.priceSym} saved per EV on {fm.totalKwh.toFixed(1)} kWh session
                       </p>
                     </div>
                     )
@@ -3517,11 +3523,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {row.v2gProfit.profitEur.toFixed(2)}
                       </span>
-                      <span className="text-[10px] text-gray-400 ml-1">EUR</span>
+                      <span className="text-[10px] text-gray-400 ml-1">{units.currency}</span>
                       <div className="flex gap-3 mt-1 text-[9px]">
-                        {v2gHasNetCharge && <span className="text-emerald-500">Shift: {row.v2gProfit.loadShiftingBenefitEur.toFixed(2)} €</span>}
-                        <span className="text-blue-500">Arb: {row.v2gProfit.arbitrageUpliftEur.toFixed(2)} €</span>
-                        <span className="text-gray-400">Wear: {row.v2gProfit.degradationCostEur.toFixed(2)} €</span>
+                        {v2gHasNetCharge && <span className="text-emerald-500">Shift: {row.v2gProfit.loadShiftingBenefitEur.toFixed(2)} {units.currencySym}</span>}
+                        <span className="text-blue-500">Arb: {row.v2gProfit.arbitrageUpliftEur.toFixed(2)} {units.currencySym}</span>
+                        <span className="text-gray-400">Wear: {row.v2gProfit.degradationCostEur.toFixed(2)} {units.currencySym}</span>
                       </div>
                     </div>
                   ) : row.savings && (
@@ -3530,9 +3536,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
                         {row.savings.capturableSavingsCtKwh.toFixed(2)}
                       </span>
-                      <span className="text-[10px] text-gray-400 ml-1">ct/kWh cheaper</span>
+                      <span className="text-[10px] text-gray-400 ml-1">{units.priceUnit} cheaper</span>
                       <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        = {(row.savings.capturableSavingsEur * 100).toFixed(1)} ct saved on {energyPerSession} kWh session
+                        = {(row.savings.capturableSavingsEur * 100).toFixed(1)} {units.priceSym} saved on {energyPerSession} kWh session
                       </p>
                     </div>
                   )}
@@ -3541,19 +3547,19 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <div>
                       <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 4 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR' : 'ct/kWh'}</span>
+                        {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? units.currency : units.priceUnit}</span>
                       </p>
                       <p className="text-[8px] text-gray-400">
-                        {showFleet ? `${ms.eur4w.toFixed(2)} EUR/EV · ${Math.round(ms.eur4w * 1000)} EUR fleet` : `${ms.eur4w.toFixed(2)} EUR total`}
+                        {showFleet ? `${ms.eur4w.toFixed(2)} {units.currency}/EV · ${Math.round(ms.eur4w * 1000)} {units.currency} fleet` : `${ms.eur4w.toFixed(2)} {units.currency} total`}
                       </p>
                     </div>
                     <div>
                       <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 52 wk</p>
                       <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? 'EUR/yr' : 'ct/kWh'}</span>
+                        {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? units.currencyPerYr : units.priceUnit}</span>
                       </p>
                       <p className="text-[8px] text-gray-400">
-                        {showFleet ? `${ms.eur52w.toFixed(0)} EUR/EV/yr · ${Math.round(ms.eur52w * 1000)} EUR fleet` : `${ms.eur52w.toFixed(0)} EUR/yr`}
+                        {showFleet ? `${ms.eur52w.toFixed(0)} {units.currency}/EV/yr · ${Math.round(ms.eur52w * 1000)} {units.currency} fleet` : `${ms.eur52w.toFixed(0)} {units.currency}/yr`}
                       </p>
                     </div>
                   </div>
@@ -3561,11 +3567,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   <div className="flex items-baseline justify-between pt-1.5 border-t border-gray-100">
                     <span className="text-[9px] text-gray-400 uppercase tracking-wide">Market range</span>
                     <span className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-[#313131]' : 'text-gray-500'}`}>
-                      {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">ct</span>
+                      {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">{units.priceSym}</span>
                     </span>
                   </div>
                   <p className="text-[8px] text-gray-400 font-mono leading-relaxed">
-                    cheapest {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ↔ costliest {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} ct
+                    cheapest {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ↔ costliest {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} {units.priceSym}
                   </p>
                   {/* Detail toggle */}
                   <button
@@ -3640,7 +3646,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                             <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${isNet ? 'bg-emerald-500' : 'bg-blue-500'}`} />
                             {fmtSlot(p)}
                           </span>
-                          <span className={`tabular-nums font-semibold ${isNet ? 'text-emerald-700' : 'text-blue-700'}`}>{p.priceCtKwh.toFixed(1)} ct</span>
+                          <span className={`tabular-nums font-semibold ${isNet ? 'text-emerald-700' : 'text-blue-700'}`}>{p.priceCtKwh.toFixed(1)} {units.priceSym}</span>
                         </div>
                       )
                     })}
@@ -3649,13 +3655,13 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     {v2gDetail.netChargeKeys.size > 0 && (
                       <div className="flex justify-between">
                         <span className="text-emerald-600 font-medium">{v2gDetail.netChargeKeys.size} net charge</span>
-                        <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.optimizedChargeCostEur.toFixed(2)} EUR</span>
+                        <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.optimizedChargeCostEur.toFixed(2)} {units.currency}</span>
                       </div>
                     )}
                     {v2gDetail.arbChargeKeys.size > 0 && (
                       <div className="flex justify-between">
                         <span className="text-blue-600 font-medium">{v2gDetail.arbChargeKeys.size} arb recharge</span>
-                        <span className="font-semibold text-blue-600 tabular-nums">{(v2gDetail.chargeCostEur - v2gDetail.optimizedChargeCostEur).toFixed(2)} EUR</span>
+                        <span className="font-semibold text-blue-600 tabular-nums">{(v2gDetail.chargeCostEur - v2gDetail.optimizedChargeCostEur).toFixed(2)} {units.currency}</span>
                       </div>
                     )}
                   </div>
@@ -3670,17 +3676,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     {dischargeSlotsSorted.map((p: HourlyPrice, i: number) => (
                       <div key={i} className="flex justify-between text-[11px] leading-snug">
                         <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
-                        <span className="tabular-nums font-semibold text-amber-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                        <span className="tabular-nums font-semibold text-amber-700">{p.priceCtKwh.toFixed(1)} {units.priceSym}</span>
                       </div>
                     ))}
                   </div>
                   <div className="border-t border-amber-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
                     <span className="text-gray-500 font-medium">avg sell</span>
-                    <span className="font-bold text-amber-700 tabular-nums">{v2gDetail.dischargeAvgCt.toFixed(2)} ct/kWh</span>
+                    <span className="font-bold text-amber-700 tabular-nums">{v2gDetail.dischargeAvgCt.toFixed(2)} {units.priceUnit}</span>
                   </div>
                   <div className="flex justify-between text-[10px] mt-0.5">
                     <span className="text-gray-400">revenue</span>
-                    <span className="font-semibold text-amber-600 tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
+                    <span className="font-semibold text-amber-600 tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} {units.currency}</span>
                   </div>
                 </div>
               </div>
@@ -3693,7 +3699,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     {v2gHasNetCharge ? 'Total V2G Benefit' : 'Arbitrage Profit'}
                   </span>
                   <div className="text-right">
-                    <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{v2gDetail.profitEur.toFixed(2)} EUR</span>
+                    <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{v2gDetail.profitEur.toFixed(2)} {units.currency}</span>
                     <span className="text-[10px] text-gray-400 ml-1">/session</span>
                   </div>
                 </div>
@@ -3705,12 +3711,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />
                         Load Shifting
                       </span>
-                      <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.loadShiftingBenefitEur.toFixed(2)} EUR</span>
+                      <span className="font-semibold text-emerald-600 tabular-nums">{v2gDetail.loadShiftingBenefitEur.toFixed(2)} {units.currency}</span>
                     </div>
                     <div className="flex justify-between text-[9px] text-gray-400 pl-4">
                       <span>
                         {Math.round(batteryKwh * (scenario.v2gTargetSoc - scenario.v2gStartSoc) / 100)} kWh net charge:
-                        baseline {v2gDetail.baselineChargeCostEur.toFixed(2)} → optimized {v2gDetail.optimizedChargeCostEur.toFixed(2)} EUR
+                        baseline {v2gDetail.baselineChargeCostEur.toFixed(2)} → optimized {v2gDetail.optimizedChargeCostEur.toFixed(2)} {units.currency}
                       </span>
                     </div>
                   </>
@@ -3726,21 +3732,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
                     {v2gHasNetCharge ? 'Arbitrage Uplift' : 'Arbitrage'}
                   </span>
-                  <span className="font-semibold text-blue-600 tabular-nums">{v2gDetail.arbitrageUpliftEur.toFixed(2)} EUR</span>
+                  <span className="font-semibold text-blue-600 tabular-nums">{v2gDetail.arbitrageUpliftEur.toFixed(2)} {units.currency}</span>
                 </div>
                 {v2gDetail.arbitrageUpliftEur > 0 && (
                   <div className="text-[9px] text-gray-400 pl-4 space-y-0.5">
                     <div className="flex justify-between">
-                      <span>Sell {v2gDetail.totalDischargedKwh.toFixed(1)} kWh at avg {v2gDetail.dischargeAvgCt.toFixed(1)} ct</span>
-                      <span className="tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} EUR</span>
+                      <span>Sell {v2gDetail.totalDischargedKwh.toFixed(1)} kWh at avg {v2gDetail.dischargeAvgCt.toFixed(1)} {units.priceSym}</span>
+                      <span className="tabular-nums">+{v2gDetail.dischargeRevenueEur.toFixed(2)} {units.currency}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Recharge cost (eff. adjusted)</span>
-                      <span className="tabular-nums">-{(v2gDetail.chargeCostEur - (v2gHasNetCharge ? v2gDetail.optimizedChargeCostEur : 0)).toFixed(2)} EUR</span>
+                      <span className="tabular-nums">-{(v2gDetail.chargeCostEur - (v2gHasNetCharge ? v2gDetail.optimizedChargeCostEur : 0)).toFixed(2)} {units.currency}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Battery degradation ({scenario.degradationCtKwh} ct/kWh)</span>
-                      <span className="tabular-nums">-{v2gDetail.degradationCostEur.toFixed(2)} EUR</span>
+                      <span>Battery degradation ({scenario.degradationCtKwh} {units.priceUnit})</span>
+                      <span className="tabular-nums">-{v2gDetail.degradationCostEur.toFixed(2)} {units.currency}</span>
                     </div>
                   </div>
                 )}
@@ -3791,17 +3797,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {baselineSlots.map((p: HourlyPrice, i: number) => (
                     <div key={i} className="flex justify-between text-[11px] leading-snug">
                       <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
-                      <span className="tabular-nums font-semibold text-red-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                      <span className="tabular-nums font-semibold text-red-700">{p.priceCtKwh.toFixed(1)} {units.priceSym}</span>
                     </div>
                   ))}
                 </div>
                 <div className="border-t border-red-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
                   <span className="text-gray-500 font-medium">avg</span>
-                  <span className="font-bold text-red-700 tabular-nums">{bAvg.toFixed(2)} ct/kWh</span>
+                  <span className="font-bold text-red-700 tabular-nums">{bAvg.toFixed(2)} {units.priceUnit}</span>
                 </div>
                 <div className="flex justify-between text-[10px] mt-0.5">
                   <span className="text-gray-400">cost</span>
-                  <span className="font-semibold text-red-600 tabular-nums">{bEur.toFixed(2)} EUR</span>
+                  <span className="font-semibold text-red-600 tabular-nums">{bEur.toFixed(2)} {units.currency}</span>
                 </div>
               </div>
 
@@ -3814,17 +3820,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   {optimizedSlots.map((p: HourlyPrice, i: number) => (
                     <div key={i} className="flex justify-between text-[11px] leading-snug">
                       <span className="font-mono text-gray-500">{fmtSlot(p)}</span>
-                      <span className="tabular-nums font-semibold text-emerald-700">{p.priceCtKwh.toFixed(1)} ct</span>
+                      <span className="tabular-nums font-semibold text-emerald-700">{p.priceCtKwh.toFixed(1)} {units.priceSym}</span>
                     </div>
                   ))}
                 </div>
                 <div className="border-t border-emerald-200/80 mt-2 pt-1.5 flex justify-between text-[11px]">
                   <span className="text-gray-500 font-medium">avg</span>
-                  <span className="font-bold text-emerald-700 tabular-nums">{oAvg.toFixed(2)} ct/kWh</span>
+                  <span className="font-bold text-emerald-700 tabular-nums">{oAvg.toFixed(2)} {units.priceUnit}</span>
                 </div>
                 <div className="flex justify-between text-[10px] mt-0.5">
                   <span className="text-gray-400">cost</span>
-                  <span className="font-semibold text-emerald-600 tabular-nums">{oEur.toFixed(2)} EUR</span>
+                  <span className="font-semibold text-emerald-600 tabular-nums">{oEur.toFixed(2)} {units.currency}</span>
                 </div>
               </div>
             </div>
@@ -3832,11 +3838,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             {/* Summary row */}
             <div className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
               <div className="text-[10px] text-gray-500">
-                <span className="font-mono">{bAvg.toFixed(2)} ct (now) − {oAvg.toFixed(2)} ct (smart) = <strong className="text-emerald-600">{(bAvg - oAvg).toFixed(2)} ct/kWh saved</strong></span>
+                <span className="font-mono">{bAvg.toFixed(2)} {units.priceSym} (now) − {oAvg.toFixed(2)} {units.priceSym} (smart) = <strong className="text-emerald-600">{(bAvg - oAvg).toFixed(2)} {units.priceUnit} saved</strong></span>
               </div>
               <div className="text-right">
                 <span className="text-[10px] text-gray-400">savings </span>
-                <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{(bEur - oEur).toFixed(2)} EUR</span>
+                <span className="text-[13px] font-bold text-emerald-700 tabular-nums">{(bEur - oEur).toFixed(2)} {units.currency}</span>
                 <span className="text-[10px] text-gray-400 ml-1">/session</span>
               </div>
             </div>
@@ -3845,21 +3851,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-sky-600 uppercase tracking-wider">Intraday Re-optimization (ID3)</span>
                   {intradayUpliftEur > 0 && (
-                    <span className="text-[11px] font-bold text-sky-700 tabular-nums">+{intradayUpliftEur.toFixed(2)} EUR</span>
+                    <span className="text-[11px] font-bold text-sky-700 tabular-nums">+{intradayUpliftEur.toFixed(2)} {units.currency}</span>
                   )}
                 </div>
                 <div className="text-[10px] text-gray-500 space-y-0.5">
                   <div className="flex justify-between">
                     <span>1. DA schedule @ ID3 prices</span>
-                    <span className="tabular-nums font-medium">{id3DaScheduleAvgCt.toFixed(2)} ct/kWh</span>
+                    <span className="tabular-nums font-medium">{id3DaScheduleAvgCt.toFixed(2)} {units.priceUnit}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>2. ID3-optimized schedule</span>
-                    <span className="tabular-nums font-medium text-sky-600">{id3OptScheduleAvgCt.toFixed(2)} ct/kWh</span>
+                    <span className="tabular-nums font-medium text-sky-600">{id3OptScheduleAvgCt.toFixed(2)} {units.priceUnit}</span>
                   </div>
                   <div className="flex justify-between border-t border-sky-200/60 pt-1 mt-1">
                     <span className="font-medium">Position swap value</span>
-                    <span className="tabular-nums font-semibold text-sky-700">{intradayUpliftCt.toFixed(2)} ct/kWh = {intradayUpliftEur.toFixed(2)} EUR</span>
+                    <span className="tabular-nums font-semibold text-sky-700">{intradayUpliftCt.toFixed(2)} {units.priceUnit} = {intradayUpliftEur.toFixed(2)} {units.currency}</span>
                   </div>
                 </div>
                 {intradayUpliftEur <= 0 && (
@@ -3893,6 +3899,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 : sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt, savingsEur: sessionCost.savingsEur } : null}
               isFleet={showFleet}
               plugInDays={showFleet ? undefined : plugInDays}
+              country={country}
             />
           )}
           {activeMonthlySavingsData.length > 0 && (
@@ -3910,6 +3917,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 isV2G={isV2G}
                 v2gHasNetCharge={v2gHasNetCharge}
                 plugInDays={showFleet ? undefined : plugInDays}
+                country={country}
               />
               {activeYearlySavingsData.length > 0 && (
                 <YearlySavingsCard
@@ -3940,6 +3948,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     const worst = last12.reduce((w, m) => m.savings < w.savings ? m : w, last12[0])
                     return { label: worst.label, savings: worst.savings }
                   })()}
+                  country={country}
                 />
               )}
             </div>

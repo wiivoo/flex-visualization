@@ -6,6 +6,7 @@ import {
   ResponsiveContainer, ReferenceArea, ReferenceLine,
 } from 'recharts'
 import { UNCERTAINTY_CONFIG, type UncertaintyScenario, type ProcessViewResult } from '@/lib/process-view'
+import { getPriceUnits, type Country } from '@/lib/v2-config'
 
 const CHART_MARGIN = { top: 42, right: 30, bottom: 25, left: 20 }
 
@@ -42,6 +43,7 @@ interface Props {
   baselineRanges: { x1: number; x2: number }[]
   /** Optimized slot indices (cheapest hours) */
   optimizedRanges: { x1: number; x2: number }[]
+  country?: Country
 }
 
 export const ProcessViewChart = ({
@@ -59,7 +61,9 @@ export const ProcessViewChart = ({
   departureIdx,
   baselineRanges,
   optimizedRanges,
+  country = 'DE',
 }: Props) => {
+  const units = getPriceUnits(country)
   const N = mainChartData.length
   const hasUncertainty = uncertaintyPct > 0 || uncertaintyScenario !== 'perfect'
 
@@ -256,9 +260,9 @@ export const ProcessViewChart = ({
             return (
               <div className="bg-white rounded-lg border border-gray-200 shadow-lg px-3 py-2 text-[13px] max-w-[260px]">
                 <p className="text-gray-500 text-xs mb-1">{d.label}</p>
-                <p className="font-semibold tabular-nums">{d.priceVal?.toFixed(2) ?? d.price?.toFixed(2)} ct/kWh <span className="text-gray-400 font-normal">DA</span></p>
+                <p className="font-semibold tabular-nums">{d.priceVal?.toFixed(2) ?? d.price?.toFixed(2)} {units.priceUnit} <span className="text-gray-400 font-normal">DA</span></p>
                 {d.pvForecastPrice != null && (
-                  <p className="text-amber-600 text-[12px] tabular-nums">{d.pvForecastPrice.toFixed(2)} ct/kWh <span className="font-normal">Forecast</span></p>
+                  <p className="text-amber-600 text-[12px] tabular-nums">{d.pvForecastPrice.toFixed(2)} {units.priceUnit} <span className="font-normal">Forecast</span></p>
                 )}
                 {d.baselinePrice !== null && d.baselinePrice !== undefined && (
                   <p className="text-red-600 text-xs mt-1 flex items-center gap-1">

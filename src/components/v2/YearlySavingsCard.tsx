@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { getPriceUnits, type Country } from '@/lib/v2-config'
 
 export interface YearlySavingsEntry {
   year: number
@@ -33,6 +34,7 @@ interface Props {
   avgSavingsCtKwh?: number
   bestMonth?: { label: string; savings: number }
   worstMonth?: { label: string; savings: number }
+  country?: Country
 }
 
 const MODE_LABELS: Record<string, string> = {
@@ -45,8 +47,9 @@ export function YearlySavingsCard({
   yearlySavingsData, weeklyPlugIns, energyPerSession,
   chargingMode = 'overnight', isV2G = false, isFleet = false,
   quarterlyData, avgWindowSpreadCt, avgSavingsCtKwh,
-  bestMonth, worstMonth,
+  bestMonth, worstMonth, country = 'DE',
 }: Props) {
+  const units = getPriceUnits(country)
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
 
   if (!yearlySavingsData || yearlySavingsData.length === 0) return null
@@ -177,7 +180,7 @@ export function YearlySavingsCard({
                     <p className="text-[8px] text-gray-400 uppercase tracking-wide">Best Month</p>
                     <p className="text-[12px] font-bold tabular-nums text-emerald-700 mt-0.5">
                       {bestMonth.label}
-                      <span className="text-[9px] font-normal text-emerald-500 ml-1">{bestMonth.savings.toFixed(1)} EUR</span>
+                      <span className="text-[9px] font-normal text-emerald-500 ml-1">{bestMonth.savings.toFixed(1)} {units.currency}</span>
                     </p>
                   </div>
                 )}
@@ -186,7 +189,7 @@ export function YearlySavingsCard({
                     <p className="text-[8px] text-gray-400 uppercase tracking-wide">Worst Month</p>
                     <p className="text-[12px] font-bold tabular-nums text-gray-500 mt-0.5">
                       {worstMonth.label}
-                      <span className="text-[9px] font-normal text-gray-400 ml-1">{worstMonth.savings.toFixed(1)} EUR</span>
+                      <span className="text-[9px] font-normal text-gray-400 ml-1">{worstMonth.savings.toFixed(1)} {units.currency}</span>
                     </p>
                   </div>
                 )}

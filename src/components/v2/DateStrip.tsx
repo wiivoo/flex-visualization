@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useEffect, useCallback, useState } from 'react'
-import type { DailySummary } from '@/lib/v2-config'
+import { getPriceUnits, type Country, type DailySummary } from '@/lib/v2-config'
 
 interface DateStripProps {
   daily: DailySummary[]
@@ -15,6 +15,7 @@ interface DateStripProps {
   forecastAfter?: string
   /** Custom label + colors for the legend bar indicator */
   colorLegend?: { label: string; colors: string[] }
+  country?: Country
 }
 
 function makeSpreadColor(daily: DailySummary[]): (spread: number) => string {
@@ -34,7 +35,8 @@ function makeSpreadColor(daily: DailySummary[]): (spread: number) => string {
 const DAY_NAMES = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate, colorFn, forecastAfter, colorLegend }: DateStripProps) {
+export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate, colorFn, forecastAfter, colorLegend, country = 'DE' }: DateStripProps) {
+  const units = getPriceUnits(country)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [hoveredDay, setHoveredDay] = useState<DailySummary | null>(null)
 
@@ -301,23 +303,23 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
                       <div className="space-y-0.5">
                         <div className="flex justify-between gap-4">
                           <span className="text-gray-400">24h Spread</span>
-                          <span className="font-semibold text-gray-700">{(day.spread / 10).toFixed(1)} ct/kWh</span>
+                          <span className="font-semibold text-gray-700">{(day.spread / 10).toFixed(1)} {units.priceUnit}</span>
                         </div>
                         <div className="flex justify-between gap-4">
                           <span className="text-gray-400">Window Spread</span>
-                          <span className="font-semibold text-gray-700">{(day.nightSpread / 10).toFixed(1)} ct/kWh</span>
+                          <span className="font-semibold text-gray-700">{(day.nightSpread / 10).toFixed(1)} {units.priceUnit}</span>
                         </div>
                         <div className="flex justify-between gap-4">
                           <span className="text-gray-400">Avg. Price</span>
-                          <span className="font-semibold text-gray-700">{day.avgPrice.toFixed(1)} ct/kWh</span>
+                          <span className="font-semibold text-gray-700">{day.avgPrice.toFixed(1)} {units.priceUnit}</span>
                         </div>
                         <div className="flex justify-between gap-4 border-t border-gray-100 pt-0.5 mt-0.5">
                           <span className="text-gray-400">Day (6–22h)</span>
-                          <span className="font-medium text-gray-600">{(day.dayAvgPrice / 10).toFixed(1)} ct</span>
+                          <span className="font-medium text-gray-600">{(day.dayAvgPrice / 10).toFixed(1)} {units.priceSym}</span>
                         </div>
                         <div className="flex justify-between gap-4">
                           <span className="text-gray-400">Night (22–6h)</span>
-                          <span className="font-medium text-gray-600">{(day.nightAvgPrice / 10).toFixed(1)} ct</span>
+                          <span className="font-medium text-gray-600">{(day.nightAvgPrice / 10).toFixed(1)} {units.priceSym}</span>
                         </div>
                         {day.negativeHours > 0 && (
                           <div className="flex justify-between gap-4">

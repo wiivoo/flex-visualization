@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback } from 'react'
 import type { IntradayFullPoint } from '@/lib/use-prices'
+import { getPriceUnits, type Country } from '@/lib/v2-config'
 
 /**
  * Intraday Convergence Funnel
@@ -294,6 +295,7 @@ export function FunnelTimeline({
   prevStage,
   reoptSavingsCt = 0,
   reoptSavingsEur = 0,
+  country = 'DE',
 }: {
   stageIndex: number
   stages: typeof FUNNEL_STAGES
@@ -303,7 +305,9 @@ export function FunnelTimeline({
   prevStage: () => void
   reoptSavingsCt?: number
   reoptSavingsEur?: number
+  country?: Country
 }) {
+  const units = getPriceUnits(country)
   return (
     <div className="flex items-center gap-3 px-3 py-2 bg-gray-50 rounded-lg"
       tabIndex={0}
@@ -351,9 +355,9 @@ export function FunnelTimeline({
       {reoptSavingsCt !== 0 && stageIndex > 0 && (
         <div className="text-right flex-shrink-0">
           <div className={`text-[11px] font-bold tabular-nums ${reoptSavingsCt > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-            +{reoptSavingsCt.toFixed(2)} ct
+            +{reoptSavingsCt.toFixed(2)} {units.priceSym}
           </div>
-          <div className="text-[9px] text-gray-400 tabular-nums">{reoptSavingsEur.toFixed(2)} € reopt</div>
+          <div className="text-[9px] text-gray-400 tabular-nums">{reoptSavingsEur.toFixed(2)} {units.currencySym} reopt</div>
         </div>
       )}
     </div>
