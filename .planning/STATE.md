@@ -51,5 +51,6 @@ Stopped at: Completed 09-04-PLAN.md (/management page + middleware gate)
 | 260415-cjb | Auditable Excel exports for /v2/insights graphs (raw prices → formulas → chart visual) | 2026-04-15 | 7cb7d73 | Needs Review | [260415-cjb-add-auditable-excel-exports-with-formula](./quick/260415-cjb-add-auditable-excel-exports-with-formula/) |
 | 260418-w8p | Management dashboard feature spec (PROJ-40) — docs-only | 2026-04-18 | 3736114 |  | [260418-w8p-management-dashboard-spec](./quick/260418-w8p-management-dashboard-spec/) |
 | 260418-wgz | Narrow PROJ-39 to single plug-and-play variant; correct DE/NL 800W regulation | 2026-04-18 | 3babea7 |  | [260418-wgz-rewrite-proj-39-spec-to-narrow-scope-to-](./quick/260418-wgz-rewrite-proj-39-spec-to-narrow-scope-to-/) |
+| 260419-gkt | Absorb /management page into /v2/insights as a single comprehensive dashboard | 2026-04-19 | a0304b6 |  | [260419-gkt-absorb-management-page-into-v2-insights-](./quick/260419-gkt-absorb-management-page-into-v2-insights-/) |
 
-Last activity: 2026-04-18
+Last activity: 2026-04-19 - Completed quick task 260419-gkt: Absorb /management page into /v2/insights
