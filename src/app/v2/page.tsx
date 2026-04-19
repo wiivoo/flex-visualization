@@ -92,7 +92,7 @@ function V2Inner() {
     fleetConfig: FleetConfig
     resolution: 'hour' | 'quarterhour'
   } | null>(null)
-  const [country, setCountry] = useState<'DE' | 'NL'>('DE')
+  const [country, setCountry] = useState<'DE' | 'NL' | 'GB'>('DE')
   const prevCountryRef = useRef(country)
 
   const prices = usePrices(country)
@@ -214,7 +214,7 @@ function V2Inner() {
                   <span className="text-[10px] text-gray-400">Home storage</span>
                 </Link>
                 <Link
-                  href="/management"
+                  href="/v2/insights"
                   className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
                 >
                   Management
