@@ -78,6 +78,7 @@ interface Props {
 
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, gbAuction = 'daa1', setGbAuction, onExportReady }: Props) {
+  const isGb = country === 'GB'
   const units = getPriceUnits(country)
   const intradaySeriesLabel = country === 'GB' ? 'RPD HH' : 'ID3'
   const intradaySeriesDescription = country === 'GB'
@@ -237,9 +238,17 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
 
   // ── Active price source for the chart (hourly or quarter-hourly) ──
-  // SMARD filter 4169 provides real 15-min day-ahead prices; hourly = avg of 4 QH values
+  // DE/NL use native 15-min where available. GB uses half-hour products, so the
+  // committed QH files are collapsed back to 30-minute working slots in the UI.
   const isQH = resolution === 'quarterhour'
-  const chartPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+  const subhourMinutes = isGb ? 30 : 15
+  const subhourHours = subhourMinutes / 60
+  const subhourLabel = `${subhourMinutes} min`
+  const subhourPrices = useMemo(
+    () => isGb ? prices.hourlyQH.filter(p => ((p.minute ?? 0) % 30) === 0) : prices.hourlyQH,
+    [isGb, prices.hourlyQH],
+  )
+  const chartPrices = isQH && subhourPrices.length > 0 ? subhourPrices : prices.hourly
   const hasDate3Data = date3 ? chartPrices.some(p => p.date === date3) : false
 
   // ── Auto-fallback: if 3-day mode but no date3 data, switch to fullday ──
@@ -250,24 +259,24 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isThreeDay, hasDate3Data, chartPrices.length])
 
-  // Detect whether QH data for the chart window is synthesized (hourly × 4) vs real SMARD QH.
+  // Detect whether subhour data for the chart window is synthesized vs native.
   // The chart spans TWO days (date1 evening → date2 morning), so both must have real QH data.
-  // Real QH: prices differ across the 4 slots within an hour.
-  // Synthesized: all 4 slots have the same price, OR no QH data exists for that date.
+  // DE/NL: native 15-min data varies across 4 slots per hour.
+  // GB: native half-hour data varies across 2 slots per hour.
   const isQHSynthesized = useMemo(() => {
-    if (!date1 || prices.hourlyQH.length === 0) return false
+    if (!date1 || subhourPrices.length === 0) return false
+    const slotsPerHour = isGb ? 2 : 4
     function checkDate(d: string): boolean {
-      const dayQH = prices.hourlyQH.filter(p => p.date === d)
-      if (dayQH.length < 4) return true // missing → synthesized
+      const dayQH = subhourPrices.filter(p => p.date === d)
+      if (dayQH.length < slotsPerHour) return true
       const firstHour = dayQH[0].hour
       const firstHourSlots = dayQH.filter(p => p.hour === firstHour)
-      if (firstHourSlots.length < 4) return false
+      if (firstHourSlots.length < slotsPerHour) return false
       const firstPrice = firstHourSlots[0].priceEurMwh
       return firstHourSlots.every(p => Math.abs(p.priceEurMwh - firstPrice) < 0.001)
     }
-    // Badge shows if EITHER day in the overnight window is synthesized
     return checkDate(date1) || checkDate(date2)
-  }, [prices.hourlyQH, date1, date2])
+  }, [subhourPrices, date1, date2, isGb])
 
   const isFullDay = scenario.chargingMode === 'fullday' || scenario.chargingMode === 'threeday'
 
@@ -277,7 +286,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       return { chartData: [], sessionCost: null, v2gResult: null, rollingAvgSavings: 0, monthlySavings: 0, hasIntraday: false, intradayUpliftCt: 0, intradayUpliftEur: 0, id3DaScheduleAvgCt: 0, id3OptScheduleAvgCt: 0 }
     }
 
-    const kwhPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
+    const kwhPerSlot = isQH ? chargePowerKw * subhourHours : chargePowerKw
     const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
     type ChartPoint = { idx: number; hour: number; minute: number; date: string; label: string; price: number | null; priceForecast: number | null; priceVal: number; baselinePrice: number | null; optimizedPrice: number | null; daSoldPrice: number | null; dischargePrice: number | null; netChargePrice: number | null; arbChargePrice: number | null; intradayId3Price: number | null; id3OptimizedPrice: number | null; isInWindow: boolean; isProjected?: boolean; renewableShare?: number; greedyKw?: number | null; lazyKw?: number | null; optimizedKw?: number | null; greedyScheduleKw?: number | null; fleetChargePrice?: number | null; fleetBaselinePrice?: number | null; fleetChargeIntensity?: number }
     type CostInfo = { baselineAvgCt: number; optimizedAvgCt: number; baselineEur: number; optimizedEur: number; savingsEur: number; kwh: number; baselineMidIdx: number; optimizedMidIdx: number; baselineHours: { label: string; ct: number }[]; optimizedHours: { label: string; ct: number }[] }
@@ -314,7 +323,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     })
 
     // Pad missing slots to ensure equal-width days and smooth curves
-    const step = isQH ? 15 : 60
+    const step = isQH ? subhourMinutes : 60
     const padded: HourlyPrice[] = []
     const existingMap = new Map<string, HourlyPrice>()
     for (const p of merged) existingMap.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p)
@@ -344,7 +353,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const id3Map = new Map<string, number>()
     if (prices.intradayId3) {
       if (isQH) {
-        for (const p of prices.intradayId3) {
+        const intradayPoints = isGb
+          ? prices.intradayId3.filter(p => ((p.minute ?? 0) % 30) === 0)
+          : prices.intradayId3
+        for (const p of intradayPoints) {
           id3Map.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p.priceCtKwh)
         }
       } else {
@@ -496,7 +508,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     }
 
     return { chartData: data, sessionCost: cost, v2gResult: v2g, hasIntraday: hasIntradayData, intradayUpliftCt: intradayUpliftCtVal, intradayUpliftEur: intradayUpliftEurVal, id3DaScheduleAvgCt: id3DaScheduleAvgCtVal, id3OptScheduleAvgCt: id3OptScheduleAvgCtVal }
-  }, [chartPrices, date1, date2, date3, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.chargingMode, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh, prices.intradayId3])
+  }, [chartPrices, date1, date2, date3, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.chargingMode, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh, prices.intradayId3, subhourHours, subhourMinutes, isGb])
 
   // ── Fleet flex band + optimization (PROJ-36/37) ──
   const isFleetActive = showFleet && fleetView === 'fleet'
@@ -595,8 +607,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   // Fleet result for the active mode — used by chart pills (must match card values exactly)
   const fleetActiveResult = useMemo(() => {
     if (!showFleet || !date1) return null
-    const useQH = isQH && prices.hourlyQH.length > 0
-    const sp = useQH ? prices.hourlyQH : prices.hourly
+    const useQH = isQH && subhourPrices.length > 0
+    const sp = useQH ? subhourPrices : prices.hourly
     const mode = scenario.chargingMode
     // Fleet windows use the EARLIEST fleet arrival (arrivalMin) and LATEST departure
     // to capture the full range, not the single-car plugInTime
@@ -621,7 +633,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       baselineAvgCt: opt.baselineAvgCtKwh,
       optimizedAvgCt: opt.optimizedAvgCtKwh,
     }
-  }, [showFleet, date1, date2, date4, scenario.chargingMode, scenario.plugInTime, scenario.departureTime, fleetConfig, isQH, prices.hourly, prices.hourlyQH])
+  }, [showFleet, date1, date2, date4, scenario.chargingMode, scenario.plugInTime, scenario.departureTime, fleetConfig, isQH, prices.hourly, subhourPrices])
 
   // Auto-disable ID overlay when coverage is insufficient (e.g., mode change to 3-day without data)
   useEffect(() => {
@@ -672,7 +684,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const windowSlots = enrichedChartData.filter(d => d.isInWindow)
     const funnelOptKeys = new Set<string>()
     if (windowSlots.length > 0 && funnel.currentState.stageIndex > 0) {
-      const kwPerSlot = isQH ? chargePowerKw * 0.25 : chargePowerKw
+      const kwPerSlot = isQH ? chargePowerKw * subhourHours : chargePowerKw
       const slotsNeeded = Math.ceil(energyPerSession / kwPerSlot)
       // For each window slot, get the best-known price at this funnel stage
       const slotsWithFunnelPrice = windowSlots.map(d => {
@@ -746,8 +758,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     }
     // Build per-date lookup for QH data (when available)
     const byDateQH = new Map<string, HourlyPrice[]>()
-    if (isQH && prices.hourlyQH.length > 0) {
-      for (const p of prices.hourlyQH) {
+    if (isQH && subhourPrices.length > 0) {
+      for (const p of subhourPrices) {
         if (p.date >= startRoll && p.date <= endDate) {
           const arr = byDateQH.get(p.date) || []
           arr.push(p)
@@ -763,7 +775,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       const dPricesQH = byDateQH.get(dDate)
       const useQH = !!dPricesQH && dPricesQH.length > 0
       const dPrices = useQH ? dPricesQH : dPricesH
-      const kwhPerSlot = useQH ? chargePowerKw * 0.25 : chargePowerKw
+      const kwhPerSlot = useQH ? chargePowerKw * subhourHours : chargePowerKw
       // Each entry in win is one slot (1 hour or 1 quarter-hour), so slotsPerHour=1
       const slotsPerHour = 1
       const minSlots = Math.ceil(energyPerSession / kwhPerSlot)
@@ -810,7 +822,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const rollSav = Math.round(weeklySavings * 52 * 100) / 100
     return { rollingAvgSavings: rollSav, monthlySavings: mSav, dailySavingsMap: perDay }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prices.hourly, prices.hourlyQH, isQH, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, plugInDaysKey, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+  }, [prices.hourly, subhourPrices, isQH, date1, energyPerSession, deferredPlugInTime, deferredDepartureTime, plugInDaysKey, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
 
   // ── Per-mode rolling savings: 4 weeks + 52 weeks for overnight/fullday/threeday ──
   type ModeSavings = { ctKwh4w: number; eur4w: number; ctKwh52w: number; eur52w: number }
@@ -834,8 +846,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     }
     // Build per-date lookup for QH data (when available)
     const byDateQH = new Map<string, HourlyPrice[]>()
-    if (isQH && prices.hourlyQH.length > 0) {
-      for (const p of prices.hourlyQH) {
+    if (isQH && subhourPrices.length > 0) {
+      for (const p of subhourPrices) {
         if (p.date >= start52 && p.date <= end52) {
           const arr = byDateQH.get(p.date) || []
           arr.push(p)
@@ -850,7 +862,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const dPricesQH = byDateQH.get(dDate)
         const useQH = !!dPricesQH && dPricesQH.length > 0
         const lookup = useQH ? byDateQH : byDate
-        const kwhSlot = useQH ? chargePowerKw * 0.25 : chargePowerKw
+        const kwhSlot = useQH ? chargePowerKw * subhourHours : chargePowerKw
         const minSlots = Math.ceil(deferredEnergyPerSession / kwhSlot)
         const win = buildWindow(dDate, useQH, lookup)
         if (!win || win.length < minSlots) continue
@@ -919,7 +931,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
     return { overnight: toResult(overnight), fullday: toResult(fullday), threeday: toResult(threeday) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prices.hourly, prices.hourlyQH, isQH, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, plugInDaysKey, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
+  }, [prices.hourly, subhourPrices, isQH, date1, deferredEnergyPerSession, deferredPlugInTime, deferredDepartureTime, plugInDaysKey, chargePowerKw, scenario.chargingMode, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh])
 
   // ── Fleet rolling savings (PROJ-37): runs fleet optimizer per-day over 365 days ──
   // Computes all three modes so inactive cards show stable fleet values
@@ -2262,12 +2274,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <UITooltip>
                       <TooltipTrigger asChild>
                         <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 cursor-help select-none">
-                          ≈ hourly avg
+                          {isGb ? '≈ duplicated' : '≈ hourly avg'}
                         </span>
                       </TooltipTrigger>
                       <TooltipContent side="bottom" className="max-w-[220px] text-left p-3">
                         <p className="text-[11px] text-gray-500 leading-relaxed">
-                          15-min data is missing — used hourly average
+                          {isGb ? '30-min GB values are duplicated from the underlying hourly or half-hour product where needed' : '15-min data is missing — used hourly average'}
                         </p>
                       </TooltipContent>
                     </UITooltip>
@@ -2280,10 +2292,10 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     60 min
                   </button>
                   <button onClick={() => setResolution('quarterhour')}
-                    disabled={prices.hourlyQH.length === 0}
-                    title={prices.hourlyQH.length === 0 ? 'No 15-min data available — run: node scripts/download-smard.mjs' : isQHSynthesized ? 'Showing hourly avg × 4 — SMARD 15-min data not yet published for this day' : '15-minute SMARD resolution'}
+                    disabled={subhourPrices.length === 0}
+                    title={subhourPrices.length === 0 ? `No ${subhourLabel} data available` : isQHSynthesized ? (isGb ? 'Showing duplicated hourly / half-hour values for the selected GB product' : 'Showing hourly avg × 4 — SMARD 15-min data not yet published for this day') : `${subhourLabel} resolution`}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
-                    15 min
+                    {subhourLabel}
                   </button>
                 </div>
                 {/* Renewable overlay toggle (DE only — SMARD generation data) */}
@@ -2787,9 +2799,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 const GAP = 6     // minimum gap between labels
 
                 // Compute savings using same method as the cards (computeWindowSavings)
-                const pillUseQH = isQH && prices.hourlyQH.length > 0
-                const pillPrices = pillUseQH ? prices.hourlyQH : prices.hourly
-                const pillKwhPerSlot = pillUseQH ? chargePowerKw * 0.25 : chargePowerKw
+                const pillUseQH = isQH && subhourPrices.length > 0
+                const pillPrices = pillUseQH ? subhourPrices : prices.hourly
+                const pillKwhPerSlot = pillUseQH ? chargePowerKw * subhourHours : chargePowerKw
                 const depDatePill = isThreeDay ? date4 : date2
                 const pillWindow = buildMultiDayWindow(pillPrices, date1, depDatePill, scenario.plugInTime, scenario.departureTime)
                 const pillSavings = computeWindowSavings(pillWindow, energyPerSession, pillKwhPerSlot, 1)
@@ -3395,12 +3407,11 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const fullDayDep = mode === 'fullday' ? scenario.departureTime : scenario.plugInTime
         const threeDayDep = mode === 'threeday' ? scenario.departureTime : scenario.plugInTime
 
-        // Use QH prices when 15-min resolution is active, otherwise hourly
-        // QH data: each entry = 1 QH slot (0.25h), slotsPerHour=1, kwhPerSlot = chargePowerKw * 0.25
+        // Use subhour prices when the finer resolution is active, otherwise hourly.
         // Hourly data: each entry = 1 hour slot, slotsPerHour=1, kwhPerSlot = chargePowerKw
-        const useQH = isQH && prices.hourlyQH.length > 0
-        const spreadPrices = useQH ? prices.hourlyQH : prices.hourly
-        const spreadKwhPerSlot = useQH ? chargePowerKw * 0.25 : chargePowerKw
+        const useQH = isQH && subhourPrices.length > 0
+        const spreadPrices = useQH ? subhourPrices : prices.hourly
+        const spreadKwhPerSlot = useQH ? chargePowerKw * subhourHours : chargePowerKw
 
         // Overnight: plug-in evening → next morning
         const overnightSpreadWin = buildMultiDayWindow(spreadPrices, date1, date2, scenario.plugInTime, overnightDep)
@@ -3657,8 +3668,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const overnightDepD = modeD === 'overnight' ? scenario.departureTime : (scenario.plugInTime + 12) % 24
         const fullDayDepD = modeD === 'fullday' ? scenario.departureTime : scenario.plugInTime
         const threeDayDepD = modeD === 'threeday' ? scenario.departureTime : scenario.plugInTime
-        const detailPrices = isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
-        const detailIsQH = isQH && prices.hourlyQH.length > 0
+        const detailPrices = isQH && subhourPrices.length > 0 ? subhourPrices : prices.hourly
+        const detailIsQH = isQH && subhourPrices.length > 0
         const winMap: Record<string, { prices: HourlyPrice[]; label: string }> = {
           overnight: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, overnightDepD), label: '12h' },
           fullday: { prices: buildMultiDayWindow(detailPrices, date1, date2, scenario.plugInTime, fullDayDepD), label: '24h' },
@@ -3666,7 +3677,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         }
         const detail = winMap[costDetailMode]
         if (!detail || detail.prices.length === 0) return null
-        const kwhPerSlot = detailIsQH ? chargePowerKw * 0.25 : chargePowerKw
+        const kwhPerSlot = detailIsQH ? chargePowerKw * subhourHours : chargePowerKw
         const fmtSlot = (p: HourlyPrice) => {
           const d = p.date !== date1 ? ` ${p.date.slice(8, 10)}.` : ''
           return `${String(p.hour).padStart(2, '0')}:${String(p.minute ?? 0).padStart(2, '0')}${d}`
@@ -3681,7 +3692,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-bold text-[#313131]">
-                  {v2gHasNetCharge ? 'V2G Benefit' : 'V2G Arbitrage'} — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">(15 min)</span>}
+                  {v2gHasNetCharge ? 'V2G Benefit' : 'V2G Arbitrage'} — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">({subhourLabel})</span>}
                 </p>
                 <div className="flex items-center gap-3">
                   <p className="text-[10px] text-gray-400">
@@ -3826,8 +3837,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
         // V1G detail panel (unchanged)
         const slotsNeeded = Math.ceil(energyPerSession / kwhPerSlot)
-        const slotLabel = detailIsQH ? `${slotsNeeded} × 15 min` : `${slotsNeeded}h`
-        const windowLabel = detailIsQH ? `${detail.prices.length} × 15 min` : `${detail.prices.length}h`
+        const slotLabel = detailIsQH ? `${slotsNeeded} × ${subhourLabel}` : `${slotsNeeded}h`
+        const windowLabel = detailIsQH ? `${detail.prices.length} × ${subhourLabel}` : `${detail.prices.length}h`
         const wp = detail.prices
         const baselineSlots = wp.slice(0, slotsNeeded)
         const optimizedSlots = [...wp].sort((a: HourlyPrice, b: HourlyPrice) => a.priceEurMwh - b.priceEurMwh).slice(0, slotsNeeded)
@@ -3841,7 +3852,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
           <div className="mt-3 rounded-lg border border-gray-200 bg-white p-4 space-y-3">
             <div className="flex items-center justify-between">
               <p className="text-[11px] font-bold text-[#313131]">
-                Session Cost — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">(15 min)</span>}
+                Session Cost — {detail.label} · {fmtDateShort(date1)} {detailIsQH && <span className="text-[9px] text-gray-400 font-normal ml-1">({subhourLabel})</span>}
               </p>
               <div className="flex items-center gap-3">
                 <p className="text-[10px] text-gray-400">

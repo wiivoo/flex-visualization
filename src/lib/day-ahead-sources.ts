@@ -50,8 +50,8 @@ function buildSmardChartUrl(startDate?: string, endDate?: string): string {
 function buildEntsoeDayAheadUrl(deliveryDate?: string): string {
   const date = deliveryDate ?? '2026-04-21'
   const [year, month, day] = date.split('-')
-  const viewDate = `${day}.${month}.${year} 00:00`
-  return `https://transparency.entsoe.eu/transmission-domain/r2/dayAheadPrices/show?name=&defaultValue=false&viewType=TABLE&areaType=BZN&atch=false&dateTime.dateTime=${encodeURIComponent(viewDate)}`
+  const viewDate = `${day}.${month}.${year} 00:00|CET|DAY`
+  return `https://transparency.entsoe.eu/transmission-domain/r2/dayAheadPrices/show?areaType=BZN&atch=false&biddingZone.values=${encodeURIComponent('CTY|10YNL----------L!BZN|10YNL----------L')}&dateTime.dateTime=${encodeURIComponent(viewDate)}&dateTime.timezone=CET_CEST&dateTime.timezone_input=${encodeURIComponent('CET (UTC 1) / CEST (UTC 2)')}&defaultValue=false&resolution.values=PT60M&viewType=TABLE`
 }
 
 export function getDayAheadSourceMeta(
