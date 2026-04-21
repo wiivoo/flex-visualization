@@ -35,7 +35,9 @@ Key visualizations:
 - **NL** — ENTSO-E Transparency Platform Web API (`documentType=A44`, bidding zone `10YNL----------L`)
 - **GB** — EPEX Spot GB day-ahead auctions: `GB DAA 1 (60')` and `GB DAA 2 (30')`, selectable in the v2 chart
 
-The v2 price chart exposes the active region's official source, dataset code, and direct verification links in the chart header tooltip. For GB, users can switch between the two official EPEX day-ahead auctions.
+The v2 price chart exposes the active region's official source and dataset code in the chart header tooltip. Verification links are only shown where the UI currently exposes them. For GB, users can switch between the two official EPEX day-ahead auctions.
+
+Current production data behavior, selectors, fallbacks, and automation are documented in `docs/v2/current-data-state.md`.
 
 ## Project Structure
 

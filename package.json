@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "download-data": "node scripts/download-smard.mjs"
+    "download-data": "node scripts/download-smard.mjs",
+    "smoke:data": "node scripts/smoke-static-data.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
