@@ -68,6 +68,7 @@ import type { SmardPricePoint } from '@/lib/smard'
 import { fetchAwattarRange } from '@/lib/awattar'
 import { fetchEntsoeRange, ENTSOE_DOMAINS } from '@/lib/entsoe'
 import { fetchEpexGbHalfHourlyRange, fetchEpexGbHourlyRange } from '@/lib/epex-gb'
+import { readGbStaticRange } from '@/lib/gb-static'
 import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { fetchCsvPrices } from '@/lib/csv-prices'
@@ -589,6 +590,12 @@ export async function GET(request: NextRequest) {
             }
           } catch (error) {
             console.error(`EPEX GB ${gbAuction} error:`, error)
+          }
+          if (!fetchedPrices?.length) {
+            fetchedPrices = readGbStaticRange(uncachedStart, uncachedEnd, gbAuction, resolution)
+            if (fetchedPrices?.length) {
+              source = gbAuction === 'daa2' ? 'epex-gb-daa2' : 'epex-gb-daa1'
+            }
           }
         } else {
           const domain = ENTSOE_DOMAINS[country]

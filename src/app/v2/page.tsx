@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect, useCallback, useRef, Suspense } from 'react'
+import { useState, useMemo, useEffect, useCallback, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
@@ -104,18 +104,8 @@ function V2Inner() {
   } | null>(null)
   const [country, setCountry] = useState<'DE' | 'NL' | 'GB'>(() => parseCountry(searchParams))
   const [gbAuction, setGbAuction] = useState<GbDayAheadAuction>(() => parseGbAuction(searchParams))
-  const prevCountryRef = useRef(country)
 
   const prices = usePrices(country, gbAuction)
-
-  // If a non-DE country fails to load, auto-revert to DE
-  useEffect(() => {
-    if (prices.error && country !== 'DE') {
-      console.warn(`[country] ${country} failed: ${prices.error} — reverting to DE`)
-      setCountry('DE')
-    }
-    prevCountryRef.current = country
-  }, [prices.error, country])
 
   // On mount: if URL has a date param, apply it once prices are loaded
   const urlDate = searchParams.get('date')

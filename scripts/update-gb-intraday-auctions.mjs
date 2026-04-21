@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * Incremental UK (GB) day-ahead update from EPEX Spot.
+ * Incremental GB intraday auction update from EPEX Spot.
  *
  * Writes four static files:
- *   - public/data/gb-daa1-prices.json
- *   - public/data/gb-daa1-prices-qh.json
- *   - public/data/gb-daa2-prices.json
- *   - public/data/gb-daa2-prices-qh.json
+ *   - public/data/gb-ida1-auction-prices.json
+ *   - public/data/gb-ida1-auction-prices-qh.json
+ *   - public/data/gb-ida2-auction-prices.json
+ *   - public/data/gb-ida2-auction-prices-qh.json
  *
- * DAA 1 = hourly auction (60')
- * DAA 2 = half-hour auction (30'), aggregated to hourly for the hourly file
+ * IDA1 = half-hour intraday auction for the full delivery day.
+ * IDA2 = half-hour intraday auction for the remaining half-day window.
  *
- * File values are stored in GBp/kWh to match the existing GB client path.
+ * File values are stored in GBp/kWh.
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -21,12 +21,12 @@ import { chromium } from 'playwright'
 const EPEX_BASE_URL = 'https://www.epexspot.com/en/market-results'
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 const MAX_RETRIES = 5
-const BOOTSTRAP_DAYS = 120
+const BOOTSTRAP_DAYS = 7
 const MONTHS = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.']
 
 const AUCTIONS = {
-  daa1: { code: 'GB', label: "GB DAA 1 (60')", minRows: 24 },
-  daa2: { code: '30-call-GB', label: "GB DAA 2 (30')", minRows: 48 },
+  ida1: { code: 'GB-IDA1', label: 'GB-IDA1', minRows: 48 },
+  ida2: { code: 'GB-IDA2', label: 'GB-IDA2', minRows: 24 },
 }
 
 function toUtcDay(date) {
@@ -61,17 +61,11 @@ function decodeHtml(text) {
     .replace(/&quot;/g, '"')
 }
 
-function extractFormBuildId(pageHtml) {
-  const match = pageHtml.match(/name="form_build_id" value="([^"]+)"[\s\S]*?name="form_id" value="market_data_filters_form"/)
-  if (!match) throw new Error('Could not find EPEX GB form_build_id')
-  return match[1]
-}
-
 function parseWidgetHtml(ops) {
-  if (!Array.isArray(ops)) throw new Error('EPEX GB AJAX response was not an array')
+  if (!Array.isArray(ops)) throw new Error('EPEX GB intraday AJAX response was not an array')
   const invoke = ops.find(op => op?.command === 'invoke' && op.selector === '.js-md-widget' && op.method === 'html')
   const html = invoke?.args?.[0]
-  if (typeof html !== 'string' || html.length === 0) throw new Error('EPEX GB widget HTML missing')
+  if (typeof html !== 'string' || html.length === 0) throw new Error('EPEX GB intraday widget HTML missing')
   return html
 }
 
@@ -106,14 +100,14 @@ function parseAuctionRows(date, widgetHtml) {
     const ts = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, startMinutes)
     return {
       t: ts,
-      p: Math.round((priceGbpMwh / 10) * 100) / 100, // GBP/MWh -> GBp/kWh
+      p: Math.round((priceGbpMwh / 10) * 100) / 100,
     }
   })
 }
 
 function getPageUrl(date) {
   const dateStr = fmtDay(date)
-  return `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=DayAhead&data_mode=table&product=60`
+  return `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=Intraday&data_mode=table&product=15`
 }
 
 async function createBrowserSession() {
@@ -154,10 +148,10 @@ async function fetchAuctionDay(page, ajaxUrl, date, auctionKey) {
         const formBuildId = document.querySelector('input[name="form_build_id"][value*="form-"][value]:not([value=""])')?.getAttribute('value') || ''
         const body = new URLSearchParams({
           'filters[modality]': 'Auction',
-          'filters[sub_modality]': 'DayAhead',
+          'filters[sub_modality]': 'Intraday',
           'filters[auction]': auctionCode,
           'filters[delivery_date]': dateLabel,
-          'filters[product]': '60',
+          'filters[product]': '15',
           'filters[data_mode]': 'table',
           'filters[market_area]': 'GB',
           form_build_id: formBuildId,
@@ -177,7 +171,7 @@ async function fetchAuctionDay(page, ajaxUrl, date, auctionKey) {
         })
 
         if (!response.ok) {
-          throw new Error(`EPEX GB ajax request failed: ${response.status}`)
+          throw new Error(`EPEX GB intraday ajax request failed: ${response.status}`)
         }
 
         return await response.text()
@@ -208,16 +202,6 @@ function aggregateHalfHourlyToHourly(points) {
       t,
       p: Math.round((prices.reduce((sum, value) => sum + value, 0) / prices.length) * 100) / 100,
     }))
-}
-
-function expandHourlyToQuarterHour(points) {
-  const result = new Map()
-  for (const point of points) {
-    for (const offset of [0, 15, 30, 45]) {
-      result.set(point.t + offset * 60000, point.p)
-    }
-  }
-  return [...result.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p }))
 }
 
 function expandHalfHourlyToQuarterHour(points) {
@@ -257,9 +241,6 @@ function writeSeries(path, data) {
 
 async function detectLatestAvailableDateForAuction(page, ajaxUrl, auctionKey) {
   const today = toUtcDay(new Date())
-  const tomorrow = addDays(today, 1)
-  const tomorrowProbe = await fetchAuctionDay(page, ajaxUrl, tomorrow, auctionKey).catch(() => [])
-  if (tomorrowProbe.length >= AUCTIONS[auctionKey].minRows) return tomorrow
   const todayProbe = await fetchAuctionDay(page, ajaxUrl, today, auctionKey).catch(() => [])
   if (todayProbe.length >= AUCTIONS[auctionKey].minRows) return today
   return addDays(today, -1)
@@ -272,17 +253,17 @@ function maxDate(a, b) {
 async function main() {
   const outDir = join(process.cwd(), 'public', 'data')
   const paths = {
-    daa1Hourly: join(outDir, 'gb-daa1-prices.json'),
-    daa1QH: join(outDir, 'gb-daa1-prices-qh.json'),
-    daa2Hourly: join(outDir, 'gb-daa2-prices.json'),
-    daa2QH: join(outDir, 'gb-daa2-prices-qh.json'),
+    ida1Hourly: join(outDir, 'gb-ida1-auction-prices.json'),
+    ida1QH: join(outDir, 'gb-ida1-auction-prices-qh.json'),
+    ida2Hourly: join(outDir, 'gb-ida2-auction-prices.json'),
+    ida2QH: join(outDir, 'gb-ida2-auction-prices-qh.json'),
   }
 
   const existing = {
-    daa1Hourly: loadSeries(paths.daa1Hourly),
-    daa1QH: loadSeries(paths.daa1QH),
-    daa2Hourly: loadSeries(paths.daa2Hourly),
-    daa2QH: loadSeries(paths.daa2QH),
+    ida1Hourly: loadSeries(paths.ida1Hourly),
+    ida1QH: loadSeries(paths.ida1QH),
+    ida2Hourly: loadSeries(paths.ida2Hourly),
+    ida2QH: loadSeries(paths.ida2QH),
   }
 
   const bootstrap = Object.values(existing).some(series => series.length === 0)
@@ -293,60 +274,50 @@ async function main() {
   )
   const { browser, page, ajaxUrl } = await createBrowserSession()
   const latestAvailableDates = {
-    daa1: await detectLatestAvailableDateForAuction(page, ajaxUrl, 'daa1'),
-    daa2: await detectLatestAvailableDateForAuction(page, ajaxUrl, 'daa2'),
+    ida1: await detectLatestAvailableDateForAuction(page, ajaxUrl, 'ida1'),
+    ida2: await detectLatestAvailableDateForAuction(page, ajaxUrl, 'ida2'),
   }
-  const latestAvailableDate = maxDate(latestAvailableDates.daa1, latestAvailableDates.daa2)
+  const latestAvailableDate = maxDate(latestAvailableDates.ida1, latestAvailableDates.ida2)
   const fetchStart = bootstrap
     ? addDays(latestAvailableDate, -(BOOTSTRAP_DAYS - 1))
     : addDays(new Date(existingLastTs), -2)
   const dates = dateRange(fetchStart, latestAvailableDate)
 
-  console.log('🇬🇧 GB Day-Ahead Update (EPEX)')
+  console.log('🇬🇧 GB Intraday Auction Update (EPEX)')
   console.log(`   Mode: ${bootstrap ? 'bootstrap' : 'incremental'}`)
   console.log(`   Range: ${fmtDay(fetchStart)} → ${fmtDay(latestAvailableDate)} (${dates.length} days)`)
-  console.log(`   Latest DAA1: ${fmtDay(latestAvailableDates.daa1)}`)
-  console.log(`   Latest DAA2: ${fmtDay(latestAvailableDates.daa2)}`)
+  console.log(`   Latest IDA1: ${fmtDay(latestAvailableDates.ida1)}`)
+  console.log(`   Latest IDA2: ${fmtDay(latestAvailableDates.ida2)}`)
 
-  const daa1HourlyMap = new Map(existing.daa1Hourly.map(point => [point.t, point.p]))
-  const daa1QHMap = new Map(existing.daa1QH.map(point => [point.t, point.p]))
-  const daa2HourlyMap = new Map(existing.daa2Hourly.map(point => [point.t, point.p]))
-  const daa2QHMap = new Map(existing.daa2QH.map(point => [point.t, point.p]))
+  const ida1HourlyMap = new Map(existing.ida1Hourly.map(point => [point.t, point.p]))
+  const ida1QHMap = new Map(existing.ida1QH.map(point => [point.t, point.p]))
+  const ida2HourlyMap = new Map(existing.ida2Hourly.map(point => [point.t, point.p]))
+  const ida2QHMap = new Map(existing.ida2QH.map(point => [point.t, point.p]))
 
   let completed = 0
 
   try {
     for (const day of dates) {
       const dayStr = fmtDay(day)
-      let dayHadAnyData = false
-      if (day <= latestAvailableDates.daa1) {
+      if (day <= latestAvailableDates.ida1) {
         try {
-          const daa1Rows = await fetchAuctionDay(page, ajaxUrl, day, 'daa1')
-          if (daa1Rows.length < AUCTIONS.daa1.minRows) throw new Error(`DAA1 returned only ${daa1Rows.length} rows`)
-          for (const point of daa1Rows) daa1HourlyMap.set(point.t, point.p)
-          for (const point of expandHourlyToQuarterHour(daa1Rows)) daa1QHMap.set(point.t, point.p)
-          dayHadAnyData = true
+          const ida1Rows = await fetchAuctionDay(page, ajaxUrl, day, 'ida1')
+          if (ida1Rows.length < AUCTIONS.ida1.minRows) throw new Error(`IDA1 returned only ${ida1Rows.length} rows`)
+          for (const point of aggregateHalfHourlyToHourly(ida1Rows)) ida1HourlyMap.set(point.t, point.p)
+          for (const point of expandHalfHourlyToQuarterHour(ida1Rows)) ida1QHMap.set(point.t, point.p)
         } catch (error) {
-          console.log(`   ⚠️  ${dayStr} DAA1: ${error.message}`)
+          console.log(`   ⚠️  ${dayStr} IDA1: ${error.message}`)
         }
       }
 
-      if (day <= latestAvailableDates.daa2) {
+      if (day <= latestAvailableDates.ida2) {
         try {
-          const daa2Rows = await fetchAuctionDay(page, ajaxUrl, day, 'daa2')
-          if (daa2Rows.length >= AUCTIONS.daa2.minRows) {
-            for (const point of aggregateHalfHourlyToHourly(daa2Rows)) daa2HourlyMap.set(point.t, point.p)
-            for (const point of expandHalfHourlyToQuarterHour(daa2Rows)) daa2QHMap.set(point.t, point.p)
-            dayHadAnyData = true
-          } else {
-            throw new Error(`DAA2 returned only ${daa2Rows.length} rows`)
-          }
+          const ida2Rows = await fetchAuctionDay(page, ajaxUrl, day, 'ida2')
+          if (ida2Rows.length < AUCTIONS.ida2.minRows) throw new Error(`IDA2 returned only ${ida2Rows.length} rows`)
+          for (const point of aggregateHalfHourlyToHourly(ida2Rows)) ida2HourlyMap.set(point.t, point.p)
+          for (const point of expandHalfHourlyToQuarterHour(ida2Rows)) ida2QHMap.set(point.t, point.p)
         } catch (error) {
-          if (dayHadAnyData) {
-            console.log(`   ⚠️  ${dayStr} DAA2: ${error.message}`)
-          } else {
-            console.log(`   ⚠️  ${dayStr}: ${error.message}`)
-          }
+          console.log(`   ⚠️  ${dayStr} IDA2: ${error.message}`)
         }
       }
 
@@ -360,27 +331,27 @@ async function main() {
   }
 
   const out = {
-    daa1Hourly: [...daa1HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
-    daa1QH: [...daa1QHMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
-    daa2Hourly: [...daa2HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
-    daa2QH: [...daa2QHMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    ida1Hourly: [...ida1HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    ida1QH: [...ida1QHMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    ida2Hourly: [...ida2HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    ida2QH: [...ida2QHMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
   }
 
   const sizes = {
-    daa1Hourly: writeSeries(paths.daa1Hourly, out.daa1Hourly),
-    daa1QH: writeSeries(paths.daa1QH, out.daa1QH),
-    daa2Hourly: writeSeries(paths.daa2Hourly, out.daa2Hourly),
-    daa2QH: writeSeries(paths.daa2QH, out.daa2QH),
+    ida1Hourly: writeSeries(paths.ida1Hourly, out.ida1Hourly),
+    ida1QH: writeSeries(paths.ida1QH, out.ida1QH),
+    ida2Hourly: writeSeries(paths.ida2Hourly, out.ida2Hourly),
+    ida2QH: writeSeries(paths.ida2QH, out.ida2QH),
   }
 
-  console.log(`   💾 gb-daa1-prices.json: ${out.daa1Hourly.length} pts (${sizes.daa1Hourly} KB)`)
-  console.log(`   💾 gb-daa1-prices-qh.json: ${out.daa1QH.length} pts (${sizes.daa1QH} KB)`)
-  console.log(`   💾 gb-daa2-prices.json: ${out.daa2Hourly.length} pts (${sizes.daa2Hourly} KB)`)
-  console.log(`   💾 gb-daa2-prices-qh.json: ${out.daa2QH.length} pts (${sizes.daa2QH} KB)`)
+  console.log(`   💾 gb-ida1-auction-prices.json: ${out.ida1Hourly.length} pts (${sizes.ida1Hourly} KB)`)
+  console.log(`   💾 gb-ida1-auction-prices-qh.json: ${out.ida1QH.length} pts (${sizes.ida1QH} KB)`)
+  console.log(`   💾 gb-ida2-auction-prices.json: ${out.ida2Hourly.length} pts (${sizes.ida2Hourly} KB)`)
+  console.log(`   💾 gb-ida2-auction-prices-qh.json: ${out.ida2QH.length} pts (${sizes.ida2QH} KB)`)
   console.log('   ✅ Done!')
 }
 
 main().catch(error => {
-  console.error('❌ GB update error:', error.message)
+  console.error('❌ GB intraday auction update error:', error.message)
   process.exit(1)
 })
