@@ -2096,19 +2096,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                         <p className="text-[11px] text-gray-500 leading-relaxed">
                           <span className="font-medium text-gray-700">Verification:</span> {dayAheadSource.verificationNote}
                         </p>
-                        <div className="flex flex-wrap gap-2 pt-1">
-                          {dayAheadSource.links.map((link) => (
-                            <a
-                              key={link.href}
-                              href={link.href}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] font-medium text-gray-600 underline hover:text-gray-800"
-                            >
-                              {link.label}
-                            </a>
-                          ))}
-                        </div>
+                        {dayAheadSource.links.length > 0 && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {dayAheadSource.links.map((link) => (
+                              <a
+                                key={link.href}
+                                href={link.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] font-medium text-gray-600 underline hover:text-gray-800"
+                              >
+                                {link.label}
+                              </a>
+                            ))}
+                          </div>
+                        )}
                       </TooltipContent>
                     </UITooltip>
                   </TooltipProvider>
@@ -2163,16 +2165,20 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   >
                     {dayAheadSource.shortLabel}
                   </span>
-                  <span className="text-gray-300">·</span>
-                  <a
-                    href={dayAheadSource.links[0].href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title={`${dayAheadSource.links[0].label} — ${dayAheadSource.verificationNote}`}
-                    className="underline hover:text-gray-600"
-                  >
-                    Verify
-                  </a>
+                  {dayAheadSource.showVerifyLink && dayAheadSource.links[0] && (
+                    <>
+                      <span className="text-gray-300">·</span>
+                      <a
+                        href={dayAheadSource.links[0].href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`${dayAheadSource.links[0].label} — ${dayAheadSource.verificationNote}`}
+                        className="underline hover:text-gray-600"
+                      >
+                        Verify
+                      </a>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">

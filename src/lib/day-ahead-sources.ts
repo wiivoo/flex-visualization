@@ -14,6 +14,7 @@ export interface DayAheadSourceMeta {
   curveNote: string
   verificationNote: string
   links: DayAheadSourceLink[]
+  showVerifyLink?: boolean
 }
 
 const SMARD_WHOLESALE_URL = 'https://www.smard.de/page/en/wiki-article/5884/5976/wholesale-prices'
@@ -62,10 +63,11 @@ export function getDayAheadSourceMeta(
         verificationNote: 'Direct public source: the official SMARD chart and download endpoints can be checked without credentials.',
         links: [
           { label: 'Primary source', href: buildSmardChartUrl(startDate, endDate) },
-          { label: 'Cross-check: EPEX DE-LU', href: buildEpexDayAheadUrl('DE-LU', startDate, 60) },
+          { label: 'EPEX SPOT DE-LU', href: buildEpexDayAheadUrl('DE-LU', startDate, 60) },
           { label: 'SMARD docs', href: SMARD_WHOLESALE_URL },
           { label: 'Download center', href: SMARD_DOWNLOAD_URL },
         ],
+        showVerifyLink: true,
       }
     case 'NL':
       return {
@@ -73,38 +75,30 @@ export function getDayAheadSourceMeta(
         datasetLabel: 'ENTSO-E Web API documentType=A44 / bidding zone 10YNL----------L',
         officialSource: 'ENTSO-E Transparency Platform',
         curveNote: 'The app stores official ENTSO-E EUR/MWh values for NL. Native PT15M values are used when present; missing quarter-hours are filled from hourly data.',
-        verificationNote: 'Primary source is ENTSO-E A44. Because the public ENTSO-E web table URLs are unstable, the UI exposes the stable API reference plus the public EPEX NL cross-check for the same delivery date.',
-        links: [
-          { label: 'Cross-check: EPEX NL', href: buildEpexDayAheadUrl('NL', startDate, 60) },
-          { label: 'ENTSO-E API guide', href: ENTSOE_GUIDE_URL },
-        ],
+        verificationNote: 'Primary source is ENTSO-E A44.',
+        links: [],
+        showVerifyLink: false,
       }
     case 'GB':
       if (gbAuction === 'daa2') {
         return {
           shortLabel: 'EPEX GB DAA 2',
-          datasetLabel: "EPEX Spot GB DAA 2 (30') / half-hour day-ahead auction",
-          officialSource: 'EPEX Spot',
+          datasetLabel: "EPEX SPOT GB DAA 2 (30') / half-hour day-ahead auction",
+          officialSource: 'EPEX SPOT',
           curveNote: 'The app uses the EPEX GB DAA 2 half-hour day-ahead auction. Hourly values are the mean of the two half-hours, and quarter-hour values duplicate each half-hour into two 15-minute slots.',
           verificationNote: 'Primary source is the EPEX GB DAA 2 auction table for the selected delivery date.',
-          links: [
-            { label: 'Primary source', href: buildEpexGbAuctionUrl('daa2', startDate) },
-            { label: 'Cross-check: EPEX GB DAA 1', href: buildEpexGbAuctionUrl('daa1', startDate) },
-            { label: 'EPEX GB market results', href: buildEpexDayAheadUrl('GB', startDate, 60) },
-          ],
+          links: [],
+          showVerifyLink: false,
         }
       }
       return {
         shortLabel: 'EPEX GB DAA 1',
-        datasetLabel: "EPEX Spot GB DAA 1 (60') / hourly day-ahead auction",
-        officialSource: 'EPEX Spot',
+        datasetLabel: "EPEX SPOT GB DAA 1 (60') / hourly day-ahead auction",
+        officialSource: 'EPEX SPOT',
         curveNote: 'The app uses the EPEX GB DAA 1 hourly day-ahead auction directly. Quarter-hour values are expanded from each hourly auction result.',
         verificationNote: 'Primary source is the EPEX GB DAA 1 auction table for the selected delivery date.',
-        links: [
-          { label: 'Primary source', href: buildEpexGbAuctionUrl('daa1', startDate) },
-          { label: 'Cross-check: EPEX GB DAA 2', href: buildEpexGbAuctionUrl('daa2', startDate) },
-          { label: 'EPEX GB market results', href: buildEpexDayAheadUrl('GB', startDate, 60) },
-        ],
+        links: [],
+        showVerifyLink: false,
       }
   }
 }
