@@ -67,12 +67,13 @@ import { convertSmardPrice, SMARD_FILTER } from '@/lib/smard'
 import type { SmardPricePoint } from '@/lib/smard'
 import { fetchAwattarRange } from '@/lib/awattar'
 import { fetchEntsoeRange, ENTSOE_DOMAINS } from '@/lib/entsoe'
-import { fetchElexonMidRange } from '@/lib/elexon'
+import { fetchEpexGbHalfHourlyRange, fetchEpexGbHourlyRange } from '@/lib/epex-gb'
 import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { fetchCsvPrices } from '@/lib/csv-prices'
 import { getCachedPrices, setCachedPrices, cacheTypeKey } from '@/lib/price-cache'
 import { supabase } from '@/lib/supabase'
+import { DEFAULT_GB_DAY_AHEAD_AUCTION, type GbDayAheadAuction } from '@/lib/gb-day-ahead'
 
 const SMARD_BASE_URL = 'https://www.smard.de/app/chart_data'
 
@@ -83,6 +84,7 @@ const batchQuerySchema = z.object({
   resolution: z.enum(['hour', 'quarterhour']).default('hour'),
   index: z.enum(['id_full', 'id1', 'id3']).optional(),
   country: z.enum(['DE', 'NL', 'GB']).default('DE'),
+  gbAuction: z.enum(['daa1', 'daa2']).default(DEFAULT_GB_DAY_AHEAD_AUCTION),
 })
 
 interface PricePoint {
@@ -261,7 +263,7 @@ function generateDemoBatchPrices(startDate: Date, endDate: Date): PricePoint[] {
 async function getCachedDays(
   startDate: Date,
   endDate: Date,
-  type: 'day-ahead' | 'intraday' | 'forward',
+  type: string,
   resolution: 'hour' | 'quarterhour',
   indexField?: string
 ): Promise<Map<string, PricePoint[]>> {
@@ -384,9 +386,9 @@ async function getCachedIntradayFull(
 /** Store new price data in cache by day (resolution-aware) */
 async function cachePricesByDay(
   prices: PricePoint[],
-  type: 'day-ahead' | 'intraday' | 'forward',
+  type: string,
   resolution: 'hour' | 'quarterhour',
-  source: 'awattar' | 'smard' | 'energy-charts' | 'csv'
+  source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'epex-gb-daa1' | 'epex-gb-daa2'
 ): Promise<void> {
   const byDay = new Map<string, PricePoint[]>()
   const typeKey = cacheTypeKey(type, resolution)
@@ -412,6 +414,16 @@ async function cachePricesByDay(
       setCachedPrices(dateStr, typeKey, source, dayPrices)
     )
   )
+}
+
+function getCountryCacheType(
+  country: 'DE' | 'NL' | 'GB',
+  type: 'day-ahead' | 'intraday' | 'forward',
+  gbAuction: GbDayAheadAuction,
+): string {
+  if (country === 'DE') return type
+  if (country === 'GB' && type === 'day-ahead') return `gb:${gbAuction}:day-ahead`
+  return `${country.toLowerCase()}:${type}`
 }
 
 /**
@@ -450,14 +462,14 @@ function expandHourlyToQH(prices: PricePoint[]): PricePoint[] {
 async function fetchHourlyChain(
   startDate: Date,
   endDate: Date
-): Promise<{ prices: PricePoint[] | null; source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo' }> {
+): Promise<{ prices: PricePoint[] | null; source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'demo' }> {
   // 1. aWATTar (fast, ~3 days history)
   let prices = await fetchAwattarBatch(startDate, endDate)
   if (prices?.length) return { prices, source: 'awattar' }
 
   // 2. ENTSO-E (full historical)
   prices = await fetchEntsoeBatch(startDate, endDate)
-  if (prices?.length) return { prices, source: 'smard' as const }
+  if (prices?.length) return { prices, source: 'entsoe' }
 
   // 3. SMARD (weekly chunks)
   prices = await fetchSmardBatch(startDate, endDate)
@@ -488,6 +500,7 @@ export async function GET(request: NextRequest) {
     resolution: searchParams.get('resolution') || 'hour',
     index: searchParams.get('index') || undefined,
     country: searchParams.get('country') || 'DE',
+    gbAuction: searchParams.get('gbAuction') || DEFAULT_GB_DAY_AHEAD_AUCTION,
   })
 
   if (!parseResult.success) {
@@ -497,7 +510,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const { startDate: startDateStr, endDate: endDateStr, type, resolution, index, country } = parseResult.data
+  const { startDate: startDateStr, endDate: endDateStr, type, resolution, index, country, gbAuction } = parseResult.data
   const indexField = type === 'intraday' && index ? `${index}_ct` : undefined
   const startDate = parseISO(startDateStr)
   const endDate = parseISO(endDateStr)
@@ -541,15 +554,15 @@ export async function GET(request: NextRequest) {
   }
 
   // ── Step 1: Check Supabase cache (resolution-aware, country-aware) ──
-  // Non-DE countries use prefixed cache type (e.g., 'nl:day-ahead') for separate cache slots
-  const effectiveType = `${cachePrefix}${type}` as 'day-ahead' | 'intraday' | 'forward'
+  // Non-DE countries use prefixed cache keys. GB day-ahead also scopes by the selected auction.
+  const effectiveType = getCountryCacheType(country, type, gbAuction)
   const cachedDays = await getCachedDays(startDate, endDate, effectiveType, resolution, indexField)
   const allDays = eachDayOfInterval({ start: startDate, end: endDate })
   const uncachedDays = allDays.filter(d => !cachedDays.has(format(d, 'yyyy-MM-dd')))
 
   // ── Step 2: Fetch uncached days from source chain ──
   let fetchedPrices: PricePoint[] | null = null
-  let source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo' = 'demo'
+  let source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'demo' | 'epex-gb-daa1' | 'epex-gb-daa2' = 'demo'
   let isHourlyAvg = false
 
   if (uncachedDays.length > 0) {
@@ -557,33 +570,42 @@ export async function GET(request: NextRequest) {
     const uncachedEnd = uncachedDays[uncachedDays.length - 1]
 
     if (country !== 'DE') {
-      // Non-DE countries. GB uses Elexon first (most reliable UK source),
-      // other countries use ENTSO-E directly.
+      // Non-DE countries use official day-ahead sources by market.
       if (type === 'day-ahead') {
         if (country === 'GB') {
           try {
-            fetchedPrices = await fetchElexonMidRange(uncachedStart, uncachedEnd)
-            if (fetchedPrices?.length) source = 'smard' as const // reuse type for cache
+            if (gbAuction === 'daa2') {
+              fetchedPrices = resolution === 'quarterhour'
+                ? expandHourlyToQH(await fetchEpexGbHalfHourlyRange(uncachedStart, uncachedEnd, 'daa2'))
+                : await fetchEpexGbHourlyRange(uncachedStart, uncachedEnd, 'daa2')
+              source = 'epex-gb-daa2'
+            } else {
+              fetchedPrices = await fetchEpexGbHourlyRange(uncachedStart, uncachedEnd, 'daa1')
+              source = 'epex-gb-daa1'
+              if (resolution === 'quarterhour' && fetchedPrices?.length) {
+                fetchedPrices = expandHourlyToQH(fetchedPrices)
+                isHourlyAvg = true
+              }
+            }
           } catch (error) {
-            console.error(`Elexon GB error:`, error)
+            console.error(`EPEX GB ${gbAuction} error:`, error)
           }
-        }
-        if (!fetchedPrices?.length) {
+        } else {
           const domain = ENTSOE_DOMAINS[country]
           if (domain) {
             try {
               fetchedPrices = await fetchEntsoeRange(uncachedStart, uncachedEnd, domain)
-              if (fetchedPrices?.length) source = 'smard' as const
+              if (fetchedPrices?.length) source = 'entsoe'
             } catch (error) {
               console.error(`ENTSO-E ${country} error:`, error)
             }
           }
-        }
-        if (resolution === 'quarterhour' && fetchedPrices?.length) {
-          // Upstream sources are hourly (ENTSO-E NL) or half-hourly (GB Elexon).
-          // Expand to QH by duplicating the closest upstream slot.
-          fetchedPrices = expandHourlyToQH(fetchedPrices)
-          isHourlyAvg = true
+          if (resolution === 'quarterhour' && fetchedPrices?.length) {
+            // ENTSO-E may return hourly or PT15M depending on bidding zone coverage.
+            // Expand to QH when only hourly slots are available.
+            fetchedPrices = expandHourlyToQH(fetchedPrices)
+            isHourlyAvg = true
+          }
         }
       }
     } else if (type === 'day-ahead' && resolution === 'quarterhour') {

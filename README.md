@@ -25,7 +25,7 @@ Key visualizations:
 | Framework | Next.js 16 (App Router), TypeScript |
 | Charts | Recharts |
 | Styling | Tailwind CSS + shadcn/ui |
-| Prices | DE: SMARD 4169, NL: ENTSO-E A44, GB: Elexon BMRS MID |
+| Prices | DE: SMARD 4169, NL: ENTSO-E A44, GB: EPEX Spot GB DAA 1 / DAA 2 |
 | Auth | JWT (jose), password protection via middleware |
 | Deploy | Vercel |
 
@@ -33,9 +33,9 @@ Key visualizations:
 
 - **DE** — SMARD / Bundesnetzagentur day-ahead prices for the DE-LU bidding zone (`filter 4169`, chart module `8004169`)
 - **NL** — ENTSO-E Transparency Platform Web API (`documentType=A44`, bidding zone `10YNL----------L`)
-- **GB** — Elexon BMRS `MID` dataset, aggregated from half-hour market-index prices (`APXMIDP` + `N2EXMIDP`)
+- **GB** — EPEX Spot GB day-ahead auctions: `GB DAA 1 (60')` and `GB DAA 2 (30')`, selectable in the v2 chart
 
-The v2 price chart now exposes the active region's official source, dataset code, and direct verification links in the chart header tooltip.
+The v2 price chart exposes the active region's official source, dataset code, and direct verification links in the chart header tooltip. For GB, users can switch between the two official EPEX day-ahead auctions.
 
 ## Project Structure
 

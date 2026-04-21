@@ -1,161 +1,332 @@
 #!/usr/bin/env node
 /**
- * Incremental UK (GB) price update — fetches Elexon BMRS MID data and writes
- * public/data/gb-prices.json + public/data/gb-prices-qh.json.
+ * Incremental UK (GB) day-ahead update from EPEX Spot.
  *
- * Prices are in GBp/kWh (pence per kWh). The static file format mirrors the
- * NL files ({ t: epochMs, p: price }) so the v2 pipeline can consume them.
+ * Writes four static files:
+ *   - public/data/gb-daa1-prices.json
+ *   - public/data/gb-daa1-prices-qh.json
+ *   - public/data/gb-daa2-prices.json
+ *   - public/data/gb-daa2-prices-qh.json
  *
- * Usage: node scripts/update-gb.mjs
+ * DAA 1 = hourly auction (60')
+ * DAA 2 = half-hour auction (30'), aggregated to hourly for the hourly file
+ *
+ * File values are stored in GBp/kWh to match the existing GB client path.
  */
 
-import { readFileSync, writeFileSync, statSync, existsSync } from 'fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { execFileSync } from 'child_process'
 
-const ELEXON_BASE = 'https://data.elexon.co.uk/bmrs/api/v1'
+const EPEX_BASE_URL = 'https://www.epexspot.com/en/market-results'
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 const MAX_RETRIES = 5
+const CONCURRENCY = 6
+const BOOTSTRAP_DAYS = 120
+const MONTHS = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.']
 
-function addDays(d, n) { const r = new Date(d); r.setUTCDate(r.getUTCDate() + n); return r }
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
-function fmtDay(d) { return d.toISOString().slice(0, 10) }
+const AUCTIONS = {
+  daa1: { code: 'GB', label: "GB DAA 1 (60')" },
+  daa2: { code: '30-call-GB', label: "GB DAA 2 (30')" },
+}
 
-async function fetchChunk(startDate, endDate) {
-  const from = fmtDay(startDate)
-  const to = fmtDay(addDays(endDate, 1))
-  const url = `${ELEXON_BASE}/datasets/MID?from=${from}&to=${to}&format=json`
+function addDays(d, n) {
+  const r = new Date(d)
+  r.setUTCDate(r.getUTCDate() + n)
+  return r
+}
+
+function fmtDay(d) {
+  return d.toISOString().slice(0, 10)
+}
+
+function formatDisplayDate(date) {
+  return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function decodeHtml(text) {
+  return text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#039;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+}
+
+function extractFormBuildId(pageHtml) {
+  const match = pageHtml.match(/name="form_build_id" value="([^"]+)"[\s\S]*?name="form_id" value="market_data_filters_form"/)
+  if (!match) throw new Error('Could not find EPEX GB form_build_id')
+  return match[1]
+}
+
+function parseWidgetHtml(ops) {
+  if (!Array.isArray(ops)) throw new Error('EPEX GB AJAX response was not an array')
+  const invoke = ops.find(op => op?.command === 'invoke' && op.selector === '.js-md-widget' && op.method === 'html')
+  const html = invoke?.args?.[0]
+  if (typeof html !== 'string' || html.length === 0) throw new Error('EPEX GB widget HTML missing')
+  return html
+}
+
+function parseStartMinutes(label) {
+  const start = label.split(' - ')[0]?.trim()
+  if (!start) throw new Error(`Invalid delivery label: ${label}`)
+  const [hourRaw, minuteRaw] = start.split(':')
+  const hour = Number.parseInt(hourRaw, 10)
+  const minute = Number.parseInt(minuteRaw ?? '0', 10)
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) throw new Error(`Invalid delivery label: ${label}`)
+  return (hour * 60) + minute
+}
+
+function parseAuctionRows(date, widgetHtml) {
+  const decoded = decodeHtml(widgetHtml)
+  const labels = [...decoded.matchAll(/<li class="child[^"]*no-children[^"]*">\s*<a href="#">([^<]+)<\/a>\s*<\/li>/g)]
+    .map(match => match[1].trim())
+  const rows = [...decoded.matchAll(/<tr class="child[^"]*">\s*([\s\S]*?)<\/tr>/g)]
+
+  if (labels.length === 0 || rows.length === 0) return []
+  if (labels.length !== rows.length) {
+    throw new Error(`Row mismatch: ${labels.length} labels vs ${rows.length} rows`)
+  }
+
+  return rows.map((row, index) => {
+    const cells = [...row[1].matchAll(/<td>([\s\S]*?)<\/td>/g)]
+      .map(match => match[1].replace(/<[^>]+>/g, '').replace(/,/g, '').trim())
+    const priceRaw = cells.at(-1)
+    const priceGbpMwh = priceRaw ? Number.parseFloat(priceRaw) : NaN
+    if (!Number.isFinite(priceGbpMwh)) throw new Error(`Invalid price row ${index + 1}`)
+    const startMinutes = parseStartMinutes(labels[index])
+    const ts = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, startMinutes)
+    return {
+      t: ts,
+      p: Math.round((priceGbpMwh / 10) * 100) / 100, // GBP/MWh -> GBp/kWh
+    }
+  })
+}
+
+async function fetchFormBuildId(date) {
+  const dateStr = fmtDay(date)
+  const url = `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=DayAhead&data_mode=table&product=60`
+  const html = execFileSync('curl', [
+    '-s', '-L',
+    '-A', USER_AGENT,
+    url,
+  ], { encoding: 'utf8' })
+  return extractFormBuildId(html)
+}
+
+async function fetchAuctionDay(date, auctionKey, formBuildId) {
+  const auction = AUCTIONS[auctionKey]
+  const dateStr = fmtDay(date)
+  const pageUrl = `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=DayAhead&data_mode=table&product=60`
+
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const res = await fetch(url)
-      if (res.status === 429 || res.status === 503) {
-        console.log(`   ⚠️  ${res.status} (attempt ${attempt + 1}), retrying...`)
-        await sleep(2000 * (attempt + 1))
-        continue
-      }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const body = await res.json()
-      return body.data || []
-    } catch (e) {
-      if (attempt === MAX_RETRIES - 1) throw e
-      await sleep(2000 * (attempt + 1))
+      const body = new URLSearchParams({
+        'filters[modality]': 'Auction',
+        'filters[sub_modality]': 'DayAhead',
+        'filters[auction]': auction.code,
+        'filters[delivery_date]': formatDisplayDate(date),
+        'filters[product]': '60',
+        'filters[data_mode]': 'table',
+        'filters[market_area]': 'GB',
+        form_build_id: formBuildId,
+        form_id: 'market_data_filters_form',
+        submit_js: '',
+      })
+
+      const responseText = execFileSync('curl', [
+        '-s', '-L',
+        '-A', USER_AGENT,
+        '-H', 'X-Requested-With: XMLHttpRequest',
+        '-H', 'Accept: application/json, text/javascript, */*; q=0.01',
+        '-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
+        '--data', body.toString(),
+        `${pageUrl}&ajax_form=1`,
+      ], { encoding: 'utf8' })
+
+      const widgetHtml = parseWidgetHtml(JSON.parse(responseText))
+      return parseAuctionRows(date, widgetHtml)
+    } catch (error) {
+      if (attempt === MAX_RETRIES - 1) throw error
+      await sleep(300 * (attempt + 1))
     }
   }
+
   return []
 }
 
-/**
- * Aggregate per-provider points into a single reference price per 30-min slot.
- * Volume-weighted mean when both providers have published, otherwise the
- * non-zero provider (typically APXMIDP when N2EXMIDP lags).
- */
-function aggregate(points) {
-  const byTs = new Map()
-  for (const p of points) {
-    if (!byTs.has(p.startTime)) byTs.set(p.startTime, [])
-    byTs.get(p.startTime).push(p)
+function aggregateHalfHourlyToHourly(points) {
+  const byHour = new Map()
+  for (const point of points) {
+    const hourTs = point.t - (point.t % 3600000)
+    if (!byHour.has(hourTs)) byHour.set(hourTs, [])
+    byHour.get(hourTs).push(point.p)
   }
-  const result = new Map() // epochMs -> GBp/kWh
-  for (const [ts, providers] of byTs) {
-    const nonZero = providers.filter(p => p.volume > 0 && Number.isFinite(p.price))
-    let priceGbpMwh = null
-    if (nonZero.length === providers.length && providers.length > 1) {
-      const totalVol = providers.reduce((s, p) => s + p.volume, 0)
-      const weightedSum = providers.reduce((s, p) => s + p.price * p.volume, 0)
-      priceGbpMwh = totalVol > 0 ? weightedSum / totalVol : null
-    } else if (nonZero.length > 0) {
-      priceGbpMwh = nonZero[0].price
+  return [...byHour.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([t, prices]) => ({
+      t,
+      p: Math.round((prices.reduce((sum, value) => sum + value, 0) / prices.length) * 100) / 100,
+    }))
+}
+
+function expandHourlyToQuarterHour(points) {
+  const result = new Map()
+  for (const point of points) {
+    for (const offset of [0, 15, 30, 45]) {
+      result.set(point.t + offset * 60000, point.p)
     }
-    if (priceGbpMwh === null) continue
-    result.set(new Date(ts).getTime(), Math.round(priceGbpMwh * 10) / 100)
   }
-  return result
+  return [...result.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p }))
+}
+
+function expandHalfHourlyToQuarterHour(points) {
+  const result = new Map()
+  for (const point of points) {
+    for (const offset of [0, 15]) {
+      result.set(point.t + offset * 60000, point.p)
+    }
+  }
+  return [...result.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p }))
+}
+
+function dateRange(startDate, endDate) {
+  const dates = []
+  let cursor = new Date(startDate)
+  while (cursor <= endDate) {
+    dates.push(new Date(cursor))
+    cursor = addDays(cursor, 1)
+  }
+  return dates
+}
+
+function loadSeries(path) {
+  if (!existsSync(path)) return []
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    return []
+  }
+}
+
+function writeSeries(path, data) {
+  writeFileSync(path, JSON.stringify(data))
+  return (statSync(path).size / 1024).toFixed(0)
+}
+
+async function detectLatestAvailableDate(formBuildId) {
+  const today = new Date()
+  const tomorrow = addDays(today, 1)
+  const probeTomorrow = await fetchAuctionDay(tomorrow, 'daa1', formBuildId).catch(() => [])
+  if (probeTomorrow.length > 0) return tomorrow
+  return today
 }
 
 async function main() {
   const outDir = join(process.cwd(), 'public', 'data')
-  const hourlyPath = join(outDir, 'gb-prices.json')
-  const qhPath = join(outDir, 'gb-prices-qh.json')
-
-  // Load existing (or start empty)
-  let existing = []
-  let existingQH = []
-  try {
-    if (existsSync(hourlyPath)) existing = JSON.parse(readFileSync(hourlyPath, 'utf8'))
-    if (existsSync(qhPath)) existingQH = JSON.parse(readFileSync(qhPath, 'utf8'))
-  } catch { /* treat as empty */ }
-
-  const hourlyMap = new Map()
-  for (const p of existing) hourlyMap.set(p.t, p.p)
-  const qhMap = new Map()
-  for (const p of existingQH) qhMap.set(p.t, p.p)
-
-  const tomorrow = addDays(new Date(), 1)
-  const fetchStart = existing.length > 0
-    ? addDays(new Date(existing[existing.length - 1].t), -2)
-    : new Date('2022-01-01T00:00:00Z') // first full year of half-hourly MID
-
-  console.log(`🇬🇧 GB Incremental Update`)
-  console.log(`   Existing: ${hourlyMap.size} hourly, ${qhMap.size} QH`)
-  console.log(`   Fetching: ${fmtDay(fetchStart)} → ${fmtDay(tomorrow)}`)
-
-  // Chunk into 7-day pieces (Elexon MID dataset caps at 7 days per request)
-  const CHUNK_DAYS = 7
-  const allPoints = []
-  let cursor = new Date(fetchStart)
-  let chunkIdx = 0
-  while (cursor <= tomorrow) {
-    const chunkEnd = new Date(Math.min(cursor.getTime() + (CHUNK_DAYS - 1) * 86400000, tomorrow.getTime()))
-    const pts = await fetchChunk(cursor, chunkEnd)
-    allPoints.push(...pts)
-    cursor = addDays(chunkEnd, 1)
-    chunkIdx++
-    // Modest pacing to stay friendly to Elexon
-    if (cursor <= tomorrow) await sleep(200)
-  }
-  console.log(`   Pulled ${chunkIdx} chunks, ${allPoints.length} raw points`)
-
-  // Half-hourly aggregated reference
-  const hh = aggregate(allPoints)
-  let hhAdded = 0
-  for (const [ts, price] of hh) {
-    if (!qhMap.has(ts)) { qhMap.set(ts, price); hhAdded++ }
-    // Also populate the HH+15 slot with the same price so 15-min consumers get values
-    const ts15 = ts + 15 * 60 * 1000
-    if (!qhMap.has(ts15)) { qhMap.set(ts15, price); hhAdded++ }
+  const paths = {
+    daa1Hourly: join(outDir, 'gb-daa1-prices.json'),
+    daa1QH: join(outDir, 'gb-daa1-prices-qh.json'),
+    daa2Hourly: join(outDir, 'gb-daa2-prices.json'),
+    daa2QH: join(outDir, 'gb-daa2-prices-qh.json'),
   }
 
-  // Hourly aggregation — mean of the two half-hours within each hour
-  const byHour = new Map()
-  for (const [ts, price] of hh) {
-    const hourTs = ts - (ts % 3600000)
-    if (!byHour.has(hourTs)) byHour.set(hourTs, [])
-    byHour.get(hourTs).push(price)
+  const existing = {
+    daa1Hourly: loadSeries(paths.daa1Hourly),
+    daa1QH: loadSeries(paths.daa1QH),
+    daa2Hourly: loadSeries(paths.daa2Hourly),
+    daa2QH: loadSeries(paths.daa2QH),
   }
-  let hAdded = 0
-  for (const [hourTs, prices] of byHour) {
-    if (!hourlyMap.has(hourTs)) {
-      hourlyMap.set(hourTs, Math.round((prices.reduce((s, v) => s + v, 0) / prices.length) * 100) / 100)
-      hAdded++
+
+  const bootstrap = Object.values(existing).some(series => series.length === 0)
+  const existingLastTs = Math.min(
+    ...Object.values(existing)
+      .filter(series => series.length > 0)
+      .map(series => series[series.length - 1].t),
+  )
+  const latestAvailableDate = await detectLatestAvailableDate(await fetchFormBuildId(new Date()))
+  const fetchStart = bootstrap
+    ? addDays(latestAvailableDate, -(BOOTSTRAP_DAYS - 1))
+    : addDays(new Date(existingLastTs), -2)
+  const dates = dateRange(fetchStart, latestAvailableDate)
+
+  console.log('🇬🇧 GB Day-Ahead Update (EPEX)')
+  console.log(`   Mode: ${bootstrap ? 'bootstrap' : 'incremental'}`)
+  console.log(`   Range: ${fmtDay(fetchStart)} → ${fmtDay(latestAvailableDate)} (${dates.length} days)`)
+
+  const daa1HourlyMap = new Map(existing.daa1Hourly.map(point => [point.t, point.p]))
+  const daa1QHMap = new Map(existing.daa1QH.map(point => [point.t, point.p]))
+  const daa2HourlyMap = new Map(existing.daa2Hourly.map(point => [point.t, point.p]))
+  const daa2QHMap = new Map(existing.daa2QH.map(point => [point.t, point.p]))
+
+  let cursor = 0
+  let completed = 0
+
+  async function worker() {
+    while (cursor < dates.length) {
+      const index = cursor++
+        const day = dates[index]
+        const dayStr = fmtDay(day)
+      try {
+        const formBuildId = await fetchFormBuildId(day)
+        const [daa1Rows, daa2Rows] = await Promise.all([
+          fetchAuctionDay(day, 'daa1', formBuildId),
+          fetchAuctionDay(day, 'daa2', formBuildId),
+        ])
+
+        for (const point of daa1Rows) {
+          daa1HourlyMap.set(point.t, point.p)
+        }
+        for (const point of expandHourlyToQuarterHour(daa1Rows)) {
+          daa1QHMap.set(point.t, point.p)
+        }
+
+        for (const point of aggregateHalfHourlyToHourly(daa2Rows)) {
+          daa2HourlyMap.set(point.t, point.p)
+        }
+        for (const point of expandHalfHourlyToQuarterHour(daa2Rows)) {
+          daa2QHMap.set(point.t, point.p)
+        }
+      } catch (error) {
+        console.log(`   ⚠️  ${dayStr}: ${error.message}`)
+      }
+
+      completed++
+      if (completed % 25 === 0 || completed === dates.length) {
+        console.log(`   Progress: ${completed}/${dates.length}`)
+      }
     }
   }
 
-  if (hhAdded === 0 && hAdded === 0) {
-    console.log('   ℹ️  No new data — GB files are up to date')
-    return
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, dates.length || 1) }, () => worker()))
+
+  const out = {
+    daa1Hourly: [...daa1HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    daa1QH: [...daa1QHMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    daa2Hourly: [...daa2HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
+    daa2QH: [...daa2QHMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
   }
 
-  const priceArray = Array.from(hourlyMap.entries()).sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p }))
-  const qhArray = Array.from(qhMap.entries()).sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p }))
+  const sizes = {
+    daa1Hourly: writeSeries(paths.daa1Hourly, out.daa1Hourly),
+    daa1QH: writeSeries(paths.daa1QH, out.daa1QH),
+    daa2Hourly: writeSeries(paths.daa2Hourly, out.daa2Hourly),
+    daa2QH: writeSeries(paths.daa2QH, out.daa2QH),
+  }
 
-  writeFileSync(hourlyPath, JSON.stringify(priceArray))
-  writeFileSync(qhPath, JSON.stringify(qhArray))
-
-  const hSize = (statSync(hourlyPath).size / 1024).toFixed(0)
-  const qSize = (statSync(qhPath).size / 1024).toFixed(0)
-
-  console.log(`   +${hAdded} hourly, +${hhAdded} QH`)
-  console.log(`   💾 gb-prices.json: ${priceArray.length} pts (${hSize} KB)`)
-  console.log(`   💾 gb-prices-qh.json: ${qhArray.length} pts (${qSize} KB)`)
+  console.log(`   💾 gb-daa1-prices.json: ${out.daa1Hourly.length} pts (${sizes.daa1Hourly} KB)`)
+  console.log(`   💾 gb-daa1-prices-qh.json: ${out.daa1QH.length} pts (${sizes.daa1QH} KB)`)
+  console.log(`   💾 gb-daa2-prices.json: ${out.daa2Hourly.length} pts (${sizes.daa2Hourly} KB)`)
+  console.log(`   💾 gb-daa2-prices-qh.json: ${out.daa2QH.length} pts (${sizes.daa2QH} KB)`)
   console.log('   ✅ Done!')
 }
 
-main().catch(e => { console.error('❌ GB update error:', e.message); process.exit(1) })
+main().catch(error => {
+  console.error('❌ GB update error:', error.message)
+  process.exit(1)
+})

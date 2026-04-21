@@ -27,6 +27,7 @@ import { ProcessViewChart } from '@/components/v2/ProcessViewChart'
 import { computeProcessViewResults, type UncertaintyScenario, type ProcessStage } from '@/lib/process-view'
 import type { IntradayFullPoint } from '@/lib/use-prices'
 import { getDayAheadSourceMeta } from '@/lib/day-ahead-sources'
+import { GB_DAY_AHEAD_OPTIONS, type GbDayAheadAuction } from '@/lib/gb-day-ahead'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
 const MILEAGE_DIST = [
@@ -70,11 +71,13 @@ interface Props {
   optimization: OptimizeResult | null
   country?: 'DE' | 'NL' | 'GB'
   setCountry?: (c: 'DE' | 'NL' | 'GB') => void
+  gbAuction?: GbDayAheadAuction
+  setGbAuction?: (auction: GbDayAheadAuction) => void
   onExportReady?: (data: { overnightWindows: import('@/lib/excel-export').EnrichedWindow[]; showFleet: boolean; fleetConfig: import('@/lib/v2-config').FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => void
 }
 
 /* ────── Main Component ────── */
-export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, onExportReady }: Props) {
+export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, gbAuction = 'daa1', setGbAuction, onExportReady }: Props) {
   const units = getPriceUnits(country)
   const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
   const isV2G = scenario.gridMode === 'v2g'
@@ -133,11 +136,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     const dates = prices.daily.map(d => d.date).sort()
     const dateSet = new Set(dates)
     return dates.filter(d => {
+      if (prices.lastRealDate && d > prices.lastRealDate) return false
       const nd = new Date(d + 'T12:00:00Z')
       nd.setUTCDate(nd.getUTCDate() + 1)
       return dateSet.has(nd.toISOString().slice(0, 10))
     })
-  }, [prices.daily])
+  }, [prices.daily, prices.lastRealDate])
 
   const sortedDatesRef = useRef(sortedDates)
   sortedDatesRef.current = sortedDates
@@ -170,19 +174,22 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
 
   // Latest available date for "Jump to latest" button
   const latestAvailableDate = useMemo(() => {
-    const now = new Date()
-    now.setUTCDate(now.getUTCDate() - 1)
-    const yesterdayStr = now.toISOString().slice(0, 10)
-    return prices.daily.find(d => d.date === yesterdayStr)?.date
-      ?? prices.daily.filter(d => d.date <= yesterdayStr).pop()?.date
-  }, [prices.daily])
+    return sortedDates[sortedDates.length - 1]
+  }, [sortedDates])
+
+  useEffect(() => {
+    if (sortedDates.length === 0) return
+    if (!prices.selectedDate || !sortedDates.includes(prices.selectedDate)) {
+      prices.setSelectedDate(sortedDates[sortedDates.length - 1])
+    }
+  }, [prices.selectedDate, prices.setSelectedDate, sortedDates])
 
   const date1 = prices.selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
   const date3 = date2 ? nextDayStr(date2) : ''
   const date4 = date3 ? nextDayStr(date3) : ''
   const isThreeDay = scenario.chargingMode === 'threeday'
-  const dayAheadSource = getDayAheadSourceMeta(country, date1, isThreeDay ? date4 : date2)
+  const dayAheadSource = getDayAheadSourceMeta(country, date1, isThreeDay ? date4 : date2, gbAuction)
 
   // ── Fetch renewable generation share when date changes ──
   useEffect(() => {
@@ -2028,6 +2035,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               selectedDate={prices.selectedDate}
               onSelect={prices.setSelectedDate}
               requireNextDay={true}
+              maxDate={prices.lastRealDate || undefined}
               latestDate={latestAvailableDate}
               country={country}
             />
@@ -2182,7 +2190,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   <button
                     onClick={() => { if (!prices.loading) setCountry?.('GB') }}
                     disabled={prices.loading && country !== 'GB'}
-                    title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom (GB) — Elexon BMRS, GBp/kWh'}
+                    title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom (GB) — EPEX Spot day-ahead, GBp/kWh'}
                     className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'GB' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
                     <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]">
                       <rect width="14" height="10" fill="#012169"/>
@@ -2196,6 +2204,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     UK
                   </button>
                 </div>
+                {country === 'GB' && (
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
+                    {GB_DAY_AHEAD_OPTIONS.map(option => (
+                      <button
+                        key={option.value}
+                        onClick={() => { if (!prices.loading) setGbAuction?.(option.value) }}
+                        disabled={prices.loading}
+                        title={option.label}
+                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${gbAuction === option.value ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                      >
+                        {option.shortLabel}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                   <button onClick={() => {

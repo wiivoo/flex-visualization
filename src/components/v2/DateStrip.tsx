@@ -8,6 +8,7 @@ interface DateStripProps {
   selectedDate: string
   onSelect: (date: string) => void
   requireNextDay?: boolean
+  maxDate?: string
   latestDate?: string | undefined
   /** Optional custom color function per date, overrides spread-based coloring */
   colorFn?: (date: string) => string
@@ -35,7 +36,7 @@ function makeSpreadColor(daily: DailySummary[]): (spread: number) => string {
 const DAY_NAMES = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, latestDate, colorFn, forecastAfter, colorLegend, country = 'DE' }: DateStripProps) {
+export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true, maxDate, latestDate, colorFn, forecastAfter, colorLegend, country = 'DE' }: DateStripProps) {
   const units = getPriceUnits(country)
   const scrollRef = useRef<HTMLDivElement>(null)
   const [hoveredDay, setHoveredDay] = useState<DailySummary | null>(null)
@@ -45,14 +46,16 @@ export function DateStrip({ daily, selectedDate, onSelect, requireNextDay = true
   const allDates = useMemo(() => new Set(daily.map(d => d.date)), [daily])
 
   const sortedDays = useMemo(() => {
-    const sorted = [...daily].sort((a, b) => a.date.localeCompare(b.date))
+    const sorted = [...daily]
+      .filter(d => !maxDate || d.date <= maxDate)
+      .sort((a, b) => a.date.localeCompare(b.date))
     if (!requireNextDay) return sorted
     return sorted.filter(d => {
       const nd = new Date(d.date + 'T12:00:00Z')
       nd.setUTCDate(nd.getUTCDate() + 1)
       return allDates.has(nd.toISOString().slice(0, 10))
     })
-  }, [daily, allDates, requireNextDay])
+  }, [daily, allDates, maxDate, requireNextDay])
 
   // Available months for quick-jump
   const availableMonths = useMemo(() => {

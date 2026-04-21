@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
 import { runOptimization, type OptimizeResult } from '@/lib/optimizer'
 import { DEFAULT_SCENARIO, DEFAULT_BATTERY_KWH, DEFAULT_CHARGE_POWER_KW, deriveEnergyPerSession, totalWeeklyPlugIns, splitPlugInDays, type ChargingScenario, type DayOfWeek } from '@/lib/v2-config'
+import { DEFAULT_GB_DAY_AHEAD_AUCTION, type GbDayAheadAuction } from '@/lib/gb-day-ahead'
 import { Step2ChargingScenario } from '@/components/v2/steps/Step2ChargingScenario'
 import { TutorialOverlay } from '@/components/v2/TutorialOverlay'
 import { ExportDialog } from '@/components/v2/ExportDialog'
@@ -55,6 +56,15 @@ function parseScenario(params: URLSearchParams): ChargingScenario {
   }
 }
 
+function parseCountry(params: URLSearchParams): 'DE' | 'NL' | 'GB' {
+  const value = params.get('country')
+  return value === 'NL' || value === 'GB' ? value : 'DE'
+}
+
+function parseGbAuction(params: URLSearchParams): GbDayAheadAuction {
+  return params.get('gb_auction') === 'daa2' ? 'daa2' : DEFAULT_GB_DAY_AHEAD_AUCTION
+}
+
 function fallbackCopy(text: string, setCopied: (v: boolean) => void) {
   try {
     const el = document.createElement('textarea')
@@ -92,10 +102,11 @@ function V2Inner() {
     fleetConfig: FleetConfig
     resolution: 'hour' | 'quarterhour'
   } | null>(null)
-  const [country, setCountry] = useState<'DE' | 'NL' | 'GB'>('DE')
+  const [country, setCountry] = useState<'DE' | 'NL' | 'GB'>(() => parseCountry(searchParams))
+  const [gbAuction, setGbAuction] = useState<GbDayAheadAuction>(() => parseGbAuction(searchParams))
   const prevCountryRef = useRef(country)
 
-  const prices = usePrices(country)
+  const prices = usePrices(country, gbAuction)
 
   // If a non-DE country fails to load, auto-revert to DE
   useEffect(() => {
@@ -121,6 +132,8 @@ function V2Inner() {
   useEffect(() => {
     const p = new URLSearchParams()
     if (prices.selectedDate) p.set('date', prices.selectedDate)
+    if (country !== 'DE') p.set('country', country)
+    if (country === 'GB') p.set('gb_auction', gbAuction)
     p.set('mileage',     String(scenario.yearlyMileageKm))
     p.set('plugins_wd',  String(scenario.weekdayPlugIns))
     p.set('plugins_we',  String(scenario.weekendPlugIns))
@@ -130,7 +143,7 @@ function V2Inner() {
     if (scenario.chargingMode !== 'overnight') p.set('mode', scenario.chargingMode)
     if (scenario.plugInDays) p.set('days', [...scenario.plugInDays].sort((a, b) => a - b).join(','))
     router.replace(`/v2?${p.toString()}`, { scroll: false })
-  }, [scenario, prices.selectedDate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scenario, prices.selectedDate, country, gbAuction]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleShare = useCallback(() => {
     const url = window.location.href
@@ -278,6 +291,8 @@ function V2Inner() {
           optimization={optimization}
           country={country}
           setCountry={setCountry}
+          gbAuction={gbAuction}
+          setGbAuction={setGbAuction}
           onExportReady={useCallback((data: { overnightWindows: EnrichedWindow[]; showFleet: boolean; fleetConfig: FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => setExportData(data), [])}
         />
       </main>

@@ -16,12 +16,13 @@ import { supabase } from './supabase'
 import { format, parseISO, subHours, isBefore } from 'date-fns'
 
 type CacheType = string // 'day-ahead' | 'day-ahead-qh' | 'intraday' | 'forward'
+type CacheSource = 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'demo' | 'epex-gb-daa1' | 'epex-gb-daa2'
 
 export interface CachedPriceData {
   date: string // YYYY-MM-DD
   type: CacheType
   cached_at: string // ISO timestamp
-  source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo'
+  source: CacheSource
   prices_json: Array<{ timestamp: string; price_ct_kwh: number | null }>
 }
 
@@ -30,10 +31,10 @@ export interface CachedPriceData {
  * Encodes resolution into the type string so QH has its own cache slot.
  */
 export function cacheTypeKey(
-  type: 'day-ahead' | 'intraday' | 'forward',
+  type: string,
   resolution: 'hour' | 'quarterhour' = 'hour'
 ): CacheType {
-  if (resolution === 'quarterhour' && type === 'day-ahead') return 'day-ahead-qh'
+  if (resolution === 'quarterhour' && type.endsWith('day-ahead')) return `${type}-qh`
   return type
 }
 
@@ -85,7 +86,7 @@ export async function getCachedPrices(
 export async function setCachedPrices(
   date: string,
   type: CacheType,
-  source: 'awattar' | 'smard' | 'energy-charts' | 'csv' | 'demo',
+  source: CacheSource,
   prices: Array<{ timestamp: string; price_ct_kwh: number | null }>
 ): Promise<void> {
   try {

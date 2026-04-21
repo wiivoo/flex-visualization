@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { HourlyPrice, DailySummary, MonthlyStats, GenerationData } from '@/lib/v2-config'
+import { DEFAULT_GB_DAY_AHEAD_AUCTION, type GbDayAheadAuction } from '@/lib/gb-day-ahead'
 
 /** Full intraday data point with all EPEX fields (ct/kWh for prices, MWh for volumes) */
 export interface IntradayFullPoint {
@@ -155,7 +156,7 @@ function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): Month
   return stats.sort((a, b) => a.month.localeCompare(b.month))
 }
 
-export function usePrices(country: string = 'DE'): PriceData {
+export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction = DEFAULT_GB_DAY_AHEAD_AUCTION): PriceData {
   const [hourly, setHourly] = useState<HourlyPrice[]>([])
   const [hourlyQH, setHourlyQH] = useState<HourlyPrice[]>([])
   const [daily, setDaily] = useState<DailySummary[]>([])
@@ -197,6 +198,13 @@ export function usePrices(country: string = 'DE'): PriceData {
     return d.toISOString().slice(0, 10)
   }, [])
 
+  /** Shift YYYY-MM-DD by a fixed number of UTC days */
+  const shiftDay = useCallback((dateStr: string, deltaDays: number): string => {
+    const d = new Date(dateStr + 'T12:00:00Z')
+    d.setUTCDate(d.getUTCDate() + deltaDays)
+    return d.toISOString().slice(0, 10)
+  }, [])
+
   /** Today's date in local time */
   const todayStr = useCallback((): string => {
     const d = new Date()
@@ -204,8 +212,9 @@ export function usePrices(country: string = 'DE'): PriceData {
   }, [])
 
   useEffect(() => {
-    if (fetchedCountry.current === country) return
-    fetchedCountry.current = country
+    const countryKey = country === 'GB' ? `${country}:${gbAuction}` : country
+    if (fetchedCountry.current === countryKey) return
+    fetchedCountry.current = countryKey
 
     async function loadData() {
       setLoading(true)
@@ -224,8 +233,9 @@ export function usePrices(country: string = 'DE'): PriceData {
 
       try {
         // Load static files — country-aware paths
-        const priceFile = country === 'DE' ? '/data/smard-prices.json' : `/data/${country.toLowerCase()}-prices.json`
-        const priceQHFile = country === 'DE' ? '/data/smard-prices-qh.json' : `/data/${country.toLowerCase()}-prices-qh.json`
+        const gbPrefix = country === 'GB' ? `gb-${gbAuction}` : country.toLowerCase()
+        const priceFile = country === 'DE' ? '/data/smard-prices.json' : `/data/${gbPrefix}-prices.json`
+        const priceQHFile = country === 'DE' ? '/data/smard-prices-qh.json' : `/data/${gbPrefix}-prices-qh.json`
 
         const [priceRes, priceQHRes, genRes] = await Promise.allSettled([
           fetch(priceFile),
@@ -250,8 +260,39 @@ export function usePrices(country: string = 'DE'): PriceData {
           allGeneration.current = await genRes.value.json()
         }
 
+        // GB can start from an empty static file set while the EPEX bootstrap is still running.
+        // In that case fetch a recent real window from the batch API so the app still works.
+        if (rawPrices.length === 0 && country === 'GB') {
+          const bootstrapEnd = nextDay(todayStr())
+          const bootstrapStart = shiftDay(bootstrapEnd, -44)
+          const gbAuctionParam = `&gbAuction=${gbAuction}`
+
+          const [bootstrapRes, bootstrapQHRes] = await Promise.all([
+            fetch(`/api/prices/batch?startDate=${bootstrapStart}&endDate=${bootstrapEnd}&country=GB${gbAuctionParam}`),
+            fetch(`/api/prices/batch?startDate=${bootstrapStart}&endDate=${bootstrapEnd}&country=GB&resolution=quarterhour${gbAuctionParam}`),
+          ])
+
+          if (bootstrapRes.ok) {
+            const bootstrap = await bootstrapRes.json()
+            rawPrices = (bootstrap.prices || []).map((p: { timestamp: string; price_ct_kwh: number }) => ({
+              t: new Date(p.timestamp).getTime(),
+              p: p.price_ct_kwh,
+            }))
+          }
+
+          if (bootstrapQHRes.ok) {
+            const bootstrapQH = await bootstrapQHRes.json()
+            rawQHPrices = (bootstrapQH.prices || []).map((p: { timestamp: string; price_ct_kwh: number }) => ({
+              t: new Date(p.timestamp).getTime(),
+              p: p.price_ct_kwh,
+            }))
+          }
+        }
+
         if (rawPrices.length === 0) {
-          throw new Error('No price data available. Run: node scripts/download-smard.mjs')
+          throw new Error(country === 'GB'
+            ? 'No GB day-ahead data available from EPEX.'
+            : 'No price data available. Run: node scripts/download-smard.mjs')
         }
 
         // Convert compact format to HourlyPrice
@@ -271,14 +312,15 @@ export function usePrices(country: string = 'DE'): PriceData {
         setDaily(dailySummaries)
         setMonthly(deriveMonthlyStats(dailySummaries, prices))
 
-        // Default to yesterday (need t+1 for overnight chart, and yesterday has confirmed prices)
-        const yd = new Date()
-        yd.setDate(yd.getDate() - 1)
-        const yesterday = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, '0')}-${String(yd.getDate()).padStart(2, '0')}`
-        const yesterdayEntry = dailySummaries.find(d => d.date === yesterday)
-          ?? dailySummaries.filter(d => d.date <= yesterday).pop()
-        if (yesterdayEntry) {
-          setSelectedDate(yesterdayEntry.date)
+        // Default to the latest real date that still has a next day available for the overnight view.
+        const dateSet = new Set(dailySummaries.map(d => d.date))
+        const latestSelectable = [...dailySummaries]
+          .sort((a, b) => a.date.localeCompare(b.date))
+          .filter(d => d.date <= lastStaticDate)
+          .filter(d => dateSet.has(nextDay(d.date)))
+          .pop()
+        if (latestSelectable) {
+          setSelectedDate(latestSelectable.date)
         } else if (dailySummaries.length > 1) {
           setSelectedDate(dailySummaries[dailySummaries.length - 2].date)
         } else if (dailySummaries.length > 0) {
@@ -287,8 +329,8 @@ export function usePrices(country: string = 'DE'): PriceData {
 
         // Background: fetch incremental data up to dayAfterTomorrow
         const dayAfterTomorrow = nextDay(nextDay(today))
-        fetchIncremental(lastStaticDate, dayAfterTomorrow, prices, country)
-        fetchIncrementalQH(lastStaticQHDate, dayAfterTomorrow, qhPrices, country)
+        fetchIncremental(lastStaticDate, dayAfterTomorrow, prices, country, gbAuction)
+        fetchIncrementalQH(lastStaticQHDate, dayAfterTomorrow, qhPrices, country, gbAuction)
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load prices')
         // Reset fetchedCountry so user can retry the same country
@@ -300,16 +342,17 @@ export function usePrices(country: string = 'DE'): PriceData {
 
     loadData()
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [country])
+  }, [country, gbAuction, nextDay, shiftDay, todayStr])
 
   /** Fetch new prices from batch API and merge into state */
-  const fetchIncremental = useCallback(async (lastStaticDate: string, today: string, existingPrices: HourlyPrice[], ctry: string) => {
+  const fetchIncremental = useCallback(async (lastStaticDate: string, today: string, existingPrices: HourlyPrice[], ctry: string, gbAuctionMode: GbDayAheadAuction) => {
     try {
       const startDate = nextDay(lastStaticDate)
       if (startDate > today) return
 
       const countryParam = ctry !== 'DE' ? `&country=${ctry}` : ''
-      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}${countryParam}`)
+      const gbAuctionParam = ctry === 'GB' ? `&gbAuction=${gbAuctionMode}` : ''
+      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}${countryParam}${gbAuctionParam}`)
       if (!res.ok) return
 
       const data = await res.json()
@@ -374,13 +417,14 @@ export function usePrices(country: string = 'DE'): PriceData {
   }, [])
 
   /** Fetch new QH prices from batch API and merge into state */
-  const fetchIncrementalQH = useCallback(async (lastStaticDate: string, today: string, existingQH: HourlyPrice[], ctry: string) => {
+  const fetchIncrementalQH = useCallback(async (lastStaticDate: string, today: string, existingQH: HourlyPrice[], ctry: string, gbAuctionMode: GbDayAheadAuction) => {
     try {
       const startDate = nextDay(lastStaticDate)
       if (startDate > today) return
 
       const countryParam = ctry !== 'DE' ? `&country=${ctry}` : ''
-      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}&resolution=quarterhour${countryParam}`)
+      const gbAuctionParam = ctry === 'GB' ? `&gbAuction=${gbAuctionMode}` : ''
+      const res = await fetch(`/api/prices/batch?startDate=${startDate}&endDate=${today}&resolution=quarterhour${countryParam}${gbAuctionParam}`)
       if (!res.ok) return
 
       const data = await res.json()
