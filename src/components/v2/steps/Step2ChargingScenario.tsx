@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } from 'react'
+import { Fragment, useMemo, useState, useCallback, useEffect, useRef, useDeferredValue } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AnimatedNumber } from '@/components/v2/AnimatedNumber'
@@ -2183,7 +2183,46 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               </div>
               <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
                 {/* Data source toggle: DA / DA+ID */}
-                {hasIntraday && (
+                {country === 'GB' ? (
+                  <div className="grid grid-cols-[auto,auto,auto] gap-1 bg-gray-100 rounded-2xl p-1 flex-shrink-0">
+                    {GB_DAY_AHEAD_OPTIONS.map(option => (
+                      <Fragment key={option.value}>
+                        <button
+                          onClick={() => { if (!prices.loading) setGbAuction?.(option.value) }}
+                          disabled={prices.loading}
+                          title={option.label}
+                          className={`text-[11px] font-semibold px-2.5 py-1 rounded-xl transition-colors ${gbAuction === option.value ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                        >
+                          {option.shortLabel}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (prices.loading) return
+                            setGbAuction?.(option.value)
+                            setShowIntraday(false)
+                          }}
+                          disabled={prices.loading}
+                          title={`${option.label} · day-ahead only`}
+                          className={`text-[11px] font-semibold px-2.5 py-1 rounded-xl transition-colors ${(gbAuction === option.value) && !showIntraday ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                        >
+                          DA
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (prices.loading || !hasIntraday) return
+                            setGbAuction?.(option.value)
+                            setShowIntraday(true)
+                          }}
+                          disabled={prices.loading || !hasIntraday}
+                          title={!hasIntraday ? 'Intraday not available' : `${option.label} · day-ahead plus intraday`}
+                          className={`text-[11px] font-semibold px-2.5 py-1 rounded-xl transition-colors ${(gbAuction === option.value) && showIntraday ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}
+                        >
+                          DA+ID
+                        </button>
+                      </Fragment>
+                    ))}
+                  </div>
+                ) : hasIntraday && (
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                     <button
                       onClick={() => setShowIntraday(false)}
@@ -2230,21 +2269,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     UK
                   </button>
                 </div>
-                {country === 'GB' && (
-                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
-                    {GB_DAY_AHEAD_OPTIONS.map(option => (
-                      <button
-                        key={option.value}
-                        onClick={() => { if (!prices.loading) setGbAuction?.(option.value) }}
-                        disabled={prices.loading}
-                        title={option.label}
-                        className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${gbAuction === option.value ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}
-                      >
-                        {option.shortLabel}
-                      </button>
-                    ))}
-                  </div>
-                )}
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                   <button onClick={() => {
