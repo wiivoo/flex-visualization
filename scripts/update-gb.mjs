@@ -16,12 +16,11 @@
 
 import { existsSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { execFileSync } from 'child_process'
+import { chromium } from 'playwright'
 
 const EPEX_BASE_URL = 'https://www.epexspot.com/en/market-results'
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 const MAX_RETRIES = 5
-const CONCURRENCY = 6
 const BOOTSTRAP_DAYS = 120
 const MONTHS = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.']
 
@@ -108,51 +107,83 @@ function parseAuctionRows(date, widgetHtml) {
   })
 }
 
-async function fetchFormBuildId(date) {
+function getPageUrl(date) {
   const dateStr = fmtDay(date)
-  const url = `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=DayAhead&data_mode=table&product=60`
-  const html = execFileSync('curl', [
-    '-s', '-L',
-    '-A', USER_AGENT,
-    url,
-  ], { encoding: 'utf8' })
-  return extractFormBuildId(html)
+  return `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=DayAhead&data_mode=table&product=60`
 }
 
-async function fetchAuctionDay(date, auctionKey, formBuildId) {
+async function createBrowserSession() {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-blink-features=AutomationControlled'],
+  })
+  const context = await browser.newContext({
+    userAgent: USER_AGENT,
+    viewport: { width: 1440, height: 900 },
+    locale: 'en-US',
+    timezoneId: 'Europe/Berlin',
+  })
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
+    Object.defineProperty(navigator, 'platform', { get: () => 'MacIntel' })
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4] })
+    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] })
+    window.chrome = { runtime: {} }
+  })
+
+  const page = await context.newPage()
+  const baseDate = fmtDay(new Date())
+  const pageUrl = getPageUrl(new Date(`${baseDate}T12:00:00Z`))
+  await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 })
+  await page.waitForTimeout(2500)
+
+  return { browser, page, ajaxUrl: `${pageUrl}&ajax_form=1` }
+}
+
+async function fetchAuctionDay(page, ajaxUrl, date, auctionKey) {
   const auction = AUCTIONS[auctionKey]
-  const dateStr = fmtDay(date)
-  const pageUrl = `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=DayAhead&data_mode=table&product=60`
+  const dateLabel = formatDisplayDate(date)
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const body = new URLSearchParams({
-        'filters[modality]': 'Auction',
-        'filters[sub_modality]': 'DayAhead',
-        'filters[auction]': auction.code,
-        'filters[delivery_date]': formatDisplayDate(date),
-        'filters[product]': '60',
-        'filters[data_mode]': 'table',
-        'filters[market_area]': 'GB',
-        form_build_id: formBuildId,
-        form_id: 'market_data_filters_form',
-        submit_js: '',
-      })
+      const responseText = await page.evaluate(async ({ ajaxUrl, dateLabel, auctionCode }) => {
+        const formBuildId = document.querySelector('input[name="form_build_id"][value*="form-"][value]:not([value=""])')?.getAttribute('value') || ''
+        const body = new URLSearchParams({
+          'filters[modality]': 'Auction',
+          'filters[sub_modality]': 'DayAhead',
+          'filters[auction]': auctionCode,
+          'filters[delivery_date]': dateLabel,
+          'filters[product]': '60',
+          'filters[data_mode]': 'table',
+          'filters[market_area]': 'GB',
+          form_build_id: formBuildId,
+          form_id: 'market_data_filters_form',
+          submit_js: '',
+        })
 
-      const responseText = execFileSync('curl', [
-        '-s', '-L',
-        '-A', USER_AGENT,
-        '-H', 'X-Requested-With: XMLHttpRequest',
-        '-H', 'Accept: application/json, text/javascript, */*; q=0.01',
-        '-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
-        '--data', body.toString(),
-        `${pageUrl}&ajax_form=1`,
-      ], { encoding: 'utf8' })
+        const response = await fetch(ajaxUrl, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'x-requested-with': 'XMLHttpRequest',
+            'accept': 'application/json, text/javascript, */*; q=0.01',
+            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          },
+          body,
+        })
+
+        if (!response.ok) {
+          throw new Error(`EPEX GB ajax request failed: ${response.status}`)
+        }
+
+        return await response.text()
+      }, { ajaxUrl, dateLabel, auctionCode: auction.code })
 
       const widgetHtml = parseWidgetHtml(JSON.parse(responseText))
       return parseAuctionRows(date, widgetHtml)
     } catch (error) {
       if (attempt === MAX_RETRIES - 1) throw error
+      await page.waitForTimeout(500 * (attempt + 1))
       await sleep(300 * (attempt + 1))
     }
   }
@@ -219,10 +250,10 @@ function writeSeries(path, data) {
   return (statSync(path).size / 1024).toFixed(0)
 }
 
-async function detectLatestAvailableDate(formBuildId) {
+async function detectLatestAvailableDate(page, ajaxUrl) {
   const today = new Date()
   const tomorrow = addDays(today, 1)
-  const probeTomorrow = await fetchAuctionDay(tomorrow, 'daa1', formBuildId).catch(() => [])
+  const probeTomorrow = await fetchAuctionDay(page, ajaxUrl, tomorrow, 'daa1').catch(() => [])
   if (probeTomorrow.length > 0) return tomorrow
   return today
 }
@@ -249,7 +280,8 @@ async function main() {
       .filter(series => series.length > 0)
       .map(series => series[series.length - 1].t),
   )
-  const latestAvailableDate = await detectLatestAvailableDate(await fetchFormBuildId(new Date()))
+  const { browser, page, ajaxUrl } = await createBrowserSession()
+  const latestAvailableDate = await detectLatestAvailableDate(page, ajaxUrl)
   const fetchStart = bootstrap
     ? addDays(latestAvailableDate, -(BOOTSTRAP_DAYS - 1))
     : addDays(new Date(existingLastTs), -2)
@@ -264,36 +296,37 @@ async function main() {
   const daa2HourlyMap = new Map(existing.daa2Hourly.map(point => [point.t, point.p]))
   const daa2QHMap = new Map(existing.daa2QH.map(point => [point.t, point.p]))
 
-  let cursor = 0
   let completed = 0
 
-  async function worker() {
-    while (cursor < dates.length) {
-      const index = cursor++
-        const day = dates[index]
-        const dayStr = fmtDay(day)
+  try {
+    for (const day of dates) {
+      const dayStr = fmtDay(day)
+      let dayHadAnyData = false
       try {
-        const formBuildId = await fetchFormBuildId(day)
-        const [daa1Rows, daa2Rows] = await Promise.all([
-          fetchAuctionDay(day, 'daa1', formBuildId),
-          fetchAuctionDay(day, 'daa2', formBuildId),
-        ])
+        const daa1Rows = await fetchAuctionDay(page, ajaxUrl, day, 'daa1')
+        if (daa1Rows.length < 20) throw new Error(`DAA1 returned only ${daa1Rows.length} rows`)
+        for (const point of daa1Rows) daa1HourlyMap.set(point.t, point.p)
+        for (const point of expandHourlyToQuarterHour(daa1Rows)) daa1QHMap.set(point.t, point.p)
+        dayHadAnyData = true
+      } catch (error) {
+        console.log(`   ⚠️  ${dayStr} DAA1: ${error.message}`)
+      }
 
-        for (const point of daa1Rows) {
-          daa1HourlyMap.set(point.t, point.p)
-        }
-        for (const point of expandHourlyToQuarterHour(daa1Rows)) {
-          daa1QHMap.set(point.t, point.p)
-        }
-
-        for (const point of aggregateHalfHourlyToHourly(daa2Rows)) {
-          daa2HourlyMap.set(point.t, point.p)
-        }
-        for (const point of expandHalfHourlyToQuarterHour(daa2Rows)) {
-          daa2QHMap.set(point.t, point.p)
+      try {
+        const daa2Rows = await fetchAuctionDay(page, ajaxUrl, day, 'daa2')
+        if (daa2Rows.length >= 40) {
+          for (const point of aggregateHalfHourlyToHourly(daa2Rows)) daa2HourlyMap.set(point.t, point.p)
+          for (const point of expandHalfHourlyToQuarterHour(daa2Rows)) daa2QHMap.set(point.t, point.p)
+          dayHadAnyData = true
+        } else {
+          throw new Error(`DAA2 returned only ${daa2Rows.length} rows`)
         }
       } catch (error) {
-        console.log(`   ⚠️  ${dayStr}: ${error.message}`)
+        if (dayHadAnyData) {
+          console.log(`   ⚠️  ${dayStr} DAA2: ${error.message}`)
+        } else {
+          console.log(`   ⚠️  ${dayStr}: ${error.message}`)
+        }
       }
 
       completed++
@@ -301,9 +334,9 @@ async function main() {
         console.log(`   Progress: ${completed}/${dates.length}`)
       }
     }
+  } finally {
+    await browser.close()
   }
-
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, dates.length || 1) }, () => worker()))
 
   const out = {
     daa1Hourly: [...daa1HourlyMap.entries()].sort(([a], [b]) => a - b).map(([t, p]) => ({ t, p })),
