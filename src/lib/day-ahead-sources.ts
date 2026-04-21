@@ -49,9 +49,17 @@ function buildSmardChartUrl(startDate?: string, endDate?: string): string {
 
 function buildEntsoeDayAheadUrl(deliveryDate?: string): string {
   const date = deliveryDate ?? '2026-04-21'
-  const [year, month, day] = date.split('-')
-  const viewDate = `${day}.${month}.${year} 00:00|CET|DAY`
-  return `https://transparency.entsoe.eu/transmission-domain/r2/dayAheadPrices/show?areaType=BZN&atch=false&biddingZone.values=${encodeURIComponent('CTY|10YNL----------L!BZN|10YNL----------L')}&dateTime.dateTime=${encodeURIComponent(viewDate)}&dateTime.timezone=CET_CEST&dateTime.timezone_input=${encodeURIComponent('CET (UTC 1) / CEST (UTC 2)')}&defaultValue=false&resolution.values=PT60M&viewType=TABLE`
+  const appState = {
+    sa: ['BZN|10YNL----------L'],
+    st: 'BZN',
+    mm: true,
+    ma: false,
+    sp: 'HALF',
+    dt: 'TABLE',
+    df: date,
+    tz: 'CET',
+  }
+  return `https://transparency.entsoe.eu/market/energyPrices?appState=${encodeURIComponent(JSON.stringify(appState))}`
 }
 
 export function getDayAheadSourceMeta(
