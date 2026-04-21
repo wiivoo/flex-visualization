@@ -103,10 +103,12 @@ run_scraper() {
   return 1
 }
 
-# Scrape DE then NL (with gap to avoid WAF)
+# Scrape DE, NL, then GB (with gaps to avoid WAF)
 run_scraper "" || true
 sleep 10
 run_scraper "NL" || true
+sleep 10
+run_scraper "GB" || true
 
 echo ""
 echo "===== Done at $(date '+%H:%M:%S') ====="

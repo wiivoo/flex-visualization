@@ -2,9 +2,9 @@
 /**
  * EPEX Spot Intraday Continuous Price Scraper
  *
- * Scrapes 15-min intraday continuous results from EPEX SPOT for DE and NL.
+ * Scrapes 15-min intraday continuous results from EPEX SPOT for DE, NL, and GB.
  * Extracts all fields: Low, High, Last, Weight Avg, ID Full, ID1, ID3,
- * Buy Volume, Sell Volume, Volume (EUR/MWh), stored in Supabase price_cache.
+ * Buy Volume, Sell Volume, Volume (local currency/MWh), stored in Supabase price_cache.
  *
  * Table structure: 168 rows per day = 24 hours × 7 rows each:
  *   [0] HH-HH+1     (hourly summary)
@@ -18,8 +18,10 @@
  * Usage:
  *   node scripts/scrape-epex-intraday.mjs                         # DE yesterday + day before
  *   node scripts/scrape-epex-intraday.mjs --area NL               # NL yesterday + day before
+ *   node scripts/scrape-epex-intraday.mjs --area GB               # GB yesterday + day before
  *   node scripts/scrape-epex-intraday.mjs --date 2026-03-24       # Specific date (DE)
  *   node scripts/scrape-epex-intraday.mjs --area NL --date 2026-03-24
+ *   node scripts/scrape-epex-intraday.mjs --area GB --date 2026-03-24
  *   node scripts/scrape-epex-intraday.mjs --dry-run               # Scrape but don't write to DB
  *   node scripts/scrape-epex-intraday.mjs --backfill              # Re-scrape even if cached (upgrade schema)
  */
@@ -175,7 +177,7 @@ async function scrapeDate(page, deliveryDate, marketArea = 'DE') {
 
 /**
  * Detect column layout from the first data row.
- * EPEX DE has 10 columns, NL may have a different count.
+ * EPEX DE/GB commonly have 10 columns, while NL may have a different count.
  * Returns column indices adjusted for the actual layout.
  */
 function detectColumnLayout(allCells) {
@@ -184,7 +186,7 @@ function detectColumnLayout(allCells) {
     const numericCols = row.filter(c => /^-?[\d,]+\.?\d*$/.test(c.replace(/\s/g, ''))).length
     if (numericCols >= 3) {
       // Standard layout: 10 cols = Low, High, Last, WAVG, ID_Full, ID1, ID3, BuyVol, SellVol, Vol
-      // NL may omit some volume columns but price cols (ID_Full, ID1, ID3) stay in same position
+      // NL may omit some volume columns but price cols (ID_Full, ID1, ID3) stay in the same position
       // relative to Low/High/Last/WAVG at start.
       // Return the standard COL offsets — they are relative to start of the row.
       return COL
@@ -277,8 +279,8 @@ function validateEntries(entries) {
 
 /**
  * Write to Supabase price_cache.
- * Stores prices in ct/kWh (EUR/MWh ÷ 10).
- * Uses country-prefixed cache type for non-DE areas (e.g., 'nl:intraday').
+ * Stores prices in local minor-unit/kWh (EUR/MWh -> ct/kWh, GBP/MWh -> GBp/kWh).
+ * Uses country-prefixed cache type for non-DE areas (e.g., 'nl:intraday', 'gb:intraday').
  */
 async function writeToSupabase(dateStr, entries, cachePrefix = '') {
   const pricesJson = entries.map(e => ({
@@ -428,7 +430,7 @@ async function main() {
     if (dryRun) {
       console.log(`  [DRY] Sample:`)
       entries.filter(e => e.id_full !== null).slice(0, 3).forEach(e =>
-        console.log(`    ${e.timestamp}: ID Full=${e.id_full} | ID1=${e.id1} | ID3=${e.id3} | Last=${e.last} | Low=${e.low} | High=${e.high} | Vol=${e.volume} EUR/MWh`)
+        console.log(`    ${e.timestamp}: ID Full=${e.id_full} | ID1=${e.id1} | ID3=${e.id3} | Last=${e.last} | Low=${e.low} | High=${e.high} | Vol=${e.volume} local/MWh`)
       )
     } else {
       await writeToSupabase(dateStr, entries, area.cachePrefix)
