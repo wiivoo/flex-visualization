@@ -47,6 +47,13 @@ function buildSmardChartUrl(startDate?: string, endDate?: string): string {
   }))}`
 }
 
+function buildEntsoeDayAheadUrl(deliveryDate?: string): string {
+  const date = deliveryDate ?? '2026-04-21'
+  const [year, month, day] = date.split('-')
+  const viewDate = `${day}.${month}.${year} 00:00`
+  return `https://transparency.entsoe.eu/transmission-domain/r2/dayAheadPrices/show?name=&defaultValue=false&viewType=TABLE&areaType=BZN&atch=false&dateTime.dateTime=${encodeURIComponent(viewDate)}`
+}
+
 export function getDayAheadSourceMeta(
   country: DayAheadCountry,
   startDate?: string,
@@ -76,7 +83,7 @@ export function getDayAheadSourceMeta(
         curveNote: 'The app stores official ENTSO-E EUR/MWh values for NL. Native PT15M values are used when present; missing quarter-hours are filled from hourly data.',
         verificationNote: 'Primary source is ENTSO-E A44. Live API pulls require an ENTSO-E security token, so the easiest public cross-check is the EPEX NL day-ahead auction page for the same delivery date.',
         links: [
-          { label: 'Primary source', href: ENTSOE_PLATFORM_URL },
+          { label: 'ENTSO-E day-ahead table', href: buildEntsoeDayAheadUrl(startDate) },
           { label: 'Cross-check: EPEX NL', href: buildEpexDayAheadUrl('NL', startDate, 60) },
           { label: 'ENTSO-E API guide', href: ENTSOE_GUIDE_URL },
         ],

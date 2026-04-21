@@ -2139,19 +2139,23 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </>
                   )}
                 </p>
-                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-400">
+                <div className="mt-1 flex items-center gap-1.5 text-[11px] text-gray-400 whitespace-nowrap overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <span>Source:</span>
-                  <span className="font-medium text-gray-500">{dayAheadSource.shortLabel}</span>
-                  <span className="text-gray-300">·</span>
-                  <span className="text-gray-500">{dayAheadSource.datasetLabel}</span>
+                  <span
+                    className="font-medium text-gray-500"
+                    title={`${dayAheadSource.officialSource} — ${dayAheadSource.datasetLabel}`}
+                  >
+                    {dayAheadSource.shortLabel}
+                  </span>
                   <span className="text-gray-300">·</span>
                   <a
                     href={dayAheadSource.links[0].href}
                     target="_blank"
                     rel="noopener noreferrer"
+                    title={`${dayAheadSource.links[0].label} — ${dayAheadSource.verificationNote}`}
                     className="underline hover:text-gray-600"
                   >
-                    {dayAheadSource.links[0].label}
+                    Verify
                   </a>
                 </div>
               </div>
