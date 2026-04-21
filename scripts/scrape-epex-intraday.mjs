@@ -23,12 +23,25 @@
  *   node scripts/scrape-epex-intraday.mjs --area NL --date 2026-03-24
  *   node scripts/scrape-epex-intraday.mjs --area GB --date 2026-03-24
  *   node scripts/scrape-epex-intraday.mjs --dry-run               # Scrape but don't write to DB
+ *   node scripts/scrape-epex-intraday.mjs --static                # Scrape and write static JSON in public/data
  *   node scripts/scrape-epex-intraday.mjs --backfill              # Re-scrape even if cached (upgrade schema)
  */
 import { chromium } from 'playwright'
 import { createClient } from '@supabase/supabase-js'
-import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+
+const args = process.argv.slice(2)
+const flags = {}
+for (let i = 0; i < args.length; i++) {
+  if (args[i].startsWith('--')) {
+    const key = args[i].slice(2)
+    flags[key] = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : true
+  }
+}
+
+const dryRun = !!flags['dry-run']
+const staticMode = !!flags.static
 
 // --- Load env ---
 const envPath = join(process.cwd(), '.env.local')
@@ -41,11 +54,11 @@ if (existsSync(envPath)) {
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-if (!supabaseUrl || !supabaseKey) {
+if (!dryRun && !staticMode && (!supabaseUrl || !supabaseKey)) {
   console.error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY')
   process.exit(1)
 }
-const supabase = createClient(supabaseUrl, supabaseKey)
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
 const EPEX_URL = 'https://www.epexspot.com/en/market-results'
 
@@ -56,9 +69,17 @@ const MARKET_AREAS = {
   GB: { epexCode: 'GB', cachePrefix: 'gb:', label: 'United Kingdom' },
 }
 
+const STATIC_FILE_NAMES = {
+  DE: 'de-intraday-continuous.json',
+  NL: 'nl-intraday-continuous.json',
+  GB: 'gb-intraday-continuous.json',
+}
+const STATIC_KEEP_DAYS = 7
+
 // --- Column indices (from EPEX table headers) ---
 // '', Low, High, Last, Weight Avg, ID Full, ID1, ID3, Buy Volume, Sell Volume, Volume
 const COL = { LOW: 0, HIGH: 1, LAST: 2, WAVG: 3, ID_FULL: 4, ID1: 5, ID3: 6, BUY_VOL: 7, SELL_VOL: 8, VOLUME: 9 }
+const GB_COL = { LOW: 0, HIGH: 1, LAST: 2, WAVG: 3, BUY_VOL: 4, SELL_VOL: 5, VOLUME: 6, RPD: 7, RPD_HH: 8 }
 
 // QH row indices within each 7-row hourly group
 const QH_OFFSETS = [2, 3, 5, 6]
@@ -200,6 +221,9 @@ function detectColumnLayout(allCells) {
  * marketArea is used for diagnostic logging only.
  */
 function extractQH(deliveryDate, allCells, marketArea = 'DE') {
+  if (marketArea === 'GB') {
+    return extractGbQH(deliveryDate, allCells)
+  }
   if (allCells.length < 7) {
     console.error(`  ${deliveryDate}: too few rows (${allCells.length}) for ${marketArea}`)
     return null
@@ -245,6 +269,60 @@ function extractQH(deliveryDate, allCells, marketArea = 'DE') {
   return entries
 }
 
+function extractGbQH(deliveryDate, allCells) {
+  const rows = allCells.filter(cells => cells.length === 9)
+  if (rows.length < 40) {
+    console.error(`  ${deliveryDate}: too few GB rows (${rows.length})`)
+    return null
+  }
+
+  const entries = []
+  let halfHourIndex = 0
+  for (const cells of rows) {
+    if (cells.every(cell => cell === '-' || cell === '')) continue
+
+    const low = parseNum(cells[GB_COL.LOW])
+    const high = parseNum(cells[GB_COL.HIGH])
+    const last = parseNum(cells[GB_COL.LAST])
+    const weightAvg = parseNum(cells[GB_COL.WAVG])
+    const rpd = parseNum(cells[GB_COL.RPD])
+    const rpdHh = parseNum(cells[GB_COL.RPD_HH])
+    const buyVolume = parseNum(cells[GB_COL.BUY_VOL])
+    const sellVolume = parseNum(cells[GB_COL.SELL_VOL])
+    const volume = parseNum(cells[GB_COL.VOLUME])
+
+    const hour = Math.floor(halfHourIndex / 2)
+    const minuteBase = (halfHourIndex % 2) * 30
+    for (const minute of [minuteBase, minuteBase + 15]) {
+      const ts = `${deliveryDate}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00Z`
+      entries.push({
+        timestamp: ts,
+        // GB continuous exposes RPD/RPD HH rather than ID Full / ID1 / ID3.
+        // Use RPD HH as the half-hour optimization signal and duplicate it to QH.
+        id_full: rpdHh,
+        id1: rpd,
+        id3: rpdHh,
+        weight_avg: weightAvg,
+        low,
+        high,
+        last,
+        buy_volume: buyVolume,
+        sell_volume: sellVolume,
+        volume,
+      })
+    }
+
+    halfHourIndex++
+  }
+
+  if (entries.length < 80) {
+    console.error(`  ${deliveryDate}: too few GB QH slots (${entries.length})`)
+    return null
+  }
+
+  return entries
+}
+
 /**
  * Sanity-check extracted entries before writing. VWAP (weight_avg, id_full,
  * id1, id3) must sit inside [low, high] per settlement period. A violation
@@ -283,6 +361,10 @@ function validateEntries(entries) {
  * Uses country-prefixed cache type for non-DE areas (e.g., 'nl:intraday', 'gb:intraday').
  */
 async function writeToSupabase(dateStr, entries, cachePrefix = '') {
+  if (!supabase) {
+    console.error(`  ${dateStr}: Supabase client unavailable`)
+    return false
+  }
   const pricesJson = entries.map(e => ({
     timestamp: e.timestamp,
     price_ct_kwh: e.id_full !== null ? Math.round(e.id_full * 10) / 100 : (e.weight_avg !== null ? Math.round(e.weight_avg * 10) / 100 : null),
@@ -318,7 +400,68 @@ async function writeToSupabase(dateStr, entries, cachePrefix = '') {
   return true
 }
 
+function toStaticPoints(entries) {
+  return entries.map(e => ({
+    timestamp: e.timestamp,
+    price_ct_kwh: e.id_full !== null ? Math.round(e.id_full * 10) / 100 : (e.weight_avg !== null ? Math.round(e.weight_avg * 10) / 100 : null),
+    id_full_ct: e.id_full !== null ? Math.round(e.id_full * 10) / 100 : null,
+    id1_ct: e.id1 !== null ? Math.round(e.id1 * 10) / 100 : null,
+    id3_ct: e.id3 !== null ? Math.round(e.id3 * 10) / 100 : null,
+    weight_avg_ct: e.weight_avg !== null ? Math.round(e.weight_avg * 10) / 100 : null,
+    low_ct: e.low !== null ? Math.round(e.low * 10) / 100 : null,
+    high_ct: e.high !== null ? Math.round(e.high * 10) / 100 : null,
+    last_ct: e.last !== null ? Math.round(e.last * 10) / 100 : null,
+    buy_vol_mwh: e.buy_volume !== null ? Math.round(e.buy_volume * 100) / 100 : null,
+    sell_vol_mwh: e.sell_volume !== null ? Math.round(e.sell_volume * 100) / 100 : null,
+    volume_mwh: e.volume !== null ? Math.round(e.volume * 100) / 100 : null,
+  }))
+}
+
+function buildRecentDates(days) {
+  const results = []
+  const today = new Date()
+  for (let offset = Number(days); offset >= 1; offset--) {
+    const d = new Date(today)
+    d.setDate(d.getDate() - offset)
+    results.push(d.toISOString().slice(0, 10))
+  }
+  return results
+}
+
+async function writeToStatic(areaKey, dateStr, entries) {
+  const outDir = join(process.cwd(), 'public', 'data')
+  mkdirSync(outDir, { recursive: true })
+  const filePath = join(outDir, STATIC_FILE_NAMES[areaKey])
+  const nextPoints = toStaticPoints(entries)
+
+  let existing = []
+  if (existsSync(filePath)) {
+    try {
+      existing = JSON.parse(readFileSync(filePath, 'utf8'))
+    } catch {
+      existing = []
+    }
+  }
+
+  const cutoff = new Date(`${dateStr}T12:00:00Z`)
+  cutoff.setUTCDate(cutoff.getUTCDate() - (STATIC_KEEP_DAYS - 1))
+  const cutoffStr = cutoff.toISOString().slice(0, 10)
+
+  const merged = [
+    ...existing.filter(point => {
+      const pointDate = String(point.timestamp).slice(0, 10)
+      return pointDate !== dateStr && pointDate >= cutoffStr
+    }),
+    ...nextPoints,
+  ].sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)))
+
+  writeFileSync(filePath, JSON.stringify(merged))
+  console.log(`  ${dateStr}: saved to ${STATIC_FILE_NAMES[areaKey]} (${nextPoints.filter(p => p.price_ct_kwh !== null).length} valid points)`)
+  return true
+}
+
 async function isAlreadyCached(dateStr, cachePrefix = '') {
+  if (!supabase) return false
   const cacheType = `${cachePrefix}intraday`
   const { data } = await supabase
     .from('price_cache')
@@ -342,15 +485,6 @@ async function isAlreadyCached(dateStr, cachePrefix = '') {
 
 // --- CLI ---
 async function main() {
-  const args = process.argv.slice(2)
-  const flags = {}
-  for (let i = 0; i < args.length; i++) {
-    if (args[i].startsWith('--')) {
-      const key = args[i].slice(2)
-      flags[key] = args[i + 1] && !args[i + 1].startsWith('--') ? args[++i] : true
-    }
-  }
-
   const areaKey = (flags.area || 'DE').toUpperCase()
   const area = MARKET_AREAS[areaKey]
   if (!area) {
@@ -358,24 +492,19 @@ async function main() {
     process.exit(1)
   }
 
-  const today = new Date()
-  const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1)
-  const dayBefore = new Date(today); dayBefore.setDate(dayBefore.getDate() - 2)
-
   const dates = flags.date
     ? [flags.date]
-    : [dayBefore.toISOString().slice(0, 10), yesterday.toISOString().slice(0, 10)]
-
-  const dryRun = !!flags['dry-run']
+    : buildRecentDates(flags.days || 2)
   const backfill = !!flags['backfill']
 
   console.log(`EPEX Intraday Scraper — ${area.label} (${areaKey}) Continuous 15min`)
-  console.log(`  Dates: ${dates.join(', ')} | Mode: ${dryRun ? 'DRY RUN' : 'Supabase'}${backfill ? ' | BACKFILL (ignoring cache)' : ''}`)
+  const modeLabel = dryRun ? 'DRY RUN' : staticMode ? 'STATIC' : 'Supabase'
+  console.log(`  Dates: ${dates.join(', ')} | Mode: ${modeLabel}${backfill ? ' | BACKFILL (ignoring cache)' : ''}`)
 
   // Skip cached dates (unless backfill mode)
   const toScrape = []
   for (const d of dates) {
-    if (!dryRun && !backfill && await isAlreadyCached(d, area.cachePrefix)) {
+    if (!dryRun && !staticMode && !backfill && await isAlreadyCached(d, area.cachePrefix)) {
       console.log(`  ${d}: already cached, skipping`)
     } else {
       toScrape.push(d)
@@ -432,6 +561,8 @@ async function main() {
       entries.filter(e => e.id_full !== null).slice(0, 3).forEach(e =>
         console.log(`    ${e.timestamp}: ID Full=${e.id_full} | ID1=${e.id1} | ID3=${e.id3} | Last=${e.last} | Low=${e.low} | High=${e.high} | Vol=${e.volume} local/MWh`)
       )
+    } else if (staticMode) {
+      await writeToStatic(areaKey, dateStr, entries)
     } else {
       await writeToSupabase(dateStr, entries, area.cachePrefix)
     }

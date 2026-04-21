@@ -69,6 +69,7 @@ import { fetchAwattarRange } from '@/lib/awattar'
 import { fetchEntsoeRange, ENTSOE_DOMAINS } from '@/lib/entsoe'
 import { fetchEpexGbHalfHourlyRange, fetchEpexGbHourlyRange } from '@/lib/epex-gb'
 import { readGbStaticRange } from '@/lib/gb-static'
+import { readStaticIntradayRange } from '@/lib/intraday-static'
 import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { fetchCsvPrices } from '@/lib/csv-prices'
@@ -526,17 +527,54 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Maximum date range: 1600 days' }, { status: 400 })
   }
 
-  // ── Intraday full-field path (no index filter) ──
-  // When type=intraday without index, return all EPEX fields per QH slot
   const cachePrefix = country !== 'DE' ? `${country.toLowerCase()}:` : ''
-  if (type === 'intraday' && !index) {
-    const intradayDays = await getCachedIntradayFull(startDate, endDate, cachePrefix)
-    const allIntradayPrices: IntradayPoint[] = []
+  if (type === 'intraday') {
+    let intradayDays = await getCachedIntradayFull(startDate, endDate, cachePrefix)
+    let source: 'cache' | 'static' | 'none' = intradayDays.size > 0 ? 'cache' : 'none'
+    if (intradayDays.size === 0) {
+      intradayDays = readStaticIntradayRange(country, startDate, endDate)
+      if (intradayDays.size > 0) source = 'static'
+    }
+
     const allDays = eachDayOfInterval({ start: startDate, end: endDate })
+    if (!index) {
+      const allIntradayPrices: IntradayPoint[] = []
+      for (const day of allDays) {
+        const dateStr = format(day, 'yyyy-MM-dd')
+        const cached = intradayDays.get(dateStr)
+        if (cached) allIntradayPrices.push(...cached)
+      }
+      const currencyI = country === 'GB' ? 'GBP' : 'EUR'
+      const priceUnitI = country === 'GB' ? 'GBp/kWh' : 'ct/kWh'
+      return NextResponse.json({
+        type: 'intraday',
+        startDate: startDateStr,
+        endDate: endDateStr,
+        country,
+        currency: currencyI,
+        priceUnit: priceUnitI,
+        source,
+        count: allIntradayPrices.length,
+        prices: allIntradayPrices,
+        fullFields: true,
+      })
+    }
+
+    const allIntradayPrices: PricePoint[] = []
     for (const day of allDays) {
       const dateStr = format(day, 'yyyy-MM-dd')
       const cached = intradayDays.get(dateStr)
-      if (cached) allIntradayPrices.push(...cached)
+      if (!cached) continue
+      allIntradayPrices.push(...cached
+        .map(point => ({
+          timestamp: point.timestamp,
+          price_ct_kwh: index === 'id_full'
+            ? (point.id_full_ct ?? point.price_ct_kwh ?? 0)
+            : index === 'id1'
+              ? (point.id1_ct ?? point.price_ct_kwh ?? 0)
+              : (point.id3_ct ?? point.price_ct_kwh ?? 0),
+        }))
+        .filter(point => point.price_ct_kwh !== 0))
     }
     const currencyI = country === 'GB' ? 'GBP' : 'EUR'
     const priceUnitI = country === 'GB' ? 'GBp/kWh' : 'ct/kWh'
@@ -547,10 +585,9 @@ export async function GET(request: NextRequest) {
       country,
       currency: currencyI,
       priceUnit: priceUnitI,
-      source: intradayDays.size > 0 ? 'cache' : 'none',
+      source,
       count: allIntradayPrices.length,
       prices: allIntradayPrices,
-      fullFields: true,
     })
   }
 
@@ -634,17 +671,15 @@ export async function GET(request: NextRequest) {
       const result = await fetchHourlyChain(uncachedStart, uncachedEnd)
       fetchedPrices = result.prices
       source = result.source
-    } else if (type === 'intraday') {
-      // Intraday only from Supabase cache (EPEX scraper) — no external fetch
     } else {
       // Forward: CSV fallback
       fetchedPrices = await fetchCsvBatch(uncachedStart, uncachedEnd, 'day-ahead')
       if (fetchedPrices?.length) source = 'csv'
     }
 
-    // Final fallback: demo data (DE only, skip for intraday - only from EPEX scraper cache)
-    // Non-DE countries must not get demo data — better to show an error than fake prices
-    if (!fetchedPrices?.length && type !== 'intraday' && country === 'DE') {
+    // Final fallback: demo data (DE only).
+    // Non-DE countries must not get demo data — better to show an error than fake prices.
+    if (!fetchedPrices?.length && country === 'DE') {
       fetchedPrices = generateDemoBatchPrices(uncachedStart, uncachedEnd)
       source = 'demo'
     }

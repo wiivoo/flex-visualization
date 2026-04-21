@@ -47,6 +47,13 @@ jobs:
         run: node scripts/update-gb-intraday-auctions.mjs
         continue-on-error: true
 
+      - name: Update static intraday continuous files (DE / NL / GB)
+        run: |
+          node scripts/scrape-epex-intraday.mjs --area DE --static --days 4
+          node scripts/scrape-epex-intraday.mjs --area NL --static --days 4
+          node scripts/scrape-epex-intraday.mjs --area GB --static --days 4
+        continue-on-error: true
+
       - name: Precompute management monthly aggregates
         run: node scripts/precompute-management-monthly.mjs
 

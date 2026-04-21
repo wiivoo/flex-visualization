@@ -79,6 +79,10 @@ interface Props {
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, gbAuction = 'daa1', setGbAuction, onExportReady }: Props) {
   const units = getPriceUnits(country)
+  const intradaySeriesLabel = country === 'GB' ? 'RPD HH' : 'ID3'
+  const intradaySeriesDescription = country === 'GB'
+    ? 'Intraday RPD HH index · EPEX Spot GB continuous half-hour reference price, duplicated to quarter-hours for optimization'
+    : 'Intraday ID3 index · volume-weighted avg of the last 3h of continuous trading before delivery (EPEX SPOT)'
   const chargePowerKw = scenario.chargePowerKw ?? DEFAULT_CHARGE_POWER_KW
   const isV2G = scenario.gridMode === 'v2g'
   // V2G: does the battery need net charging? (startSoC < targetSoC)
@@ -2109,7 +2113,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           </TooltipTrigger>
                           <TooltipContent side="bottom" className="max-w-[260px] text-left p-3">
                             <p className="text-[11px] text-gray-500 leading-relaxed">
-                              Intraday ID3 index · volume-weighted avg of the last 3h of continuous trading before delivery (EPEX SPOT)
+                              {intradaySeriesDescription}
                             </p>
                           </TooltipContent>
                         </UITooltip>
@@ -2381,7 +2385,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           <p className="text-gray-500 text-xs mb-1">{fmtDateShort(d.date)} {d.label}</p>
                           <p className="font-semibold tabular-nums">{d.priceVal.toFixed(2)} {units.priceUnit} <span className="text-gray-400 font-normal">DA</span>{d.isProjected && <span className="text-amber-600 text-[10px] font-normal ml-1">forecast</span>}</p>
                           {showIntraday && d.intradayId3Price !== null && (
-                            <p className="text-sky-600 text-[12px] tabular-nums">{d.intradayId3Price.toFixed(2)} {units.priceUnit} <span className="font-normal">ID3</span>
+                            <p className="text-sky-600 text-[12px] tabular-nums">{d.intradayId3Price.toFixed(2)} {units.priceUnit} <span className="font-normal">{intradaySeriesLabel}</span>
                               {d.id3OptimizedPrice !== null && <span className="text-sky-500 text-[10px] font-bold ml-1">← new slot</span>}
                               {d.daSoldPrice !== null && <span className="text-red-400 text-[10px] font-bold ml-1">→ sold</span>}
                             </p>
@@ -2632,7 +2636,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     <>
                       <Line type="monotone" dataKey="intradayId3Price" yAxisId="left"
                         stroke="#374151" strokeWidth={1.5} strokeDasharray="5 3"
-                        dot={false} connectNulls={true} name="ID3 Intraday" isAnimationActive={!isDragging} />
+                        dot={false} connectNulls={true} name={`${intradaySeriesLabel} Intraday`} isAnimationActive={!isDragging} />
                       {/* ID3 re-optimized slots — prominent sky dots (new positions bought) */}
                       <Line type="monotone" dataKey="id3OptimizedPrice" yAxisId="left" stroke="#0EA5E9" strokeWidth={0}
                         dot={isQH ? { r: 3, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 1.5 } : { r: 4.5, fill: '#0EA5E9', stroke: '#fff', strokeWidth: 2 }}
@@ -2995,7 +2999,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                                 +{intradayUpliftCt.toFixed(1)} {units.priceUnit}
                               </span>
                               <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-sky-600">
-                                {intradayUpliftEur.toFixed(2)} {units.currencySym} ID3
+                                {intradayUpliftEur.toFixed(2)} {units.currencySym} {intradaySeriesLabel}
                               </span>
                             </div>
                           )}
@@ -3909,18 +3913,18 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             {showIntraday && hasIntraday && !showProcessView && (
               <div className="mt-2 rounded-lg border border-sky-200/60 bg-sky-50/40 p-2.5 space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold text-sky-600 uppercase tracking-wider">Intraday Re-optimization (ID3)</span>
+                  <span className="text-[10px] font-bold text-sky-600 uppercase tracking-wider">Intraday Re-optimization ({intradaySeriesLabel})</span>
                   {intradayUpliftEur > 0 && (
                     <span className="text-[11px] font-bold text-sky-700 tabular-nums">+{intradayUpliftEur.toFixed(2)} {units.currency}</span>
                   )}
                 </div>
                 <div className="text-[10px] text-gray-500 space-y-0.5">
                   <div className="flex justify-between">
-                    <span>1. DA schedule @ ID3 prices</span>
+                    <span>1. DA schedule @ {intradaySeriesLabel} prices</span>
                     <span className="tabular-nums font-medium">{id3DaScheduleAvgCt.toFixed(2)} {units.priceUnit}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>2. ID3-optimized schedule</span>
+                    <span>2. {intradaySeriesLabel}-optimized schedule</span>
                     <span className="tabular-nums font-medium text-sky-600">{id3OptScheduleAvgCt.toFixed(2)} {units.priceUnit}</span>
                   </div>
                   <div className="flex justify-between border-t border-sky-200/60 pt-1 mt-1">
@@ -3929,7 +3933,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </div>
                 </div>
                 {intradayUpliftEur <= 0 && (
-                  <p className="text-[9px] text-gray-400">DA schedule is already optimal on ID3 — no profitable re-optimization.</p>
+                  <p className="text-[9px] text-gray-400">DA schedule is already optimal on {intradaySeriesLabel} — no profitable re-optimization.</p>
                 )}
               </div>
             )}
