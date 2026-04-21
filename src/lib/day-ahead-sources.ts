@@ -19,7 +19,6 @@ export interface DayAheadSourceMeta {
 const SMARD_WHOLESALE_URL = 'https://www.smard.de/page/en/wiki-article/5884/5976/wholesale-prices'
 const SMARD_DOWNLOAD_URL = 'https://www.smard.de/home/downloadcenter/download-marktdaten/'
 const ENTSOE_GUIDE_URL = 'https://transparency.entsoe.eu/content/static_content/Static%20content/web%20api/Guide.html'
-const ENTSOE_PLATFORM_URL = 'https://transparency.entsoe.eu/'
 
 function buildEpexDayAheadUrl(marketArea: 'DE-LU' | 'NL' | 'GB', deliveryDate?: string, product: 60 | 15 = 60): string {
   const date = deliveryDate ?? '2026-04-21'
@@ -45,21 +44,6 @@ function buildSmardChartUrl(startDate?: string, endDate?: string): string {
     categoriesModuleOrder: {},
     region: 'DE',
   }))}`
-}
-
-function buildEntsoeDayAheadUrl(deliveryDate?: string): string {
-  const date = deliveryDate ?? '2026-04-21'
-  const appState = {
-    sa: ['BZN|10YNL----------L'],
-    st: 'BZN',
-    mm: true,
-    ma: false,
-    sp: 'HALF',
-    dt: 'TABLE',
-    df: date,
-    tz: 'CET',
-  }
-  return `https://transparency.entsoe.eu/market/energyPrices?appState=${encodeURIComponent(JSON.stringify(appState))}`
 }
 
 export function getDayAheadSourceMeta(
@@ -89,9 +73,8 @@ export function getDayAheadSourceMeta(
         datasetLabel: 'ENTSO-E Web API documentType=A44 / bidding zone 10YNL----------L',
         officialSource: 'ENTSO-E Transparency Platform',
         curveNote: 'The app stores official ENTSO-E EUR/MWh values for NL. Native PT15M values are used when present; missing quarter-hours are filled from hourly data.',
-        verificationNote: 'Primary source is ENTSO-E A44. Live API pulls require an ENTSO-E security token, so the easiest public cross-check is the EPEX NL day-ahead auction page for the same delivery date.',
+        verificationNote: 'Primary source is ENTSO-E A44. Because the public ENTSO-E web table URLs are unstable, the UI exposes the stable API reference plus the public EPEX NL cross-check for the same delivery date.',
         links: [
-          { label: 'ENTSO-E day-ahead table', href: buildEntsoeDayAheadUrl(startDate) },
           { label: 'Cross-check: EPEX NL', href: buildEpexDayAheadUrl('NL', startDate, 60) },
           { label: 'ENTSO-E API guide', href: ENTSOE_GUIDE_URL },
         ],

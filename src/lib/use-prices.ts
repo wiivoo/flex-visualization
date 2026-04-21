@@ -227,7 +227,6 @@ export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction =
       setGeneration([])
       setIntradayId3([])
       setLastRealDate('')
-      setSelectedDate('')
       generationCache.current.clear()
       allGeneration.current = []
 
@@ -319,13 +318,13 @@ export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction =
           .filter(d => d.date <= lastStaticDate)
           .filter(d => dateSet.has(nextDay(d.date)))
           .pop()
-        if (latestSelectable) {
-          setSelectedDate(latestSelectable.date)
-        } else if (dailySummaries.length > 1) {
-          setSelectedDate(dailySummaries[dailySummaries.length - 2].date)
-        } else if (dailySummaries.length > 0) {
-          setSelectedDate(dailySummaries[dailySummaries.length - 1].date)
-        }
+        setSelectedDate(prev => {
+          if (prev && dateSet.has(prev) && dateSet.has(nextDay(prev))) return prev
+          if (latestSelectable) return latestSelectable.date
+          if (dailySummaries.length > 1) return dailySummaries[dailySummaries.length - 2].date
+          if (dailySummaries.length > 0) return dailySummaries[dailySummaries.length - 1].date
+          return prev
+        })
 
         // Background: fetch incremental data up to dayAfterTomorrow
         const dayAfterTomorrow = nextDay(nextDay(today))
