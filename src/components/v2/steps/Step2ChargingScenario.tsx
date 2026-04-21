@@ -26,6 +26,7 @@ import { useIntradayFunnel, FunnelTimeline, FUNNEL_STAGES } from '@/components/v
 import { ProcessViewChart } from '@/components/v2/ProcessViewChart'
 import { computeProcessViewResults, type UncertaintyScenario, type ProcessStage } from '@/lib/process-view'
 import type { IntradayFullPoint } from '@/lib/use-prices'
+import { getDayAheadSourceMeta } from '@/lib/day-ahead-sources'
 
 // German BEV mileage distribution (BEV alle — KBA 2024)
 const MILEAGE_DIST = [
@@ -181,6 +182,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const date3 = date2 ? nextDayStr(date2) : ''
   const date4 = date3 ? nextDayStr(date3) : ''
   const isThreeDay = scenario.chargingMode === 'threeday'
+  const dayAheadSource = getDayAheadSourceMeta(country, date1, isThreeDay ? date4 : date2)
 
   // ── Fetch renewable generation share when date changes ──
   useEffect(() => {
@@ -2056,17 +2058,33 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           <span className="text-[10px]">DA</span>
                         </span>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom" className="max-w-[220px] text-left p-3">
+                      <TooltipContent side="bottom" className="max-w-[320px] text-left space-y-2 p-3">
+                        <div>
+                          <p className="text-[12px] font-semibold text-[#313131]">Day-ahead source</p>
+                          <p className="text-[11px] text-gray-500 leading-relaxed">{dayAheadSource.officialSource}</p>
+                        </div>
                         <p className="text-[11px] text-gray-500 leading-relaxed">
-                          Day-Ahead · EPEX SPOT SE auction, published daily ~12:15 CET via{' '}
-                          {country === 'DE' ? (
-                            date1 && (isThreeDay ? date4 : date2) ? (
-                              <a href={`https://www.smard.de/home/marktdaten?marketDataAttributes=${encodeURIComponent(JSON.stringify({resolution:"hour",from:new Date(date1+'T00:00:00').getTime(),to:new Date((isThreeDay?date4:date2)+'T23:59:59').getTime(),moduleIds:[8004169],selectedCategory:null,activeChart:true,style:"color",categoriesModuleOrder:{},region:"DE"}))}`} target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-700">SMARD.de</a>
-                            ) : 'SMARD.de'
-                          ) : (
-                            <a href="https://transparency.entsoe.eu/" target="_blank" rel="noopener noreferrer" className="underline hover:text-gray-700">ENTSO-E</a>
-                          )}
+                          <span className="font-medium text-gray-700">Dataset:</span> {dayAheadSource.datasetLabel}
                         </p>
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          <span className="font-medium text-gray-700">Curve in app:</span> {dayAheadSource.curveNote}
+                        </p>
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          <span className="font-medium text-gray-700">Verification:</span> {dayAheadSource.verificationNote}
+                        </p>
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {dayAheadSource.links.map((link) => (
+                            <a
+                              key={link.href}
+                              href={link.href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-medium text-gray-600 underline hover:text-gray-800"
+                            >
+                              {link.label}
+                            </a>
+                          ))}
+                        </div>
                       </TooltipContent>
                     </UITooltip>
                   </TooltipProvider>
@@ -2113,6 +2131,21 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                     </>
                   )}
                 </p>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-gray-400">
+                  <span>Source:</span>
+                  <span className="font-medium text-gray-500">{dayAheadSource.shortLabel}</span>
+                  <span className="text-gray-300">·</span>
+                  <span className="text-gray-500">{dayAheadSource.datasetLabel}</span>
+                  <span className="text-gray-300">·</span>
+                  <a
+                    href={dayAheadSource.links[0].href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-gray-600"
+                  >
+                    {dayAheadSource.links[0].label}
+                  </a>
+                </div>
               </div>
               <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
                 {/* Data source toggle: DA / DA+ID */}

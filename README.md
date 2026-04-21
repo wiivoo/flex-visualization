@@ -25,9 +25,17 @@ Key visualizations:
 | Framework | Next.js 16 (App Router), TypeScript |
 | Charts | Recharts |
 | Styling | Tailwind CSS + shadcn/ui |
-| Prices | SMARD API (day-ahead DE/LU) + static JSON + incremental API |
+| Prices | DE: SMARD 4169, NL: ENTSO-E A44, GB: Elexon BMRS MID |
 | Auth | JWT (jose), password protection via middleware |
 | Deploy | Vercel |
+
+## Data Sources
+
+- **DE** — SMARD / Bundesnetzagentur day-ahead prices for the DE-LU bidding zone (`filter 4169`, chart module `8004169`)
+- **NL** — ENTSO-E Transparency Platform Web API (`documentType=A44`, bidding zone `10YNL----------L`)
+- **GB** — Elexon BMRS `MID` dataset, aggregated from half-hour market-index prices (`APXMIDP` + `N2EXMIDP`)
+
+The v2 price chart now exposes the active region's official source, dataset code, and direct verification links in the chart header tooltip.
 
 ## Project Structure
 
