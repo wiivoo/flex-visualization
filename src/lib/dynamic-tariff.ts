@@ -77,8 +77,8 @@ export interface DailyResult {
   consumptionKwh: number
   avgSpotCtKwh: number        // simple hourly average (for display only)
   avgEndPriceCtKwh: number    // consumption-weighted effective price
-  hoursWithData: number
-  hoursTotal: number           // expected hours (24), for partial-day detection
+  hoursWithData: number        // populated with data points: 24 hourly or 96 quarter-hourly
+  hoursTotal: number           // expected data points: 24 hourly or 96 quarter-hourly
   // Peak (weekday 8-20) / off-peak splits
   peakDynamicCostEur: number
   peakConsumptionKwh: number
@@ -132,6 +132,7 @@ export function calculateYearlyCost(
   fixedPriceCtKwh: number,
   year: number,
   profile: LoadProfile = 'H25',
+  isQuarterHourly: boolean = false,
 ): YearlyCostResult {
   const scale = yearlyKwh / 1_000_000
 
@@ -154,12 +155,16 @@ export function calculateYearlyCost(
     const month = dateStr.slice(0, 7)
     const monthNum = parseInt(dateStr.slice(5, 7))
     const dayType = getDayType(dateStr)
-    const slpWeights = getProfileHourlyWeights(monthNum, dayType, profile)
-
-    // Map prices by hour (take first if duplicates)
+    const hourlyWeights = isQuarterHourly ? null : getProfileHourlyWeights(monthNum, dayType, profile)
+    const qhWeights = isQuarterHourly ? getProfileQHWeights(monthNum, dayType, profile) : null
     const priceByHour = new Map<number, number>()
+    const priceBySlot = new Map<string, number>()
     for (const p of prices) {
       if (!priceByHour.has(p.hour)) priceByHour.set(p.hour, p.priceCtKwh)
+      if (isQuarterHourly) {
+        const key = `${p.hour}:${p.minute ?? 0}`
+        if (!priceBySlot.has(key)) priceBySlot.set(key, p.priceCtKwh)
+      }
     }
 
     let dayCostDynamic = 0
@@ -173,31 +178,63 @@ export function calculateYearlyCost(
     let peakCost = 0, peakKwh = 0, peakSpotSum = 0, peakHrs = 0
     let offPeakCost = 0, offPeakKwh = 0, offPeakSpotSum = 0, offPeakHrs = 0
 
-    for (let h = 0; h < 24; h++) {
-      const spotPrice = priceByHour.get(h)
-      if (spotPrice === undefined) continue
+    if (isQuarterHourly && qhWeights) {
+      for (let q = 0; q < 96; q++) {
+        const h = Math.floor(q / 4)
+        const m = (q % 4) * 15
+        const spotPrice = priceBySlot.get(`${h}:${m}`) ?? priceByHour.get(h)
+        if (spotPrice === undefined) continue
 
-      const consumptionKwh = slpWeights[h] * scale
-      const grossPrice = endCustomerPrice(spotPrice, surcharges)
+        const consumptionKwh = qhWeights[q] * scale
+        const grossPrice = endCustomerPrice(spotPrice, surcharges)
 
-      dayCostDynamic += consumptionKwh * grossPrice / 100
-      dayCostFixed += consumptionKwh * fixedPriceCtKwh / 100
-      dayConsumption += consumptionKwh
-      daySpotSum += spotPrice
-      dayEndPriceSum += grossPrice
-      dayHours++
+        dayCostDynamic += consumptionKwh * grossPrice / 100
+        dayCostFixed += consumptionKwh * fixedPriceCtKwh / 100
+        dayConsumption += consumptionKwh
+        daySpotSum += spotPrice
+        dayEndPriceSum += grossPrice
+        dayHours++
 
-      const isPeak = isWeekday && h >= 8 && h < 20
-      if (isPeak) {
-        peakCost += consumptionKwh * grossPrice / 100
-        peakKwh += consumptionKwh
-        peakSpotSum += spotPrice
-        peakHrs++
-      } else {
-        offPeakCost += consumptionKwh * grossPrice / 100
-        offPeakKwh += consumptionKwh
-        offPeakSpotSum += spotPrice
-        offPeakHrs++
+        const isPeak = isWeekday && h >= 8 && h < 20
+        if (isPeak) {
+          peakCost += consumptionKwh * grossPrice / 100
+          peakKwh += consumptionKwh
+          peakSpotSum += spotPrice
+          peakHrs++
+        } else {
+          offPeakCost += consumptionKwh * grossPrice / 100
+          offPeakKwh += consumptionKwh
+          offPeakSpotSum += spotPrice
+          offPeakHrs++
+        }
+      }
+    } else if (hourlyWeights) {
+      for (let h = 0; h < 24; h++) {
+        const spotPrice = priceByHour.get(h)
+        if (spotPrice === undefined) continue
+
+        const consumptionKwh = hourlyWeights[h] * scale
+        const grossPrice = endCustomerPrice(spotPrice, surcharges)
+
+        dayCostDynamic += consumptionKwh * grossPrice / 100
+        dayCostFixed += consumptionKwh * fixedPriceCtKwh / 100
+        dayConsumption += consumptionKwh
+        daySpotSum += spotPrice
+        dayEndPriceSum += grossPrice
+        dayHours++
+
+        const isPeak = isWeekday && h >= 8 && h < 20
+        if (isPeak) {
+          peakCost += consumptionKwh * grossPrice / 100
+          peakKwh += consumptionKwh
+          peakSpotSum += spotPrice
+          peakHrs++
+        } else {
+          offPeakCost += consumptionKwh * grossPrice / 100
+          offPeakKwh += consumptionKwh
+          offPeakSpotSum += spotPrice
+          offPeakHrs++
+        }
       }
     }
 
@@ -210,7 +247,7 @@ export function calculateYearlyCost(
       avgSpotCtKwh: dayHours > 0 ? daySpotSum / dayHours : 0,
       avgEndPriceCtKwh: dayConsumption > 0 ? (dayCostDynamic / dayConsumption) * 100 : 0,
       hoursWithData: dayHours,
-      hoursTotal: 24,
+      hoursTotal: isQuarterHourly ? 96 : 24,
       peakDynamicCostEur: peakCost,
       peakConsumptionKwh: peakKwh,
       peakSpotSum,
