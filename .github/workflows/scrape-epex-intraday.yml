@@ -20,6 +20,8 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -82,3 +84,47 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
         continue-on-error: true
+
+      - name: Refresh static DE intraday fallback
+        if: ${{ inputs.area == '' || inputs.area == 'DE' }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            node scripts/scrape-epex-intraday.mjs --area DE --date ${{ inputs.date }} --static
+          else
+            node scripts/scrape-epex-intraday.mjs --area DE --days 2 --static
+          fi
+        continue-on-error: true
+
+      - name: Refresh static NL intraday fallback
+        if: ${{ inputs.area == '' || inputs.area == 'NL' }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            node scripts/scrape-epex-intraday.mjs --area NL --date ${{ inputs.date }} --static
+          else
+            node scripts/scrape-epex-intraday.mjs --area NL --days 2 --static
+          fi
+        continue-on-error: true
+
+      - name: Refresh static GB intraday fallback
+        if: ${{ inputs.area == '' || inputs.area == 'GB' }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            node scripts/scrape-epex-intraday.mjs --area GB --date ${{ inputs.date }} --static
+          else
+            node scripts/scrape-epex-intraday.mjs --area GB --days 2 --static
+          fi
+        continue-on-error: true
+
+      - name: Check for static intraday changes
+        id: static_changes
+        run: |
+          git diff --quiet public/data/de-intraday-continuous.json public/data/nl-intraday-continuous.json public/data/gb-intraday-continuous.json || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Commit and push static intraday updates
+        if: steps.static_changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add public/data/de-intraday-continuous.json public/data/nl-intraday-continuous.json public/data/gb-intraday-continuous.json
+          git commit -m "chore: update static intraday fallbacks $(date -u '+%Y-%m-%d')"
+          git push

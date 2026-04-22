@@ -79,8 +79,6 @@ interface Props {
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, gbAuction = 'daa1', setGbAuction, onExportReady }: Props) {
   const isGb = country === 'GB'
-  const isGbDaa2 = isGb && gbAuction === 'daa2'
-  const selectedGbAuction = GB_DAY_AHEAD_OPTIONS.find(option => option.value === gbAuction) ?? GB_DAY_AHEAD_OPTIONS[0]
   const units = getPriceUnits(country)
   const intradaySeriesLabel = country === 'GB' ? 'RPD HH' : 'ID3'
   const intradaySeriesDescription = country === 'GB'
@@ -192,12 +190,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
       prices.setSelectedDate(sortedDates[sortedDates.length - 1])
     }
   }, [prices.selectedDate, prices.setSelectedDate, sortedDates])
-
-  useEffect(() => {
-    if (isGbDaa2 && resolution !== 'quarterhour') {
-      setResolution('quarterhour')
-    }
-  }, [isGbDaa2, resolution])
 
   const date1 = prices.selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
@@ -2206,7 +2198,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                           onClick={() => {
                             if (prices.loading || isActive) return
                             setGbAuction?.(option.value)
-                            if (option.value === 'daa2') setResolution('quarterhour')
+                            setResolution(option.value === 'daa2' ? 'quarterhour' : 'hour')
                           }}
                           disabled={prices.loading}
                           title={option.label}
@@ -2314,8 +2306,7 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 {/* Forecast pill removed — forecast is auto-shown and labeled in the legend below */}
                 <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
                   <button onClick={() => setResolution('hour')}
-                    disabled={isGbDaa2}
-                    title={isGbDaa2 ? `${selectedGbAuction.shortLabel} is shown in ${subhourLabel}` : '60 min resolution'}
+                    title="60 min resolution"
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     60 min
                   </button>
