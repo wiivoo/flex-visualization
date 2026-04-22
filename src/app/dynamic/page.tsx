@@ -17,6 +17,7 @@ import {
 import { getDayType, LOAD_PROFILES, type LoadProfile } from '@/lib/slp-h25'
 import { DynamicDailySavings } from '@/components/dynamic/DynamicDailySavings'
 import { MonthlyPriceTrend } from '@/components/dynamic/MonthlyPriceTrend'
+import { DE_TARIFFS, getTariff } from '@/lib/retail-tariffs'
 
 export default function DynamicPage() {
   return <Suspense><DynamicInner /></Suspense>
@@ -36,6 +37,14 @@ const SURCHARGE_FIELDS: { key: keyof Surcharges; label: string; fixed?: boolean 
 function DynamicInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const initialSupplierParam = searchParams.get('supplier') || 'tibber-de'
+  const initialDynamicTariff = getTariff(initialSupplierParam, 'DE') ?? DE_TARIFFS[0]
+  const initialDynamicFeeType = initialSupplierParam === 'custom-de'
+    ? (searchParams.get('dyn_fee_model') === 'margin' ? 'margin' : 'monthly')
+    : initialDynamicTariff.supplierFeeModel
+  const initialDynamicMonthlyFee = searchParams.get('dyn_fee')
+  const initialDynamicMargin = searchParams.get('dyn_margin')
+  const initialResolutionParam = searchParams.get('resolution')
 
   // State from URL or defaults
   const [yearlyKwh, setYearlyKwh] = useState(() => {
@@ -50,21 +59,39 @@ function DynamicInner() {
     const v = Number(searchParams.get('year'))
     return v >= 2020 ? v : 2025
   })
-  const [surcharges, setSurcharges] = useState<Surcharges>(() => surchargesForYear(Number(searchParams.get('year')) >= 2020 ? Number(searchParams.get('year')) : 2025))
+  const [surcharges, setSurcharges] = useState<Surcharges>(() => ({
+    ...surchargesForYear(Number(searchParams.get('year')) >= 2020 ? Number(searchParams.get('year')) : 2025),
+    margin: initialDynamicFeeType === 'margin'
+      ? (initialDynamicMargin !== null ? Number(initialDynamicMargin) : initialDynamicTariff.supplierMarginCtKwh)
+      : 0,
+  }))
   const [showSurcharges, setShowSurcharges] = useState(false)
   const [plz, setPlz] = useState(() => searchParams.get('plz') || '')
   const [plzLocation, setPlzLocation] = useState('')
   const [loadedPlz, setLoadedPlz] = useState('')
   const [plzSupplier, setPlzSupplier] = useState('')
   const [competitors, setCompetitors] = useState<{ name: string; type: string; ctKwh: number; standingChargeEur: number; yearlyTotalEur: number }[]>([])
-  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
+  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>(() => {
+    if (initialResolutionParam === 'hour' || initialResolutionParam === 'quarterhour') return initialResolutionParam
+    return initialDynamicTariff.intervalMinutes === 15 ? 'quarterhour' : 'hour'
+  })
   const [showRenewable, setShowRenewable] = useState(false)
   const [standingCharge, setStandingCharge] = useState(() => {
     const raw = searchParams.get('grundpreis')
     return raw !== null ? Number(raw) : 120
   })
-  const [dynamicFeeType, setDynamicFeeType] = useState<'margin' | 'monthly'>('monthly')
-  const [dynamicMonthlyFee, setDynamicMonthlyFee] = useState(5.99) // EUR/mo (e.g. Tibber)
+  const [dynamicFeeType, setDynamicFeeType] = useState<'margin' | 'monthly'>(initialDynamicFeeType)
+  const [dynamicMonthlyFee, setDynamicMonthlyFee] = useState(() => {
+    if (initialDynamicMonthlyFee !== null) return Number(initialDynamicMonthlyFee)
+    return initialDynamicTariff.supplierMonthlyFeeEur
+  })
+  const [dynamicBaseMonthlyFee, setDynamicBaseMonthlyFee] = useState(() => {
+    const raw = searchParams.get('dyn_base')
+    return raw !== null ? Number(raw) : initialDynamicTariff.fixedMonthlyGrossEur
+  })
+  const [selectedDynamicTariffId, setSelectedDynamicTariffId] = useState(
+    initialSupplierParam === 'custom-de' ? 'custom-de' : initialDynamicTariff.id
+  )
   const [showCheaperBand, setShowCheaperBand] = useState(true)
   const [showExpensiveBand, setShowExpensiveBand] = useState(true)
   const [showMonthlyTable, setShowMonthlyTable] = useState(false)
@@ -84,6 +111,9 @@ function DynamicInner() {
   const prices = usePrices('DE')
   const { selectedDate, setSelectedDate } = prices
   const isQH = resolution === 'quarterhour'
+  const calculationPrices = useMemo(() => (
+    isQH && prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+  ), [isQH, prices.hourlyQH, prices.hourly])
 
   // Effective surcharges: when using monthly fee, set margin to 0
   const effectiveSurcharges = useMemo(() => {
@@ -92,16 +122,31 @@ function DynamicInner() {
   }, [surcharges, dynamicFeeType])
   // Monthly fee for dynamic tariff (added to dynamic cost when in monthly mode)
   const dynamicMonthlyFeeActive = dynamicFeeType === 'monthly' ? dynamicMonthlyFee : 0
+  const dynamicMonthlyFixedTotal = dynamicMonthlyFeeActive + dynamicBaseMonthlyFee
+
+  const applyDynamicTariffPreset = useCallback((tariffId: string) => {
+    const tariff = getTariff(tariffId, 'DE')
+    if (!tariff) return
+    setSelectedDynamicTariffId(tariff.id)
+    setDynamicFeeType(tariff.supplierFeeModel)
+    setDynamicMonthlyFee(tariff.supplierMonthlyFeeEur)
+    setDynamicBaseMonthlyFee(tariff.fixedMonthlyGrossEur)
+    setResolution(tariff.intervalMinutes === 15 ? 'quarterhour' : 'hour')
+    setSurcharges((current) => ({
+      ...current,
+      margin: tariff.supplierFeeModel === 'margin' ? tariff.supplierMarginCtKwh : 0,
+    }))
+  }, [])
 
   // Available years from price data
   const availableYears = useMemo(() => {
     const years = new Set<number>()
-    for (const p of prices.hourly) {
+    for (const p of calculationPrices) {
       const y = parseInt(p.date.slice(0, 4))
       if (y >= 2020) years.add(y)
     }
     return [...years].sort((a, b) => b - a)
-  }, [prices.hourly])
+  }, [calculationPrices])
   const effectiveSelectedYear = availableYears.length > 0 && !availableYears.includes(selectedYear)
     ? availableYears[0]
     : selectedYear
@@ -144,7 +189,7 @@ function DynamicInner() {
     return () => {
       cancelled = true
     }
-  }, [plz]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [plz])
 
   const showPlzLookup = /^\d{5}$/.test(plz)
   const hasCurrentPlzData = showPlzLookup && loadedPlz === plz
@@ -173,21 +218,21 @@ function DynamicInner() {
 
   // Yearly cost calculation
   const yearlyResult = useMemo(() => {
-    if (prices.hourly.length === 0) return null
-    return calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, effectiveSelectedYear, loadProfile)
-  }, [yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, effectiveSelectedYear, loadProfile])
+    if (calculationPrices.length === 0) return null
+    return calculateYearlyCost(yearlyKwh, calculationPrices, effectiveSurcharges, fixedPrice, effectiveSelectedYear, loadProfile, isQH)
+  }, [yearlyKwh, calculationPrices, effectiveSurcharges, fixedPrice, effectiveSelectedYear, loadProfile, isQH])
 
   // All daily breakdowns across all years
   const allDailyBreakdownFull = useMemo(() => {
-    if (prices.hourly.length === 0) return []
+    if (calculationPrices.length === 0) return []
     const all: import('@/lib/dynamic-tariff').DailyResult[] = []
     for (const y of availableYears) {
-      const result = calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y, loadProfile)
+      const result = calculateYearlyCost(yearlyKwh, calculationPrices, effectiveSurcharges, fixedPrice, y, loadProfile, isQH)
       all.push(...result.dailyBreakdown)
     }
     all.sort((a, b) => a.date.localeCompare(b.date))
     return all
-  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile])
+  }, [calculationPrices, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile, isQH])
 
   // 365 days ending at selected date — for heatmap
   const allDailyBreakdown = useMemo(() => {
@@ -201,10 +246,10 @@ function DynamicInner() {
     const m = new Map<string, number>()
     for (const d of allDailyBreakdownFull) {
       const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-      m.set(d.date, d.fixedCostEur + standingCharge / 12 / daysInMo - d.dynamicCostEur - dynamicMonthlyFeeActive / daysInMo)
+      m.set(d.date, d.fixedCostEur + standingCharge / 12 / daysInMo - d.dynamicCostEur - dynamicMonthlyFixedTotal / daysInMo)
     }
     return m
-  }, [allDailyBreakdownFull, standingCharge, dynamicMonthlyFeeActive])
+  }, [allDailyBreakdownFull, standingCharge, dynamicMonthlyFixedTotal])
 
   const dateStripColorFn = useCallback((date: string): string => {
     const savings = dateSavingsMap.get(date)
@@ -279,7 +324,7 @@ function DynamicInner() {
       parseInt(prices.selectedDate.slice(5, 7)), 0
     ).getDate() : 30
     // Dynamic cost includes monthly fee pro-rated per day
-    const dynamicCost = dynamicCostEnergy + dynamicMonthlyFeeActive / daysInMonth
+    const dynamicCost = dynamicCostEnergy + dynamicMonthlyFixedTotal / daysInMonth
     const fixedCost = totalConsumption * fixedPrice / 100 + standingCharge / 12 / daysInMonth
     const dayType = getDayType(prices.selectedDate)
     const expectedSlots = isQH ? 96 : 24
@@ -293,7 +338,7 @@ function DynamicInner() {
       slotsAvailable: dailyChartData.length,
       slotsExpected: expectedSlots,
     }
-  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH, standingCharge, dynamicMonthlyFeeActive])
+  }, [dailyChartData, fixedPrice, prices.selectedDate, isQH, standingCharge, dynamicMonthlyFixedTotal])
 
   // Monthly chart data — rolling 12 months ending at selected date
   const monthlyChartData = useMemo(() => {
@@ -332,7 +377,7 @@ function DynamicInner() {
     return months.filter(m => monthMap.has(m)).map(m => {
       const d = monthMap.get(m)!
       const fixedWithStanding = d.fixed + standingCharge / 12
-      const dynamicWithFee = d.dynamic + dynamicMonthlyFeeActive
+      const dynamicWithFee = d.dynamic + dynamicMonthlyFixedTotal
       const savings = fixedWithStanding - dynamicWithFee
       runSum += savings
       const mNum = parseInt(m.slice(5, 7))
@@ -353,23 +398,23 @@ function DynamicInner() {
         consumptionKwh: d.consumption,
       }
     })
-  }, [allDailyBreakdown, prices.selectedDate, standingCharge, dynamicMonthlyFeeActive])
+  }, [allDailyBreakdown, prices.selectedDate, standingCharge, dynamicMonthlyFixedTotal])
 
   // Yearly savings per available year (for yearly bar chart)
   const yearlySavingsData = useMemo(() => {
-    if (prices.hourly.length === 0) return []
+    if (calculationPrices.length === 0) return []
     return availableYears.map(y => {
-      const result = calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, y, loadProfile)
+      const result = calculateYearlyCost(yearlyKwh, calculationPrices, effectiveSurcharges, fixedPrice, y, loadProfile, isQH)
       // Add standing charge: pro-rate by months with data
       const monthsWithData = result.monthlyBreakdown.length
       const standingTotal = standingCharge / 12 * monthsWithData
-      const dynamicFeeTotal = dynamicMonthlyFeeActive * monthsWithData
+      const dynamicFeeTotal = dynamicMonthlyFixedTotal * monthsWithData
       let cheaperDays = 0
       let expensiveDays = 0
       for (const d of result.dailyBreakdown) {
         const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
         const dayFixed = d.fixedCostEur + standingCharge / 12 / daysInMo
-        const dayDynamic = d.dynamicCostEur + dynamicMonthlyFeeActive / daysInMo
+        const dayDynamic = d.dynamicCostEur + dynamicMonthlyFixedTotal / daysInMo
         if (dayDynamic < dayFixed) cheaperDays++
         else expensiveDays++
       }
@@ -385,7 +430,7 @@ function DynamicInner() {
         expensiveDays,
       }
     }).sort((a, b) => a.year - b.year)
-  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile, standingCharge, dynamicMonthlyFeeActive])
+  }, [calculationPrices, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile, standingCharge, dynamicMonthlyFixedTotal, isQH])
 
   // URL sync
   useEffect(() => {
@@ -393,11 +438,19 @@ function DynamicInner() {
     p.set('kwh', String(yearlyKwh))
     p.set('fixed', String(fixedPrice))
     p.set('year', String(effectiveSelectedYear))
+    if (selectedDynamicTariffId !== 'tibber-de') p.set('supplier', selectedDynamicTariffId)
     if (prices.selectedDate) p.set('date', prices.selectedDate)
     if (plz.length === 5) p.set('plz', plz)
     if (standingCharge > 0) p.set('grundpreis', String(standingCharge))
+    if (dynamicBaseMonthlyFee > 0) p.set('dyn_base', String(dynamicBaseMonthlyFee))
+    if (selectedDynamicTariffId === 'custom-de') {
+      p.set('dyn_fee_model', dynamicFeeType)
+      if (dynamicFeeType === 'monthly' && dynamicMonthlyFee > 0) p.set('dyn_fee', String(dynamicMonthlyFee))
+      if (dynamicFeeType === 'margin' && surcharges.margin > 0) p.set('dyn_margin', String(surcharges.margin))
+      if (resolution !== 'hour') p.set('resolution', resolution)
+    }
     router.replace(`/dynamic?${p.toString()}`, { scroll: false })
-  }, [yearlyKwh, fixedPrice, effectiveSelectedYear, prices.selectedDate, plz, standingCharge]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearlyKwh, fixedPrice, effectiveSelectedYear, selectedDynamicTariffId, prices.selectedDate, plz, standingCharge, dynamicBaseMonthlyFee, dynamicFeeType, dynamicMonthlyFee, surcharges.margin, resolution]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const surchargesTotal = totalSurchargesNetto(effectiveSurcharges)
   const bruttoSurcharges = surchargesTotal * (1 + VAT_RATE / 100)
@@ -659,17 +712,43 @@ function DynamicInner() {
                 {/* ── Dynamic tariff ── */}
                 <div className="space-y-2 pt-3 border-t border-gray-200">
                   <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider">Dynamic Tariff</p>
-                  <p className="text-[9px] text-gray-400">EPEX Spot + surcharges + supplier fee</p>
+                  <p className="text-[9px] text-gray-400">Same EPEX market curve underneath. Presets mainly change interval granularity and the supplier fee wrapper.</p>
+                  <div className="flex flex-col gap-1">
+                    {DE_TARIFFS.map((tariff) => {
+                      const isActive = selectedDynamicTariffId === tariff.id
+                      return (
+                        <button
+                          key={tariff.id}
+                          onClick={() => applyDynamicTariffPreset(tariff.id)}
+                          className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
+                            isActive
+                              ? 'bg-blue-50 border-blue-300 text-[#313131]'
+                              : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                          }`}
+                        >
+                          <span className="font-semibold">{tariff.label}</span>
+                          <span className="text-gray-400 ml-1">
+                            {tariff.intervalMinutes === 15 ? '(15 min retail)' : '(hourly retail)'}
+                          </span>
+                          <span className="float-right tabular-nums font-medium">
+                            {tariff.supplierFeeModel === 'margin'
+                              ? `+${tariff.supplierMarginCtKwh.toFixed(2)} ct`
+                              : `${tariff.supplierMonthlyFeeEur.toFixed(2)} EUR/mo`}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
                   {/* Supplier fee type toggle */}
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
                     <button
-                      onClick={() => setDynamicFeeType('monthly')}
+                      onClick={() => { setDynamicFeeType('monthly'); setSelectedDynamicTariffId('custom-de') }}
                       className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'monthly' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                     >
-                      Monthly fee
+                      Supplier fee
                     </button>
                     <button
-                      onClick={() => setDynamicFeeType('margin')}
+                      onClick={() => { setDynamicFeeType('margin'); setSelectedDynamicTariffId('custom-de') }}
                       className={`flex-1 text-[10px] font-semibold px-2 py-1 rounded-full transition-colors ${dynamicFeeType === 'margin' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
                     >
                       Margin ct/kWh
@@ -687,7 +766,7 @@ function DynamicInner() {
                         max={15}
                         step={0.01}
                         value={dynamicMonthlyFee}
-                        onChange={e => setDynamicMonthlyFee(Number(e.target.value))}
+                        onChange={e => { setDynamicMonthlyFee(Number(e.target.value)); setSelectedDynamicTariffId('custom-de') }}
                         className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                       />
                       <p className="text-[9px] text-gray-400">Flat fee (e.g. Tibber 5.99 EUR/mo) · no per-kWh margin</p>
@@ -704,12 +783,31 @@ function DynamicInner() {
                         max={5}
                         step={0.1}
                         value={surcharges.margin}
-                        onChange={e => setSurcharges(s => ({ ...s, margin: Number(e.target.value) }))}
+                        onChange={e => {
+                          setSurcharges(s => ({ ...s, margin: Number(e.target.value) }))
+                          setSelectedDynamicTariffId('custom-de')
+                        }}
                         className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
                       />
                       <p className="text-[9px] text-gray-400">Added per kWh on top of spot + surcharges, before VAT</p>
                     </div>
                   )}
+                  <div className="space-y-1 pt-2 border-t border-gray-100">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-gray-500">Dynamic base charge</span>
+                      <span className="text-sm font-bold tabular-nums text-[#313131]">{dynamicBaseMonthlyFee.toFixed(2)} EUR/mo</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={30}
+                      step={0.01}
+                      value={dynamicBaseMonthlyFee}
+                      onChange={e => { setDynamicBaseMonthlyFee(Number(e.target.value)); setSelectedDynamicTariffId('custom-de') }}
+                      className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer accent-blue-500 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-[#313131] [&::-moz-range-thumb]:border-0"
+                    />
+                    <p className="text-[9px] text-gray-400">Use this for supplier-specific monthly Grundpreis and meter/base charges. EnviaM Vision preset uses 19.73 EUR/mo gross.</p>
+                  </div>
                 </div>
 
                 {/* ── Surcharges (apply to both) ── */}
@@ -1327,7 +1425,7 @@ function DynamicInner() {
                       {/* Dynamic tariff panel */}
                       <div className="bg-blue-50/60 rounded-lg p-3 border border-blue-100/80">
                         <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-2.5">
-                          Dynamic Tariff · SLP {loadProfile}
+                          Dynamic Tariff · {getTariff(selectedDynamicTariffId, 'DE')?.label ?? 'Custom DE'} · SLP {loadProfile}
                         </p>
                         <div className="space-y-1.5">
                           <div className="flex justify-between text-[12px] leading-snug">
@@ -1338,15 +1436,15 @@ function DynamicInner() {
                             <span className="text-gray-500">Consumption</span>
                             <span className="tabular-nums font-medium text-gray-600">{selectedDayTotals.consumptionKwh.toFixed(2)} kWh</span>
                           </div>
-                          {dynamicMonthlyFeeActive > 0 && (() => {
+                          {dynamicMonthlyFixedTotal > 0 && (() => {
                             const daysInMo = prices.selectedDate ? new Date(
                               parseInt(prices.selectedDate.slice(0, 4)),
                               parseInt(prices.selectedDate.slice(5, 7)), 0
                             ).getDate() : 30
                             return (
                               <div className="flex justify-between text-[12px] leading-snug">
-                                <span className="text-gray-500">Monthly fee</span>
-                                <span className="tabular-nums font-medium text-gray-600">{fmtEur(dynamicMonthlyFeeActive / daysInMo)} EUR/day</span>
+                                <span className="text-gray-500">Monthly fixed charges</span>
+                                <span className="tabular-nums font-medium text-gray-600">{fmtEur(dynamicMonthlyFixedTotal / daysInMo)} EUR/day</span>
                               </div>
                             )
                           })()}
@@ -1393,10 +1491,10 @@ function DynamicInner() {
         {allDailyBreakdown.length > 0 && (
           <div className="mt-4">
             <DynamicDailySavings
-              dailyBreakdown={(standingCharge > 0 || dynamicMonthlyFeeActive > 0)
+              dailyBreakdown={(standingCharge > 0 || dynamicMonthlyFixedTotal > 0)
                 ? allDailyBreakdown.map(d => {
                     const daysInMo = new Date(parseInt(d.date.slice(0, 4)), parseInt(d.date.slice(5, 7)), 0).getDate()
-                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / 12 / daysInMo, dynamicCostEur: d.dynamicCostEur + dynamicMonthlyFeeActive / daysInMo }
+                    return { ...d, fixedCostEur: d.fixedCostEur + standingCharge / 12 / daysInMo, dynamicCostEur: d.dynamicCostEur + dynamicMonthlyFixedTotal / daysInMo }
                   })
                 : allDailyBreakdown}
               selectedDate={prices.selectedDate}
@@ -1542,7 +1640,7 @@ function DynamicInner() {
               <CardHeader className="pb-3 border-b border-gray-100">
                 <CardTitle className="text-base font-bold text-[#313131]">Yearly Savings</CardTitle>
                 <p className="text-[11px] text-gray-500 mt-1">
-                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed{standingCharge > 0 ? ` + ${standingCharge} EUR/yr` : ''}
+                  {yearlyKwh.toLocaleString()} kWh/yr · dynamic vs. {fixedPrice} ct/kWh fixed{standingCharge > 0 ? ` + ${standingCharge} EUR/yr` : ''}{dynamicMonthlyFixedTotal > 0 ? ` · dynamic fixed ${dynamicMonthlyFixedTotal.toFixed(2)} EUR/mo` : ''}
                 </p>
               </CardHeader>
               <CardContent className="pt-4 flex-1 flex flex-col justify-center space-y-3">

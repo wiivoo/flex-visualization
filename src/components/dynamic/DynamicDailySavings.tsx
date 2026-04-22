@@ -171,6 +171,7 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
 
   const displayDate = hoveredDate ?? previewDate ?? selectedDate
   const displayEntry = dayMap.get(displayDate) ?? null
+  const dataPointUnit = displayEntry?.hoursTotal === 96 ? 'slots' : 'h'
 
   return (
     <Card className="shadow-sm border-gray-200/80">
@@ -297,7 +298,7 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
                                     <p className="text-[9px] text-gray-400 pt-0.5">
                                       {entry.consumptionKwh.toFixed(2)} kWh · Spot avg: {entry.avgSpotCtKwh.toFixed(2)} ct
                                       {entry.hoursWithData < entry.hoursTotal && (
-                                        <span className="text-amber-500 ml-1">· {entry.hoursWithData}/{entry.hoursTotal}h</span>
+                                        <span className="text-amber-500 ml-1">· {entry.hoursWithData}/{entry.hoursTotal}{dataPointUnit}</span>
                                       )}
                                     </p>
                                   </div>
