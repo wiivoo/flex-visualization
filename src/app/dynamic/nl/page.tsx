@@ -84,6 +84,7 @@ function NlDynamicInner() {
   const [loadProfile, setLoadProfile] = useState<NlLoadProfile>('E1A')
 
   const prices = usePrices('NL')
+  const { selectedDate, setSelectedDate } = prices
   const isQH = resolution === 'quarterhour'
 
   // Effective surcharges
@@ -361,17 +362,23 @@ function NlDynamicInner() {
   // Edge-scroll
   const sortedDates = useMemo(() => prices.daily.map(d => d.date), [prices.daily])
   const sortedDatesRef = useRef(sortedDates)
-  sortedDatesRef.current = sortedDates
-  const selectedDateRef = useRef(prices.selectedDate)
-  selectedDateRef.current = prices.selectedDate
+  const selectedDateRef = useRef(selectedDate)
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    sortedDatesRef.current = sortedDates
+  }, [sortedDates])
+
+  useEffect(() => {
+    selectedDateRef.current = selectedDate
+  }, [selectedDate])
 
   const startEdgeScroll = useCallback((dir: -1 | 1) => {
     const step = () => {
       const idx = sortedDatesRef.current.indexOf(selectedDateRef.current)
       if (idx < 0) return
       const next = sortedDatesRef.current[idx + dir]
-      if (next) prices.setSelectedDate(next)
+      if (next) setSelectedDate(next)
     }
     step()
     let speed = 400
@@ -381,7 +388,7 @@ function NlDynamicInner() {
       scrollTimerRef.current = setTimeout(tick, speed)
     }
     scrollTimerRef.current = setTimeout(tick, speed)
-  }, [prices.setSelectedDate])
+  }, [setSelectedDate])
 
   const stopEdgeScroll = useCallback(() => {
     if (scrollTimerRef.current) { clearTimeout(scrollTimerRef.current); scrollTimerRef.current = null }

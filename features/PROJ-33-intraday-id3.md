@@ -1,6 +1,6 @@
 # PROJ-33: Intraday ID3 Price Overlay
 
-**Status:** Deployed
+## Status: Deployed
 **Priority:** Medium
 
 ## Summary

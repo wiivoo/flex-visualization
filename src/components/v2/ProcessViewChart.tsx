@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { useMemo } from 'react'
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -15,13 +16,11 @@ const CHART_MARGIN = { top: 42, right: 30, bottom: 25, left: 20 }
 // Accepts the SAME chartData the main chart uses, plus process view extras
 interface Props {
   /** Main chart's processed data array — guarantees identical axes */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mainChartData: any[]
+  mainChartData: MainChartDatum[]
   /** X axis ticks from main chart */
   xTicks: number[]
   /** X axis tick renderer from main chart */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  renderXTick: any
+  renderXTick: (props: { x: number; y: number; payload: { value: number } }) => ReactNode
   /** Y axis domain from main chart */
   priceRange: { min: number; max: number }
   /** Midnight boundary indices */
@@ -44,6 +43,21 @@ interface Props {
   /** Optimized slot indices (cheapest hours) */
   optimizedRanges: { x1: number; x2: number }[]
   country?: Country
+}
+
+interface MainChartDatum {
+  idx: number
+  date: string
+  hour: number
+  label?: string
+  price?: number | null
+  priceVal?: number | null
+  baselinePrice?: number | null
+  optimizedPrice?: number | null
+  isProjected?: boolean
+  pvForecastPrice?: number | null
+  pvConfidenceBand?: [number, number]
+  pvForecastLockedPrice?: number | null
 }
 
 export const ProcessViewChart = ({
@@ -203,7 +217,7 @@ export const ProcessViewChart = ({
 
       return { ...d, ...extra }
     })
-  }, [mainChartData, forecastPrices, bandWidth, currentStage, forecastCheapestSet, perfectCheapestSet])
+  }, [mainChartData, forecastPrices, bandWidth, currentStage, forecastCheapestSet, perfectCheapestSet, perturbedBaselineSet])
 
   if (N === 0) {
     return (

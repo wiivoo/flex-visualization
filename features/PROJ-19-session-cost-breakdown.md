@@ -1,6 +1,6 @@
 # PROJ-19: Session Cost Breakdown
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 1440–1539)
 
 ## Description

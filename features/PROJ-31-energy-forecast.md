@@ -1,6 +1,6 @@
 # PROJ-31: EnergyForecast.de Integration
 
-**Status:** Deployed
+## Status: Deployed
 **Priority:** Medium
 
 ## Summary

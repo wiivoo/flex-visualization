@@ -1,6 +1,6 @@
 # PROJ-1: Electricity Price Data Integration (SMARD + CSV)
 
-## Status: In Progress
+## Status: Deployed
 **Created:** 2025-02-21
 **Last Updated:** 2025-02-21
 

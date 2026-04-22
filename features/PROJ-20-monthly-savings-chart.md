@@ -1,6 +1,6 @@
 # PROJ-20: Monthly Savings Chart
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 1541–1670)
 
 ## Description

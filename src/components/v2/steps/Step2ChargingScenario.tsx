@@ -79,6 +79,8 @@ interface Props {
 /* ────── Main Component ────── */
 export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, gbAuction = 'daa1', setGbAuction, onExportReady }: Props) {
   const isGb = country === 'GB'
+  const isGbDaa2 = isGb && gbAuction === 'daa2'
+  const selectedGbAuction = GB_DAY_AHEAD_OPTIONS.find(option => option.value === gbAuction) ?? GB_DAY_AHEAD_OPTIONS[0]
   const units = getPriceUnits(country)
   const intradaySeriesLabel = country === 'GB' ? 'RPD HH' : 'ID3'
   const intradaySeriesDescription = country === 'GB'
@@ -115,7 +117,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | 'fleetArrival' | 'fleetDeparture' | null>(null)
   const [costDetailMode, setCostDetailMode] = useState<string | null>(null)
-  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('hour')
+  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>(() => (
+    country === 'GB' && gbAuction === 'daa2' ? 'quarterhour' : 'hour'
+  ))
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
   const [showRenewable, setShowRenewable] = useState(false)
   const [showIntraday, setShowIntraday] = useState(false)
@@ -189,6 +193,12 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     }
   }, [prices.selectedDate, prices.setSelectedDate, sortedDates])
 
+  useEffect(() => {
+    if (isGbDaa2 && resolution !== 'quarterhour') {
+      setResolution('quarterhour')
+    }
+  }, [isGbDaa2, resolution])
+
   const date1 = prices.selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
   const date3 = date2 ? nextDayStr(date2) : ''
@@ -248,6 +258,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
     () => isGb ? prices.hourlyQH.filter(p => ((p.minute ?? 0) % 30) === 0) : prices.hourlyQH,
     [isGb, prices.hourlyQH],
   )
+  const isSubhourUnavailable = isGb
+    ? !prices.loading && subhourPrices.length === 0
+    : subhourPrices.length === 0
   const chartPrices = isQH && subhourPrices.length > 0 ? subhourPrices : prices.hourly
   const hasDate3Data = date3 ? chartPrices.some(p => p.date === date3) : false
 
@@ -2184,18 +2197,25 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
               <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto">
                 {/* Data source toggle: DA / DA+ID */}
                 {country === 'GB' && (
-                  <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
-                    <button
-                      onClick={() => {
-                        if (prices.loading) return
-                        setGbAuction?.(gbAuction === 'daa1' ? 'daa2' : 'daa1')
-                      }}
-                      disabled={prices.loading}
-                      title={GB_DAY_AHEAD_OPTIONS.find(option => option.value === gbAuction)?.label ?? 'GB day-ahead auction'}
-                      className="text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors bg-white text-[#313131] shadow-sm disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      {GB_DAY_AHEAD_OPTIONS.find(option => option.value === gbAuction)?.shortLabel ?? 'DAA 1'}
-                    </button>
+                  <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
+                    {GB_DAY_AHEAD_OPTIONS.map(option => {
+                      const isActive = gbAuction === option.value
+                      return (
+                        <button
+                          key={option.value}
+                          onClick={() => {
+                            if (prices.loading || isActive) return
+                            setGbAuction?.(option.value)
+                            if (option.value === 'daa2') setResolution('quarterhour')
+                          }}
+                          disabled={prices.loading}
+                          title={option.label}
+                          className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isActive ? 'bg-white text-[#313131] shadow-sm ring-1 ring-gray-200' : 'text-gray-500 hover:text-gray-700'}`}
+                        >
+                          <span>{option.shortLabel}</span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
                 {hasIntraday && (
@@ -2294,12 +2314,14 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                 {/* Forecast pill removed — forecast is auto-shown and labeled in the legend below */}
                 <div className="flex items-center gap-1.5 bg-gray-100 rounded-full p-0.5">
                   <button onClick={() => setResolution('hour')}
+                    disabled={isGbDaa2}
+                    title={isGbDaa2 ? `${selectedGbAuction.shortLabel} is shown in ${subhourLabel}` : '60 min resolution'}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'hour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
                     60 min
                   </button>
                   <button onClick={() => setResolution('quarterhour')}
-                    disabled={subhourPrices.length === 0}
-                    title={subhourPrices.length === 0 ? `No ${subhourLabel} data available` : isQHSynthesized ? (isGb ? 'Showing duplicated hourly / half-hour values for the selected GB product' : 'Showing hourly avg × 4 — SMARD 15-min data not yet published for this day') : `${subhourLabel} resolution`}
+                    disabled={isSubhourUnavailable}
+                    title={isSubhourUnavailable ? `No ${subhourLabel} data available` : isQHSynthesized ? (isGb ? 'Showing duplicated hourly / half-hour values for the selected GB product' : 'Showing hourly avg × 4 — SMARD 15-min data not yet published for this day') : `${subhourLabel} resolution`}
                     className={`text-[11px] font-semibold px-2.5 py-1 rounded-full transition-colors ${resolution === 'quarterhour' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
                     {subhourLabel}
                   </button>

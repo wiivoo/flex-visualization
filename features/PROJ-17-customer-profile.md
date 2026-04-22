@@ -1,6 +1,6 @@
 # PROJ-17: Customer Profile Configurator
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines ~640–805)
 
 ## Description

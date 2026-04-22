@@ -38,6 +38,10 @@ export interface BatteryProfiles {
   error: string | null
 }
 
+interface BatteryProfilesState extends BatteryProfiles {
+  requestKey: string
+}
+
 type CacheKey =
   | 'bdew-h0-profile'
   | 'pvgis-de-south-800w'
@@ -133,13 +137,6 @@ export function useBatteryProfiles(
   loadProfileId: BatteryLoadProfileId,
   year: number,
 ): BatteryProfiles {
-  const [state, setState] = useState<BatteryProfiles>({
-    pvProfile: null,
-    loadProfile: null,
-    loading: true,
-    error: null,
-  })
-
   const effectiveLoadProfileId = useMemo(
     () => (
       isLoadProfileValidForCountry(loadProfileId, country)
@@ -149,9 +146,17 @@ export function useBatteryProfiles(
     [country, loadProfileId],
   )
 
+  const requestKey = `${country}:${effectiveLoadProfileId}:${year}`
+  const [state, setState] = useState<BatteryProfilesState>({
+    pvProfile: null,
+    loadProfile: null,
+    loading: true,
+    error: null,
+    requestKey,
+  })
+
   useEffect(() => {
     let cancelled = false
-    setState((s) => ({ ...s, loading: true, error: null }))
 
     const pvKey: CacheKey = country === 'DE' ? 'pvgis-de-south-800w' : 'pvgis-nl-south-800w'
     const loadPromise =
@@ -166,7 +171,7 @@ export function useBatteryProfiles(
     Promise.all([loadPromise, loadProfileJson(pvKey)])
       .then(([loadProfile, pv]) => {
         if (cancelled) return
-        setState({ pvProfile: pv, loadProfile, loading: false, error: null })
+        setState({ pvProfile: pv, loadProfile, loading: false, error: null, requestKey })
       })
       .catch((err) => {
         if (cancelled) return
@@ -175,13 +180,23 @@ export function useBatteryProfiles(
           loadProfile: null,
           loading: false,
           error: String(err?.message ?? err),
+          requestKey,
         })
       })
 
     return () => {
       cancelled = true
     }
-  }, [country, effectiveLoadProfileId, year])
+  }, [country, effectiveLoadProfileId, requestKey, year])
+
+  if (state.requestKey !== requestKey) {
+    return {
+      pvProfile: state.pvProfile,
+      loadProfile: state.loadProfile,
+      loading: true,
+      error: null,
+    }
+  }
 
   return state
 }

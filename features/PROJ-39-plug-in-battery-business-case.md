@@ -1,6 +1,6 @@
 # PROJ-39 — Plug-in Battery Business Case (DE/NL)
 
-**Status:** In Progress
+## Status: In Progress
 **Owner:** Lars
 **Phase:** 8
 **Created:** 2026-04-17

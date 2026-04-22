@@ -1,6 +1,6 @@
 # PROJ-22: Savings Potential Box
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 902–933)
 
 ## Description

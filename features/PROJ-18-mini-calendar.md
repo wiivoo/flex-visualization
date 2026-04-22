@@ -1,6 +1,6 @@
 # PROJ-18: Mini Calendar (Date Picker)
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 67–178)
 
 ## Description

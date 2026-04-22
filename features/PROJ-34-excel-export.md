@@ -1,6 +1,6 @@
 # PROJ-34: Excel Session Export
 
-**Status:** Deployed
+## Status: Deployed
 **Priority:** Medium
 
 ## Summary
@@ -22,7 +22,7 @@ Per-month breakdown: scaled savings, avg daily savings, sessions/month, avg base
 One row per day with: date, day-of-week, weekend flag, window slots, baseline avg, optimized avg, spread, savings, min/max price, cheapest/most expensive hour, and hour-by-hour prices for every slot in the charging window. Sorted recent-first.
 
 ## Technical Details
-- Uses SheetJS (`xlsx` npm package) for browser-side Excel generation
+- Uses `exceljs` for browser-side Excel generation
 - Filtered to last 365 days only (no multi-year data dump)
 - Excludes projected/forecast data
 - Export button only appears when session data is loaded

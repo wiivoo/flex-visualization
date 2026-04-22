@@ -1,6 +1,6 @@
 # PROJ-29: V2G Dual Value Streams (Load Shifting + Arbitrage)
 
-**Status:** Planned
+## Status: In Progress
 **Priority:** High
 **Depends on:** PROJ-2, PROJ-12, PROJ-20
 

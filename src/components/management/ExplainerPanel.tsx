@@ -295,7 +295,7 @@ export const ExplainerPanel: React.FC<ExplainerPanelProps> = ({
             </p>
             <p className="text-[12px] text-muted-foreground mb-2 leading-relaxed">
               Each 15-min slot contributes <span className="font-mono tabular-nums">price × power × 0.25 h</span> to session cost.
-              The red band is what you'd pay by charging immediately at plug-in; the green band is the cheapest contiguous slots inside your plug-in→departure window.
+              The red band is what you&apos;d pay by charging immediately at plug-in; the green band is the cheapest contiguous slots inside your plug-in→departure window.
             </p>
             <div className="overflow-x-auto">
               <table className="text-[11px] tabular-nums font-mono w-full">

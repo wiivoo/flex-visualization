@@ -14,9 +14,9 @@
  * Returns `null` while any dependency is loading / empty / errored so callers
  * can render a placeholder cleanly without defensive guards.
  *
- * The dependency list includes scalar scenario fields only — not the whole
- * scenario object — so unrelated state changes (e.g. tariff id) do not cause
- * a 365-day re-optimization.
+ * The annual result is memoized from the derived annual price series, loaded
+ * profiles, and the current scenario object so React Compiler can preserve the
+ * optimization safely under the repo's lint rules.
  */
 
 import { useMemo } from 'react'
@@ -39,21 +39,21 @@ export function useBatteryYear(
   scenario: BatteryScenario,
   prices: PriceData,
 ): AnnualBatteryResult | null {
+  const pricesToUse = useMemo(() => getAnnualModelPrices(prices), [prices])
   const profileYear = useMemo(() => {
-    const pricesToUse = getAnnualModelPrices(prices)
     const dateLike = pricesToUse[0]?.date ?? prices.selectedDate
     const parsed = Number(dateLike?.slice(0, 4))
     return Number.isFinite(parsed) && parsed > 2000 ? parsed : new Date().getUTCFullYear()
-  }, [prices])
+  }, [pricesToUse, prices.selectedDate])
   const loadProfileId = isLoadProfileValidForCountry(scenario.loadProfileId, scenario.country)
     ? scenario.loadProfileId
     : getDefaultLoadProfileId(scenario.country)
-  const profiles = useBatteryProfiles(scenario.country, loadProfileId, profileYear)
+  const { pvProfile, loadProfile, loading: profilesLoading } = useBatteryProfiles(scenario.country, loadProfileId, profileYear)
 
   return useMemo(() => {
     // Guard 1 — profiles still loading or errored.
-    if (profiles.loading) return null
-    if (!profiles.pvProfile || !profiles.loadProfile) return null
+    if (profilesLoading) return null
+    if (!pvProfile || !loadProfile) return null
 
     // Guard 2 — prices still loading.
     if (prices.loading) return null
@@ -61,25 +61,12 @@ export function useBatteryYear(
     // Guard 3 — no prices to roll up. Prefer QH (96 slots/day); fall back to
     // hourly (24 slots/day). Both are accepted by runBatteryDay via its
     // `slotHours = 24 / N` derivation.
-    const pricesToUse = getAnnualModelPrices(prices)
     if (pricesToUse.length === 0) return null
     return deriveAnnualBatteryResult(
       scenario,
       pricesToUse,
-      profiles.pvProfile,
-      profiles.loadProfile,
+      pvProfile,
+      loadProfile,
     )
-  }, [
-    profiles.pvProfile,
-    profiles.loadProfile,
-    profiles.loading,
-    prices.hourlyQH,
-    prices.hourly,
-    prices.loading,
-    scenario.variantId,
-    scenario.country,
-    scenario.loadProfileId,
-    scenario.annualLoadKwh,
-    scenario.feedInCapKw,
-  ])
+  }, [pvProfile, loadProfile, profilesLoading, prices.loading, pricesToUse, scenario])
 }

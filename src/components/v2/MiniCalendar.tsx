@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useEffect, useCallback } from 'react'
+import { useMemo, useState, useCallback } from 'react'
 import type { DailySummary } from '@/lib/v2-config'
 
 interface MiniCalendarProps {
@@ -29,18 +29,23 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
     }
   }, [daily])
 
-  const [viewMonth, setViewMonth] = useState(() => {
-    if (selectedDate) return selectedDate.slice(0, 7)
-    if (dataRange.lastMonth) return dataRange.lastMonth
+  const selectedMonth = selectedDate ? selectedDate.slice(0, 7) : ''
+  const [viewMonthState, setViewMonthState] = useState(() => {
+    if (selectedMonth) return { month: selectedMonth, syncedSelectedMonth: selectedMonth }
+    if (dataRange.lastMonth) {
+      return { month: dataRange.lastMonth, syncedSelectedMonth: selectedMonth }
+    }
     const now = new Date()
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+    return {
+      month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      syncedSelectedMonth: selectedMonth,
+    }
   })
+  const viewMonth = viewMonthState.syncedSelectedMonth === selectedMonth
+    ? viewMonthState.month
+    : (selectedMonth || viewMonthState.month)
 
   const [showMonthPicker, setShowMonthPicker] = useState(false)
-
-  useEffect(() => {
-    if (selectedDate) setViewMonth(selectedDate.slice(0, 7))
-  }, [selectedDate])
 
   const viewYear = parseInt(viewMonth.slice(0, 4))
   const viewMonthNum = parseInt(viewMonth.slice(5, 7))
@@ -79,8 +84,8 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
     const newMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     if (dataRange.firstMonth && newMonth < dataRange.firstMonth) return
     if (dataRange.lastMonth && newMonth > dataRange.lastMonth) return
-    setViewMonth(newMonth)
-  }, [viewMonth, dataRange])
+    setViewMonthState({ month: newMonth, syncedSelectedMonth: selectedMonth })
+  }, [viewMonth, dataRange, selectedMonth])
 
   function shiftYear(delta: number) {
     const newYear = viewYear + delta
@@ -89,11 +94,11 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
     // Keep same month but clamp to data range
     const newMonth = `${newYear}-${String(viewMonthNum).padStart(2, '0')}`
     if (dataRange.firstMonth && newMonth < dataRange.firstMonth) {
-      setViewMonth(dataRange.firstMonth)
+      setViewMonthState({ month: dataRange.firstMonth, syncedSelectedMonth: selectedMonth })
     } else if (dataRange.lastMonth && newMonth > dataRange.lastMonth) {
-      setViewMonth(dataRange.lastMonth)
+      setViewMonthState({ month: dataRange.lastMonth, syncedSelectedMonth: selectedMonth })
     } else {
-      setViewMonth(newMonth)
+      setViewMonthState({ month: newMonth, syncedSelectedMonth: selectedMonth })
     }
   }
 
@@ -101,7 +106,7 @@ export function MiniCalendar({ daily, selectedDate, onSelect, requireNextDay = t
     const newMonth = `${viewYear}-${String(monthIdx + 1).padStart(2, '0')}`
     if (dataRange.firstMonth && newMonth < dataRange.firstMonth) return
     if (dataRange.lastMonth && newMonth > dataRange.lastMonth) return
-    setViewMonth(newMonth)
+    setViewMonthState({ month: newMonth, syncedSelectedMonth: selectedMonth })
     setShowMonthPicker(false)
   }
 

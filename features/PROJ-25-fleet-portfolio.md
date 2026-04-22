@@ -1,6 +1,6 @@
 # PROJ-25: Fleet Portfolio View
 
-**Status:** Deployed
+## Status: Deployed
 **Created:** 2026-02-26
 **Location:** `src/components/v2/FleetPortfolioCard.tsx`
 

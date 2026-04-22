@@ -171,7 +171,7 @@ export function DailySavingsHeatmap({ dailySavingsMap, selectedDate, onSelect, e
       const idx = bi >= 0 ? bi : (e.ctSav >= savingsBuckets[savingsBuckets.length - 1].min ? savingsBuckets.length - 1 : -1)
       return idx >= 0 && activeBuckets!.has(idx)
     })
-  }, [allEntries, isFiltering, activeBuckets, savingsBuckets])
+  }, [plugInFilteredEntries, isFiltering, activeBuckets, savingsBuckets])
 
   const stats = useMemo(() => {
     if (filtered.length === 0) return { count: 0, avgCt: 0, avgEur: 0, totalEur: 0, avgBAvg: 0, avgOAvg: 0, avgSpread: 0 }

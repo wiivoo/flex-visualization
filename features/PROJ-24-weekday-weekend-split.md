@@ -1,6 +1,6 @@
 # PROJ-24: Weekday/Weekend Charging Split
 
-**Status:** Deployed
+## Status: Deployed
 **Created:** 2026-02-26
 
 ## Description

@@ -15,6 +15,13 @@ interface Props {
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const BUCKETS = [
+  { color: '#86EFAC', test: (s: number) => s > 0.03, label: 'much cheaper' },
+  { color: '#DCFCE7', test: (s: number) => s > 0.01 && s <= 0.03, label: 'slightly cheaper' },
+  { color: '#FEF3C7', test: (s: number) => s > -0.01 && s <= 0.01, label: 'roughly equal' },
+  { color: '#FED7AA', test: (s: number) => s > -0.03 && s <= -0.01, label: 'slightly more' },
+  { color: '#FCA5A5', test: (s: number) => s <= -0.03, label: 'much more' },
+]
 
 function isoWeekday(dateStr: string): number {
   const d = new Date(dateStr + 'T12:00:00Z').getUTCDay()
@@ -78,14 +85,6 @@ export function DynamicDailySavings({ dailyBreakdown, selectedDate, onSelect, ye
 
     return { grid: cells, weeks: totalWeeks, monthLabels: labels, quarterWeeks: qWeeks }
   }, [dayMap, dailyBreakdown.length])
-
-  const BUCKETS = [
-    { color: '#86EFAC', test: (s: number) => s > 0.03, label: 'much cheaper' },
-    { color: '#DCFCE7', test: (s: number) => s > 0.01 && s <= 0.03, label: 'slightly cheaper' },
-    { color: '#FEF3C7', test: (s: number) => s > -0.01 && s <= 0.01, label: 'roughly equal' },
-    { color: '#FED7AA', test: (s: number) => s > -0.03 && s <= -0.01, label: 'slightly more' },
-    { color: '#FCA5A5', test: (s: number) => s <= -0.03, label: 'much more' },
-  ]
 
   const isFiltering = activeBuckets !== null
   const bucketCount = BUCKETS.length

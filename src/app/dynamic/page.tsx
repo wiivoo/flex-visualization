@@ -54,7 +54,7 @@ function DynamicInner() {
   const [showSurcharges, setShowSurcharges] = useState(false)
   const [plz, setPlz] = useState(() => searchParams.get('plz') || '')
   const [plzLocation, setPlzLocation] = useState('')
-  const [plzLoading, setPlzLoading] = useState(false)
+  const [loadedPlz, setLoadedPlz] = useState('')
   const [plzSupplier, setPlzSupplier] = useState('')
   const [competitors, setCompetitors] = useState<{ name: string; type: string; ctKwh: number; standingChargeEur: number; yearlyTotalEur: number }[]>([])
   const [resolution, setResolution] = useState<'hour' | 'quarterhour'>('quarterhour')
@@ -82,6 +82,7 @@ function DynamicInner() {
   }, [loadProfile])
 
   const prices = usePrices('DE')
+  const { selectedDate, setSelectedDate } = prices
   const isQH = resolution === 'quarterhour'
 
   // Effective surcharges: when using monthly fee, set margin to 0
@@ -101,27 +102,21 @@ function DynamicInner() {
     }
     return [...years].sort((a, b) => b - a)
   }, [prices.hourly])
-
-  // Auto-select latest available year
-  useEffect(() => {
-    if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
-      setSelectedYear(availableYears[0])
-    }
-  }, [availableYears, selectedYear])
+  const effectiveSelectedYear = availableYears.length > 0 && !availableYears.includes(selectedYear)
+    ? availableYears[0]
+    : selectedYear
 
   // Fetch regional tariff components when PLZ is entered
   useEffect(() => {
     if (!/^\d{5}$/.test(plz)) {
-      setPlzLocation('')
-      setPlzSupplier('')
-      setCompetitors([])
       return
     }
-    setPlzLoading(true)
+    let cancelled = false
     fetch(`/api/tariff-components?plz=${plz}`)
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (!data) return
+        if (cancelled || !data) return
+        setLoadedPlz(plz)
         setPlzLocation(data.location || '')
         setPlzSupplier(data.defaultSupplier || '')
         setCompetitors(data.competitors || [])
@@ -139,9 +134,24 @@ function DynamicInner() {
           ),
         }))
       })
-      .catch(() => {})
-      .finally(() => setPlzLoading(false))
+      .catch(() => {
+        if (cancelled) return
+        setLoadedPlz(plz)
+        setPlzLocation('')
+        setPlzSupplier('')
+        setCompetitors([])
+      })
+    return () => {
+      cancelled = true
+    }
   }, [plz]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const showPlzLookup = /^\d{5}$/.test(plz)
+  const hasCurrentPlzData = showPlzLookup && loadedPlz === plz
+  const displayPlzLocation = hasCurrentPlzData ? plzLocation : ''
+  const displayPlzSupplier = hasCurrentPlzData ? plzSupplier : ''
+  const displayCompetitors = hasCurrentPlzData ? competitors : []
+  const showPlzLoading = showPlzLookup && !hasCurrentPlzData
 
   // Auto-select today on initial load — fall back to lastRealDate if today has no hourly data
   const initialDateSet = useRef(false)
@@ -164,8 +174,8 @@ function DynamicInner() {
   // Yearly cost calculation
   const yearlyResult = useMemo(() => {
     if (prices.hourly.length === 0) return null
-    return calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, selectedYear, loadProfile)
-  }, [yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, selectedYear, loadProfile])
+    return calculateYearlyCost(yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, effectiveSelectedYear, loadProfile)
+  }, [yearlyKwh, prices.hourly, effectiveSurcharges, fixedPrice, effectiveSelectedYear, loadProfile])
 
   // All daily breakdowns across all years
   const allDailyBreakdownFull = useMemo(() => {
@@ -375,19 +385,19 @@ function DynamicInner() {
         expensiveDays,
       }
     }).sort((a, b) => a.year - b.year)
-  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile, standingCharge, dynamicFeeType, dynamicMonthlyFee])
+  }, [prices.hourly, availableYears, yearlyKwh, effectiveSurcharges, fixedPrice, loadProfile, standingCharge, dynamicMonthlyFeeActive])
 
   // URL sync
   useEffect(() => {
     const p = new URLSearchParams()
     p.set('kwh', String(yearlyKwh))
     p.set('fixed', String(fixedPrice))
-    p.set('year', String(selectedYear))
+    p.set('year', String(effectiveSelectedYear))
     if (prices.selectedDate) p.set('date', prices.selectedDate)
     if (plz.length === 5) p.set('plz', plz)
     if (standingCharge > 0) p.set('grundpreis', String(standingCharge))
     router.replace(`/dynamic?${p.toString()}`, { scroll: false })
-  }, [yearlyKwh, fixedPrice, selectedYear, prices.selectedDate, plz, standingCharge]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yearlyKwh, fixedPrice, effectiveSelectedYear, prices.selectedDate, plz, standingCharge]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const surchargesTotal = totalSurchargesNetto(effectiveSurcharges)
   const bruttoSurcharges = surchargesTotal * (1 + VAT_RATE / 100)
@@ -399,17 +409,23 @@ function DynamicInner() {
   // Edge-scroll: press & hold left/right to scrub through days (v2-style)
   const sortedDates = useMemo(() => prices.daily.map(d => d.date), [prices.daily])
   const sortedDatesRef = useRef(sortedDates)
-  sortedDatesRef.current = sortedDates
-  const selectedDateRef = useRef(prices.selectedDate)
-  selectedDateRef.current = prices.selectedDate
+  const selectedDateRef = useRef(selectedDate)
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    sortedDatesRef.current = sortedDates
+  }, [sortedDates])
+
+  useEffect(() => {
+    selectedDateRef.current = selectedDate
+  }, [selectedDate])
 
   const startEdgeScroll = useCallback((dir: -1 | 1) => {
     const step = () => {
       const idx = sortedDatesRef.current.indexOf(selectedDateRef.current)
       if (idx < 0) return
       const next = sortedDatesRef.current[idx + dir]
-      if (next) prices.setSelectedDate(next)
+      if (next) setSelectedDate(next)
     }
     step()
     let speed = 400
@@ -419,7 +435,7 @@ function DynamicInner() {
       scrollTimerRef.current = setTimeout(tick, speed)
     }
     scrollTimerRef.current = setTimeout(tick, speed)
-  }, [prices.setSelectedDate])
+  }, [setSelectedDate])
 
   const stopEdgeScroll = useCallback(() => {
     if (scrollTimerRef.current) { clearTimeout(scrollTimerRef.current); scrollTimerRef.current = null }
@@ -522,13 +538,13 @@ function DynamicInner() {
                       onChange={e => setPlz(e.target.value.replace(/\D/g, '').slice(0, 5))}
                       className="w-24 rounded border border-gray-200 px-2 py-1.5 text-[13px] tabular-nums text-[#313131] focus:outline-none focus:ring-1 focus:ring-[#EA1C0A]/30"
                     />
-                    {plzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
-                    {plzLocation && !plzLoading && (
+                    {showPlzLoading && <span className="text-[10px] text-gray-400">Loading...</span>}
+                    {displayPlzLocation && !showPlzLoading && (
                       <div className="flex flex-col min-w-0">
                         <span className="text-[12px] text-gray-700 font-semibold truncate">
-                          {plzLocation.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')}
+                          {displayPlzLocation.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ')}
                         </span>
-                        {plzSupplier && <span className="text-[10px] text-gray-400 truncate">{plzSupplier}</span>}
+                        {displayPlzSupplier && <span className="text-[10px] text-gray-400 truncate">{displayPlzSupplier}</span>}
                       </div>
                     )}
                     {!plz && (
@@ -577,9 +593,9 @@ function DynamicInner() {
                 <div className="space-y-2">
                   <p className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Fixed Tariff</p>
                   {/* Local tariff presets from PLZ lookup */}
-                  {competitors.length > 0 && (
+                  {displayCompetitors.length > 0 && (
                     <div className="flex flex-col gap-1">
-                      {competitors.map(c => {
+                      {displayCompetitors.map(c => {
                         const isActive = Math.abs(fixedPrice - c.ctKwh) < 0.2 && Math.abs(standingCharge - c.standingChargeEur) < 2
                         const typeLabel = c.type === 'default supplier' ? 'Grundversorger' : c.type === 'market leader' ? 'Market leader' : 'Discount'
                         return (
@@ -601,7 +617,7 @@ function DynamicInner() {
                       <button
                         onClick={() => { setFixedPrice(34); setStandingCharge(120) }}
                         className={`text-left text-[10px] px-2 py-1.5 rounded border transition-colors ${
-                          competitors.every(c => Math.abs(fixedPrice - c.ctKwh) >= 0.2 || Math.abs(standingCharge - c.standingChargeEur) >= 2)
+                          displayCompetitors.every(c => Math.abs(fixedPrice - c.ctKwh) >= 0.2 || Math.abs(standingCharge - c.standingChargeEur) >= 2)
                             ? 'bg-gray-50 border-gray-300 text-[#313131]'
                             : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
                         }`}
@@ -733,10 +749,10 @@ function DynamicInner() {
                         </div>
                       ))}
                       <button
-                        onClick={() => setSurcharges(surchargesForYear(selectedYear))}
+                        onClick={() => setSurcharges(surchargesForYear(effectiveSelectedYear))}
                         className="w-full text-[10px] text-gray-500 hover:text-[#EA1C0A] py-1 transition-colors"
                       >
-                        Reset to {selectedYear} defaults
+                        Reset to {effectiveSelectedYear} defaults
                       </button>
                     </div>
                   )}

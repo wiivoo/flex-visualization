@@ -1,6 +1,6 @@
 # PROJ-40 — Management Dashboard
 
-**Status:** Planned
+## Status: Planned
 **Owner:** Lars
 **Created:** 2026-04-18
 **Route:** `/management`

@@ -1,6 +1,6 @@
 # PROJ-21: Savings Sensitivity Heatmap
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 1686–1795)
 
 ## Description

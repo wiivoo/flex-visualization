@@ -1,113 +1,120 @@
-# B2C Flex Monetization Dashboard
+# Flex Visualization
 
-Interactive visualization showing how EV charging load shifting creates value in the German day-ahead electricity market. Built for management presentations — real SMARD market data, no simulations.
+Interactive energy-flex dashboards built in Next.js. The current product centers on EV charging optimization, then extends that same pricing/data foundation into home-battery, dynamic-tariff, and insight views.
 
-**Live:** [web.lhdus.dpdns.org:8080](http://web.lhdus.dpdns.org:8080)
+## Product Surfaces
 
-## What It Does
+| Route | Purpose |
+| --- | --- |
+| `/` | Redirects to `/v2` |
+| `/v2` | Main EV charging flexibility dashboard |
+| `/v2/insights` | Portfolio, management, and sweep-style insight views |
+| `/battery` | Home battery business-case workflow |
+| `/dynamic` | Dynamic tariff explainer for DE |
+| `/dynamic/nl` | Dynamic tariff explainer for NL |
+| `/dynamic/analysis` | Dynamic tariff analysis view |
+| `/login` | Shared-password login screen |
+| `/management` | Legacy route redirected to `/v2/insights` |
 
-A single-page dashboard where users configure a charging scenario (mileage, plug-in frequency, plug-in/departure times) and see — with real hourly and 15-minute prices — how much money optimized charging saves vs. immediate ("dumb") charging.
+## What The App Does
 
-Key visualizations:
-- **Interactive price chart** with draggable plug-in/departure handles
-- **Overnight & Full Day** charging modes
-- **Hourly and 15-min** price resolution toggle
-- **Session cost breakdown** (baseline vs. optimized, hour-by-hour)
-- **Monthly savings** bar chart with seasonal coloring and cumulative line
-- **Savings heatmap** (mileage x plug-in frequency matrix)
-- **Mini calendar** with daily price spread indicators
-- **URL sharing** — scenario state encoded in the URL
+- Models EV charging savings against real day-ahead and intraday market data.
+- Supports multiple market/data contexts, including DE, NL, and GB where the UI exposes them.
+- Provides scenario-based views for charging, battery economics, and tariff analysis.
+- Exports the active EV charging session view to Excel through `exceljs`.
 
-## Tech Stack
+## Stack
 
-| | |
-|--|--|
-| Framework | Next.js 16 (App Router), TypeScript |
-| Charts | Recharts |
-| Styling | Tailwind CSS + shadcn/ui |
-| Prices | DE: SMARD 4169, NL: ENTSO-E A44, GB: EPEX Spot GB DAA 1 / DAA 2 |
-| Auth | JWT (jose), password protection via middleware |
-| Deploy | Vercel |
+| Area | Details |
+| --- | --- |
+| Framework | Next.js 16 App Router, React 19, TypeScript |
+| UI | Tailwind CSS, shadcn/ui, Recharts |
+| Data | Static JSON in `public/data/` plus API-backed refresh/fallback flows |
+| Auth | Shared-password login via `POST /api/auth` and JWT cookies |
+| Optional cache | Supabase |
+| Deployment | Vercel |
 
 ## Data Sources
 
-- **DE** — SMARD / Bundesnetzagentur day-ahead prices for the DE-LU bidding zone (`filter 4169`, chart module `8004169`)
-- **NL** — ENTSO-E Transparency Platform Web API (`documentType=A44`, bidding zone `10YNL----------L`)
-- **GB** — EPEX Spot GB day-ahead auctions: `GB DAA 1 (60')` and `GB DAA 2 (30')`, selectable in the v2 chart
+- `DE`: SMARD day-ahead prices and generation data.
+- `NL`: ENTSO-E day-ahead data and NL tariff-specific views.
+- `GB`: EPEX Spot day-ahead and intraday datasets where enabled in the UI.
+- Additional fallbacks and forecast overlays are implemented in `src/lib/`.
 
-The v2 price chart exposes the active region's official source and dataset code in the chart header tooltip. Verification links are only shown where the UI currently exposes them. For GB, users can switch between the two official EPEX day-ahead auctions.
+Current data behavior and operational notes live in [`docs/v2/current-data-state.md`](docs/v2/current-data-state.md).
 
-Current production data behavior, selectors, fallbacks, and automation are documented in `docs/v2/current-data-state.md`.
+## Repository Map
 
-## Project Structure
+| Path | Purpose |
+| --- | --- |
+| `src/app/` | Routes, page shells, and API endpoints |
+| `src/components/v2/` | Main EV charging dashboard UI |
+| `src/components/battery/` | Home battery workflow UI |
+| `src/components/dynamic/` | Dynamic tariff UI |
+| `src/components/management/` | Insight and management cards used by `/v2/insights` |
+| `src/lib/` | Pricing, optimization, export, auth, and data-source logic |
+| `public/data/` | Checked-in static market datasets |
+| `docs/v2/` | Product, data, and design reference docs |
+| `features/` | Feature registry and per-feature specs |
+| `.claude/` | Repo-local AI team roster, routing, and rules |
 
-```
-src/
-  app/
-    page.tsx                    Redirects to /v2
-    v2/page.tsx                 Main dashboard (scenario <> URL sync)
-    login/page.tsx              Password entry
-    api/auth/route.ts           JWT login
-    api/prices/batch/route.ts   SMARD incremental price fetch
-    api/generation/route.ts     Renewable generation data
-  components/
-    ui/                         shadcn/ui (alert, button, card, input, label, tooltip)
-    v2/
-      steps/Step2ChargingScenario.tsx   Core visualization (~1270 lines)
-      MiniCalendar.tsx                  Month-view date picker
-      SessionCostCard.tsx               Hour-by-hour cost comparison
-      MonthlySavingsCard.tsx            12-month savings chart
-      SavingsHeatmap.tsx                Mileage x frequency matrix
-      AnimatedNumber.tsx                Animated KPI transitions
-  lib/
-    v2-config.ts                Types, constants, scenario defaults
-    use-prices.ts               Price data hook (static JSON + API)
-    optimizer.ts                Baseline vs. optimized scheduling
-    charging-helpers.ts         Shared helpers (window computation)
-    grid-fees.ts                Module 3 grid fees (10 DSOs)
-    smard.ts                    SMARD API client
-    auth.ts                     JWT session management
-    config.ts                   Shared types
-    supabase.ts                 Supabase client
-    awattar.ts                  aWATTar fallback
-    energy-charts.ts            Energy-Charts fallback
-    csv-prices.ts               CSV fallback parser
-    price-cache.ts              Supabase price cache layer
-  middleware.ts                 Auth middleware
-public/data/
-  smard-prices.json             Pre-loaded hourly prices
-  smard-prices-qh.json          Pre-loaded 15-min prices
-  smard-generation.json         Renewable generation data
-scripts/
-  download-smard.mjs            SMARD bulk download script
-features/                       Feature specifications (PROJ-12, 17-23)
-docs/v2/                        Product requirements & design docs
-```
+## Local Setup
 
-## Quick Start
+1. Install dependencies:
 
 ```bash
 npm install
-cp .env.local.example .env.local   # Set DASHBOARD_PASSWORD and AUTH_SECRET
-npm run dev                        # localhost:3000
 ```
 
-## Build
+2. Create a local env file:
 
 ```bash
-npm run build      # Production build
-npm run start      # Production server
-npm run lint       # ESLint
+cp .env.local.example .env.local
 ```
 
-## Data Flow
+3. Set the required variables:
 
-1. Static JSON files provide ~3 years of pre-loaded SMARD prices
-2. On page load, `usePrices()` checks for newer data via `/api/prices/batch`
-3. User adjusts scenario, URL updates, chart re-renders with `useDeferredValue`
-4. `runOptimization()` computes baseline vs. cheapest-slot scheduling client-side
-5. Results feed into SessionCostCard, MonthlySavingsCard, SavingsHeatmap
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `DASHBOARD_PASSWORD` | Yes | Shared login password |
+| `AUTH_SECRET` | Yes | JWT signing secret for the session cookie |
+| `NEXT_PUBLIC_SUPABASE_URL` | Optional | Needed only if you want Supabase-backed cache/features |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Optional | Paired with the Supabase URL |
+| `ENTSOE_API_TOKEN` | Optional | Needed for ENTSO-E-backed fetches |
+| `ENERGY_FORECAST_TOKEN` | Optional | Needed for EnergyForecast-backed fetches |
 
-## License
+4. Start the dev server:
 
-MIT
+```bash
+npm run dev
+```
+
+The app serves locally at `http://127.0.0.1:3000`.
+
+## Build And Verification
+
+```bash
+npm run build
+npm run lint
+```
+
+## Versioning And Releases
+
+- `package.json` is the source of truth for the current version.
+- `CHANGELOG.md` is the human-readable release history.
+- Git tags use `vX.Y.Z`.
+- Semver rules: patch for fixes and low-risk maintenance/docs releases, minor for new user-facing features, major for breaking changes or major product resets.
+
+## Auth Notes
+
+- The active auth flow is route/API based, not middleware based.
+- Login happens through `/login` and `POST /api/auth`.
+- Sessions are stored in an HTTP-only cookie created by `src/lib/auth.ts`.
+
+## Documentation Sources Of Truth
+
+- Product and setup: this README
+- Feature inventory: [`features/INDEX.md`](features/INDEX.md)
+- AI team roster: [`.claude/TEAM.md`](.claude/TEAM.md)
+- AI task routing: [`.claude/rules/team-orchestration.md`](.claude/rules/team-orchestration.md)
+- Repo conventions for Claude agents: [`CLAUDE.md`](CLAUDE.md)

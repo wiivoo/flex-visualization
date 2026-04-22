@@ -1,6 +1,6 @@
 # PROJ-32: Daily Savings Heatmap
 
-**Status:** Deployed
+## Status: Deployed
 **Priority:** Medium
 
 ## Summary

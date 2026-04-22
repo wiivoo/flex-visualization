@@ -1,6 +1,6 @@
 # PROJ-23: URL State & Sharing
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/app/v2/page.tsx`
 
 ## Description

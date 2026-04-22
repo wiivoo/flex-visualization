@@ -1,6 +1,6 @@
 # PROJ-12: Interactive Price Chart
 
-**Status:** Deployed
+## Status: Deployed
 **Location:** `src/components/v2/steps/Step2ChargingScenario.tsx` (lines 935–1317)
 
 ## Description

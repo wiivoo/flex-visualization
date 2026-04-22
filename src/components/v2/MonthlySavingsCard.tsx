@@ -75,8 +75,13 @@ export function MonthlySavingsCard({
     ...d,
     displayLabel: d.label === 'Jan' ? `Jan '${String(d.year).slice(2)}` : d.label,
   }))
-  let runSum = 0
-  const last12c = last12.map(d => { runSum += d.savings; return { ...d, cumulative: Math.round(runSum * 10) / 10 } })
+  const last12c = useMemo(() => (
+    last12.reduce<Array<(typeof last12)[number] & { cumulative: number }>>((rows, month) => {
+      const previous = rows[rows.length - 1]?.cumulative ?? 0
+      const cumulative = Math.round((previous + month.savings) * 10) / 10
+      return [...rows, { ...month, cumulative }]
+    }, [])
+  ), [last12])
 
   const totalSum = last12c[last12c.length - 1]?.cumulative ?? 0
 

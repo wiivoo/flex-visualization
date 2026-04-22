@@ -148,32 +148,63 @@ export function TutorialOverlay({ active, onClose }: Props) {
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [visible, setVisible] = useState(false)
   const rafRef = useRef<number>(0)
+  const resetTimerRef = useRef<number | null>(null)
+  const visibleTimerRef = useRef<number | null>(null)
+  const transitionStartTimerRef = useRef<number | null>(null)
 
   const steps = mode === 'fleet' ? FLEET_STEPS : SINGLE_STEPS
   const currentStep = steps[step]
+  const targetId = currentStep?.targetId ?? ''
 
   useEffect(() => {
-    if (!active) { setMode('select'); setStep(0) }
+    if (active) return
+    resetTimerRef.current = window.setTimeout(() => {
+      setMode('select')
+      setStep(0)
+      setRect(null)
+      setIsTransitioning(false)
+      setVisible(false)
+    }, 0)
+    return () => {
+      if (resetTimerRef.current !== null) {
+        clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = null
+      }
+    }
   }, [active])
 
   useEffect(() => {
     if (!active) return
-    setVisible(false)
-    const t = setTimeout(() => setVisible(true), 60)
-    return () => clearTimeout(t)
+    visibleTimerRef.current = window.setTimeout(() => setVisible(true), 60)
+    return () => {
+      if (visibleTimerRef.current !== null) {
+        clearTimeout(visibleTimerRef.current)
+        visibleTimerRef.current = null
+      }
+      setVisible(false)
+    }
   }, [active, step, mode])
 
   const handleClose = useCallback(() => {
     setStep(0)
     setMode('select')
+    setRect(null)
+    setIsTransitioning(false)
+    setVisible(false)
     onClose()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [onClose])
 
   const measureTarget = useCallback(() => {
-    if (!currentStep?.targetId) return
-    const el = document.getElementById(currentStep.targetId)
-    if (!el) return
+    if (!targetId) {
+      setRect(null)
+      return
+    }
+    const el = document.getElementById(targetId)
+    if (!el) {
+      setRect(null)
+      return
+    }
     const r = el.getBoundingClientRect()
     const pad = 8
     setRect({
@@ -182,20 +213,25 @@ export function TutorialOverlay({ active, onClose }: Props) {
       width: r.width + pad * 2,
       height: r.height + pad * 2,
     })
-  }, [currentStep?.targetId])
+  }, [targetId])
 
   useEffect(() => {
     if (!active || mode === 'select') return
-    setIsTransitioning(true)
-    const el = currentStep?.targetId ? document.getElementById(currentStep.targetId) : null
+    transitionStartTimerRef.current = window.setTimeout(() => setIsTransitioning(true), 0)
+    const el = targetId ? document.getElementById(targetId) : null
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    else setRect(null)
-    const timeout = setTimeout(() => {
+    const timeout = window.setTimeout(() => {
       measureTarget()
       setIsTransitioning(false)
     }, 500)
-    return () => clearTimeout(timeout)
-  }, [active, step, mode, currentStep?.targetId, measureTarget])
+    return () => {
+      if (transitionStartTimerRef.current !== null) {
+        clearTimeout(transitionStartTimerRef.current)
+        transitionStartTimerRef.current = null
+      }
+      clearTimeout(timeout)
+    }
+  }, [active, step, mode, targetId, measureTarget])
 
   useEffect(() => {
     if (!active) return
