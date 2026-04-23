@@ -46,7 +46,7 @@ export interface ChargingScenario {
   yearlyMileageKm: number  // 5000-40000
   weekdayPlugIns: number   // 0-5 (Mon-Fri)
   weekendPlugIns: number   // 0-2 (Sat-Sun)
-  chargePowerKw: number    // 7 or 11
+  chargePowerKw: number    // 7-11 kW in 1 kW steps
   chargingMode: 'overnight' | 'fullday' | 'threeday'
   plugInDays?: DayOfWeek[]  // explicit day selection (when undefined, derived from weekday/weekendPlugIns)
   gridMode: 'v1g' | 'v2g'  // V1G = smart charging only, V2G = bidirectional
@@ -184,7 +184,7 @@ export interface FleetConfig {
   departureMax: number             // 5–9 (latest departure)
   yearlyMileageKm: number           // 5000–40000 (avg yearly mileage per EV)
   plugInsPerWeek: number             // 1–7 (avg charging sessions per EV per week)
-  chargePowerKw: number              // 7 or 11
+  chargePowerKw: number              // 7-11 kW in 1 kW steps
   spreadMode: SpreadMode           // distribution shape
   // Computed internally by deriveFleetDistributions
   arrivalDist: DistributionEntry[]
