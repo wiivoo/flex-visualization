@@ -1,6 +1,6 @@
 import {
+  getScenarioVariant,
   getTariff,
-  getVariant,
   type BatteryScenario,
 } from '@/lib/battery-config'
 import {
@@ -11,6 +11,12 @@ import {
 } from '@/lib/battery-optimizer'
 import type { PriceData } from '@/lib/use-prices'
 import type { HourlyPrice } from '@/lib/v2-config'
+import {
+  getDefaultTariffId as getDefaultRetailTariffId,
+  getTariff as getRetailTariff,
+  getTariffIntervalMinutes,
+  mapPricesToRetailTariff,
+} from '@/lib/retail-tariffs'
 
 const PV_YIELD_KWH_PER_KWP_DE = 820
 const PV_YIELD_KWH_PER_KWP_NL = 730
@@ -37,8 +43,25 @@ export interface MonthlyEconomics {
   netSavingsEur: number
 }
 
-export function getAnnualModelPrices(prices: PriceData): HourlyPrice[] {
-  return prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+export function getPreferredBatteryResolution(
+  scenario: BatteryScenario,
+  prices?: Pick<PriceData, 'hourlyQH'>,
+): 'hour' | 'quarterhour' {
+  const intervalMinutes = getTariffIntervalMinutes(scenario.tariffId, scenario.country)
+  return intervalMinutes === 15 && (prices ? prices.hourlyQH.length > 0 : true)
+    ? 'quarterhour'
+    : 'hour'
+}
+
+export function getAnnualModelPrices(
+  prices: PriceData,
+  scenario: BatteryScenario,
+): HourlyPrice[] {
+  const resolution = getPreferredBatteryResolution(scenario, prices)
+  const sourcePrices = resolution === 'quarterhour' && prices.hourlyQH.length > 0
+    ? prices.hourlyQH
+    : prices.hourly
+  return mapPricesToRetailTariff(sourcePrices, scenario.tariffId, scenario.country)
 }
 
 export function deriveAnnualBatteryResult(
@@ -56,7 +79,7 @@ export function deriveAnnualBatteryResult(
     else byDate.set(p.date, [p])
   }
 
-  const variant = getVariant(scenario.variantId)
+  const variant = getScenarioVariant(scenario)
   const pvKwp = variant.pvCapacityWp / 1000
   const pvAnnualYield =
     scenario.country === 'DE' ? PV_YIELD_KWH_PER_KWP_DE : PV_YIELD_KWH_PER_KWP_NL
@@ -86,7 +109,7 @@ export function computeBatteryEconomics(
   annual: AnnualBatteryResult,
   scenario: BatteryScenario,
 ): BatteryEconomics {
-  const variant = getVariant(scenario.variantId)
+  const variant = getScenarioVariant(scenario)
   const exportPct =
     scenario.country === 'NL' && variant.includePv ? scenario.exportCompensationPct / 100 : 0
   // In NL post-2027, self-consuming PV carries the opportunity cost of forgone export pay.
@@ -123,7 +146,7 @@ export function computeMonthlyEconomics(
   months: MonthlyBatteryResult[],
   scenario: BatteryScenario,
 ): MonthlyEconomics[] {
-  const variant = getVariant(scenario.variantId)
+  const variant = getScenarioVariant(scenario)
   const exportPct =
     scenario.country === 'NL' && variant.includePv ? scenario.exportCompensationPct / 100 : 0
   const fixedFeePerMonth =
@@ -146,12 +169,17 @@ export function computeMonthlyEconomics(
 }
 
 export function getTariffLabelForScenario(scenario: BatteryScenario): string {
-  return getTariff(scenario.tariffId, scenario.country)?.label ?? scenario.tariffId
+  return getRetailTariff(scenario.tariffId, scenario.country)?.label
+    ?? getTariff(scenario.tariffId, scenario.country)?.label
+    ?? scenario.tariffId
 }
 
 export function getTariffDefaults(country: 'DE' | 'NL', tariffId?: string) {
-  const fallbackId = country === 'DE' ? 'awattar-de' : 'frank-energie'
-  const tariff = getTariff(tariffId ?? fallbackId, country) ?? getTariff(fallbackId, country)
+  const fallbackId = getDefaultRetailTariffId(country)
+  const tariff = getRetailTariff(tariffId ?? fallbackId, country)
+    ?? getTariff(tariffId ?? fallbackId, country)
+    ?? getRetailTariff(fallbackId, country)
+    ?? getTariff(fallbackId, country)
 
   return {
     tariffId: tariff?.id ?? fallbackId,

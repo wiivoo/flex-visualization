@@ -39,7 +39,7 @@ export function useBatteryYear(
   scenario: BatteryScenario,
   prices: PriceData,
 ): AnnualBatteryResult | null {
-  const pricesToUse = useMemo(() => getAnnualModelPrices(prices), [prices])
+  const pricesToUse = useMemo(() => getAnnualModelPrices(prices, scenario), [prices, scenario])
   const profileYear = useMemo(() => {
     const dateLike = pricesToUse[0]?.date ?? prices.selectedDate
     const parsed = Number(dateLike?.slice(0, 4))

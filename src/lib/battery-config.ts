@@ -143,6 +143,7 @@ export interface Tariff {
 }
 
 export const DE_TARIFFS: Tariff[] = [
+  { id: 'enviam-vision', label: 'enviaM MEIN STROM Vision', country: 'DE', monthlyFeeEur: 2.67, exportCompensationDefaultPct: 0 },
   { id: 'tibber-de',  label: 'Tibber DE',      country: 'DE', monthlyFeeEur: 5.99, exportCompensationDefaultPct: 0 },
   { id: 'awattar-de', label: 'aWATTar',        country: 'DE', monthlyFeeEur: 4.58, exportCompensationDefaultPct: 0 },
   { id: 'rabot-de',   label: 'Rabot Charge',   country: 'DE', monthlyFeeEur: 4.99, exportCompensationDefaultPct: 0 },
@@ -216,7 +217,12 @@ export interface BatteryScenario {
   country: 'DE' | 'NL'
   tariffId: string
   loadProfileId: BatteryLoadProfileId
+  customMode: boolean
   annualLoadKwh: number
+  usableKwh: number
+  maxChargeKw: number
+  maxDischargeKw: number
+  pvCapacityWp: number
   feedInCapKw: number
   terugleverCostEur: number           // NL only; 0 in DE
   exportCompensationPct: number       // NL only; 0 in DE
@@ -227,9 +233,14 @@ export interface BatteryScenario {
 export const DEFAULT_BATTERY_SCENARIO: BatteryScenario = {
   variantId: 'schuko-2kwh',
   country: 'DE',
-  tariffId: 'awattar-de',
+  tariffId: 'enviam-vision',
   loadProfileId: 'H0',
+  customMode: false,
   annualLoadKwh: 2500,
+  usableKwh: 2.0,
+  maxChargeKw: 1.5,
+  maxDischargeKw: 0.8,
+  pvCapacityWp: 0,
   feedInCapKw: 0.8,
   terugleverCostEur: 0,
   exportCompensationPct: 50,
@@ -245,6 +256,19 @@ export function getVariant(id: BatteryVariant['id']): BatteryVariant {
   const v = BATTERY_VARIANTS.find(x => x.id === id)
   if (!v) throw new Error(`Unknown battery variant: ${id}`)
   return v
+}
+
+export function getScenarioVariant(scenario: BatteryScenario): BatteryVariant {
+  const variant = getVariant(scenario.variantId)
+  if (!scenario.customMode) return variant
+
+  return {
+    ...variant,
+    usableKwh: scenario.usableKwh,
+    maxChargeKw: scenario.maxChargeKw,
+    maxDischargeKw: scenario.maxDischargeKw,
+    pvCapacityWp: scenario.pvCapacityWp,
+  }
 }
 
 export function getTariffsFor(country: 'DE' | 'NL'): Tariff[] {

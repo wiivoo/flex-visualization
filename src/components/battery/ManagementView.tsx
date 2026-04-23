@@ -178,7 +178,7 @@ export function ManagementView({ scenario }: Props) {
         const prices = country === 'DE' ? dePrices : nlPrices
         const annual = deriveAnnualBatteryResult(
           rowScenario,
-          getAnnualModelPrices(prices),
+          getAnnualModelPrices(prices, rowScenario),
           country === 'DE' ? dePvProfile : nlPvProfile,
           country === 'DE' ? deLoadProfile : nlLoadProfile,
         )
