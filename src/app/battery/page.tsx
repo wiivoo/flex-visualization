@@ -1,21 +1,21 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useMemo, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { usePrices } from '@/lib/use-prices'
 import {
   DEFAULT_BATTERY_SCENARIO,
+  BATTERY_VARIANTS,
   getDefaultLoadProfileId,
-  isLoadProfileValidForCountry,
+  getVariant,
   type BatteryScenario,
 } from '@/lib/battery-config'
+import { getPreferredBatteryResolution } from '@/lib/battery-economics'
 import { BatteryVariantPicker } from '@/components/battery/BatteryVariantPicker'
 import { BatteryDayChart } from '@/components/battery/BatteryDayChart'
 import { BatteryRoiCard } from '@/components/battery/BatteryRoiCard'
 import { ManagementView } from '@/components/battery/ManagementView'
-import { BatteryIntroCard } from '@/components/battery/BatteryIntroCard'
-import { BatteryCycleKpiStrip } from '@/components/battery/BatteryCycleKpiStrip'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -28,8 +28,8 @@ import {
 // URL parse — untrusted search params → typed scenario
 // ---------------------------------------------------------------------------
 
-const ALLOWED_VARIANT_IDS = ['schuko-2kwh', 'balcony-pv-1.6kwh', 'wall-5kwh'] as const
-type VariantId = (typeof ALLOWED_VARIANT_IDS)[number]
+const ALLOWED_VARIANT_IDS = BATTERY_VARIANTS.map((variant) => variant.id) as readonly BatteryScenario['variantId'][]
+type VariantId = BatteryScenario['variantId']
 
 function parseScenario(params: URLSearchParams): BatteryScenario {
   const getNum = (key: string, fallback: number, min = -Infinity, max = Infinity) => {
@@ -45,23 +45,22 @@ function parseScenario(params: URLSearchParams): BatteryScenario {
     ? (variantRaw as VariantId)
     : DEFAULT_BATTERY_SCENARIO.variantId
 
-  const countryRaw = params.get('country')
-  const country: 'DE' | 'NL' = countryRaw === 'NL' ? 'NL' : 'DE'
-  const loadProfileRaw = params.get('profile')
-  const loadProfileId: BatteryScenario['loadProfileId'] = isLoadProfileValidForCountry(loadProfileRaw ?? '', country)
-    ? (loadProfileRaw as BatteryScenario['loadProfileId'])
-    : getDefaultLoadProfileId(country)
-
-  const feedInCapKw = getNum('feedin', DEFAULT_BATTERY_SCENARIO.feedInCapKw, 0, 2.5)
+  const defaults = getVariant(variantId)
+  const exportKw = getNum('export', getNum('feedin', defaults.maxDischargeKw, 0.2, 2.5), 0.2, 2.5)
 
   return {
     ...DEFAULT_BATTERY_SCENARIO,
     variantId,
-    country,
-    tariffId: params.get('tariff') ?? (country === 'NL' ? 'frank-energie' : 'awattar-de'),
-    loadProfileId,
+    country: 'DE',
+    tariffId: params.get('tariff') === 'tibber-de' ? 'tibber-de' : 'enviam-vision',
+    loadProfileId: getDefaultLoadProfileId('DE'),
     annualLoadKwh: getNum('load', DEFAULT_BATTERY_SCENARIO.annualLoadKwh, 500, 15000),
-    feedInCapKw,
+    customMode: params.get('mode') === 'custom',
+    usableKwh: getNum('capacity', defaults.usableKwh, 0.5, 6),
+    maxChargeKw: getNum('import', defaults.maxChargeKw, 0.2, 2.5),
+    maxDischargeKw: exportKw,
+    pvCapacityWp: getNum('pv', defaults.pvCapacityWp, 0, 2000),
+    feedInCapKw: exportKw,
     terugleverCostEur: getNum('teruglever', DEFAULT_BATTERY_SCENARIO.terugleverCostEur, 0, 1000),
     exportCompensationPct: getNum('export_pct', DEFAULT_BATTERY_SCENARIO.exportCompensationPct, 0, 200),
     selectedDate: params.get('date') ?? '',
@@ -86,23 +85,18 @@ function BatteryInner() {
 
   const [scenario, setScenario] = useState<BatteryScenario>(() => parseScenario(searchParams))
   const [windowHours, setWindowHours] = useState<BatteryWindowHours>(36)
-  const [resolution, setResolution] = useState<BatteryResolution>('hour')
-  const prices = usePrices(scenario.country)
+  const [resolution, setResolution] = useState<BatteryResolution>(() => getPreferredBatteryResolution(parseScenario(searchParams)))
+  const [showManagementView, setShowManagementView] = useState(false)
+  const prices = usePrices('DE')
   const battery = useBatteryWindow(scenario, prices, windowHours, resolution)
+  const preferredResolution = useMemo(
+    () => getPreferredBatteryResolution(scenario, prices),
+    [scenario, prices],
+  )
 
-  // NL failure → auto-revert to DE (identical to /v2 pattern)
   useEffect(() => {
-    if (prices.error && scenario.country !== 'DE') {
-      console.warn(`[battery/country] ${scenario.country} failed: ${prices.error} — reverting to DE`)
-      setScenario(s => ({
-        ...s,
-        country: 'DE',
-        tariffId: 'awattar-de',
-        terugleverCostEur: 0,
-        exportCompensationPct: DEFAULT_BATTERY_SCENARIO.exportCompensationPct,
-      }))
-    }
-  }, [prices.error, scenario.country])
+    setResolution(preferredResolution)
+  }, [preferredResolution])
 
   // On first prices load: apply URL ?date= if valid
   const urlDate = searchParams.get('date')
@@ -124,14 +118,15 @@ function BatteryInner() {
     const p = new URLSearchParams()
     if (scenario.selectedDate) p.set('date', scenario.selectedDate)
     if (scenario.variantId !== DEFAULT_BATTERY_SCENARIO.variantId) p.set('variant', scenario.variantId)
-    if (scenario.country !== 'DE') p.set('country', scenario.country)
-    const defaultTariff = scenario.country === 'DE' ? 'awattar-de' : 'frank-energie'
+    const defaultTariff = 'enviam-vision'
     if (scenario.tariffId !== defaultTariff) p.set('tariff', scenario.tariffId)
-    if (scenario.loadProfileId !== getDefaultLoadProfileId(scenario.country)) p.set('profile', scenario.loadProfileId)
+    if (scenario.customMode) p.set('mode', 'custom')
     if (scenario.annualLoadKwh !== DEFAULT_BATTERY_SCENARIO.annualLoadKwh) p.set('load', String(scenario.annualLoadKwh))
-    if (scenario.feedInCapKw !== 0.8) p.set('feedin', String(scenario.feedInCapKw))
-    if (scenario.terugleverCostEur !== 0) p.set('teruglever', String(scenario.terugleverCostEur))
-    if (scenario.exportCompensationPct !== DEFAULT_BATTERY_SCENARIO.exportCompensationPct) p.set('export_pct', String(scenario.exportCompensationPct))
+    const variantDefaults = getVariant(scenario.variantId)
+    if (scenario.usableKwh !== variantDefaults.usableKwh) p.set('capacity', String(scenario.usableKwh))
+    if (scenario.maxChargeKw !== variantDefaults.maxChargeKw) p.set('import', String(scenario.maxChargeKw))
+    if (scenario.maxDischargeKw !== variantDefaults.maxDischargeKw) p.set('export', String(scenario.maxDischargeKw))
+    if (scenario.pvCapacityWp !== variantDefaults.pvCapacityWp) p.set('pv', String(scenario.pvCapacityWp))
     const qs = p.toString()
     router.replace(qs ? `/battery?${qs}` : '/battery', { scroll: false })
   }, [scenario, router])
@@ -149,16 +144,15 @@ function BatteryInner() {
             >
               EV charging
             </Link>
-            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#EA1C0A] text-white">
+            <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-[#313131] text-white">
               Home battery
             </span>
           </nav>
         </div>
       </header>
 
-      <main className="max-w-[1440px] mx-auto px-8 py-8 space-y-6">
-        <BatteryIntroCard />
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+      <main className="max-w-[1440px] mx-auto px-8 py-6 space-y-4">
+        <div className="grid grid-cols-1 items-start lg:grid-cols-4 gap-5">
           <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
             <BatteryVariantPicker scenario={scenario} setScenario={setScenario} />
           </aside>
@@ -166,7 +160,7 @@ function BatteryInner() {
           <div className="lg:col-span-3 space-y-4">
             {prices.daily.length > 0 && (
               <Card className="overflow-hidden shadow-sm border-gray-200/80">
-                <CardContent className="py-2 px-3">
+                <CardContent className="py-1.5 px-3">
                   <DateStrip
                     daily={prices.daily}
                     selectedDate={prices.selectedDate}
@@ -182,17 +176,10 @@ function BatteryInner() {
               </Card>
             )}
 
-            <BatteryCycleKpiStrip
-              summary={battery.summary}
-              variant={battery.variant}
-              windowHours={windowHours}
-              setWindowHours={setWindowHours}
-            />
-
             <section data-slot="day-chart" className="space-y-2">
               <div className="flex items-center justify-between">
                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
-                  Cycle view
+                  Price curve
                 </p>
                 <div className="flex items-center gap-2">
                   {prices.loading && <span className="text-[10px] text-gray-400">Loading prices…</span>}
@@ -226,10 +213,30 @@ function BatteryInner() {
             </section>
 
             <section data-slot="management-view" className="border-t border-gray-200 pt-6">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-3">
-                Investor / Management View
-              </p>
-              <ManagementView scenario={scenario} />
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+                  Investor / Management View
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowManagementView((value) => !value)}
+                  className="text-[11px] font-semibold px-2.5 py-1 rounded-full border border-gray-200 text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors"
+                >
+                  {showManagementView ? 'Hide analysis' : 'Load analysis'}
+                </button>
+              </div>
+              {showManagementView ? (
+                <ManagementView scenario={scenario} />
+              ) : (
+                <Card className="shadow-sm border-gray-200/80">
+                  <CardContent className="py-5">
+                    <p className="text-[12px] text-gray-500 leading-relaxed">
+                      The investor comparison runs cross-country, full-year battery simulations for multiple setups.
+                      Load it on demand so the main consumer view stays responsive.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
             </section>
           </div>
         </div>

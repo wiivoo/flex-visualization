@@ -1872,18 +1872,28 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
             </div>
 
             {/* Session duration + charge power — bottom of card */}
-            <div className="flex items-center justify-center gap-1.5 pt-2 border-t border-gray-100">
-              <span className="text-[10px] text-gray-400">~{sessionLabel}/session ·</span>
-              <div className="flex items-center gap-0.5 bg-gray-100 rounded-full p-0.5">
-                <button
-                  onClick={() => setScenario({ ...scenario, chargePowerKw: 7 })}
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === 7 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                >7 kW</button>
-                <button
-                  onClick={() => setScenario({ ...scenario, chargePowerKw: 11 })}
-                  className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-colors ${chargePowerKw === 11 ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                >11 kW</button>
+            <div className="pt-1">
+              <div className="flex items-baseline justify-between h-6 mb-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Charge Power</span>
+                <span className="text-sm font-bold text-[#313131] tabular-nums">{chargePowerKw}<span className="text-[10px] font-normal text-gray-400 ml-1">kW</span></span>
               </div>
+              <div>
+                <input
+                  type="range"
+                  min={7}
+                  max={11}
+                  step={1}
+                  value={chargePowerKw}
+                  onChange={(e) => setScenario({ ...scenario, chargePowerKw: Number(e.target.value) })}
+                  aria-label={`Charge power: ${chargePowerKw} kilowatts`}
+                  className="w-full h-1.5 bg-gray-200 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#313131] [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white"
+                />
+                <div className="flex justify-between text-[10px] mt-1">
+                  <span className={chargePowerKw === 7 ? 'text-[#313131] font-semibold' : 'text-gray-400'}>7 kW</span>
+                  <span className={chargePowerKw === 11 ? 'text-[#313131] font-semibold' : 'text-gray-400'}>11 kW</span>
+                </div>
+              </div>
+              <p className="text-[10px] text-gray-400 text-center mt-1.5">~{sessionLabel}/session at {chargePowerKw} kW</p>
             </div>
             </>
             )}
@@ -3015,9 +3025,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       <div className="absolute pointer-events-none z-10"
                         style={{ left: '50%', top: 4, transform: 'translateX(-50%)' }}>
                         <div className="flex items-center gap-1.5 flex-nowrap">
-                          <div className="backdrop-blur-sm border rounded-full px-2.5 py-0.5 shadow-sm flex items-center gap-1 bg-emerald-50/80 border-emerald-300/50 flex-shrink-0">
-                            <span className="text-[12px] font-bold tabular-nums whitespace-nowrap text-emerald-700">
-                              {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(1)} {units.priceUnit}
+                          <div className="backdrop-blur-sm border rounded-2xl px-2.5 py-1 shadow-sm flex items-center gap-1.5 bg-emerald-50/90 border-emerald-300/50 flex-shrink-0">
+                            <span className="text-[13px] font-extrabold tabular-nums whitespace-nowrap text-emerald-700 leading-none">
+                              {isV2G ? '+' : '▼'} {totalSavingsCt.toFixed(2)} {units.priceUnit}
                             </span>
                             <span className="text-[9px] font-semibold tabular-nums whitespace-nowrap text-emerald-600">
                               {totalSavingsEur.toFixed(2)} {units.currencySym} {isV2G ? (v2gHasNetCharge ? 'benefit' : 'arbitrage') : 'saved'}
@@ -3546,8 +3556,9 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
         const modeKeyMap: Record<string, string> = { overnight: 'overnight', fullday: 'fullday', '3day': 'threeday' }
 
         return (
-          <div id="tour-scenario-cards" className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-            {rows.map(row => {
+          <div className="space-y-2">
+            <div id="tour-scenario-cards" className={`grid gap-3 ${rows.length === 3 ? 'grid-cols-3' : rows.length === 2 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {rows.map(row => {
               const isActive = row.key === activeMode
               const ms = showFleet ? (fleetAllModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 }) : (perModeSavings[modeKeyMap[row.key]] ?? { ctKwh4w: 0, eur4w: 0, ctKwh52w: 0, eur52w: 0 })
               return (
@@ -3594,79 +3605,90 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                       {row.spreadRange}
                     </p>
                   </div>
-                  {/* Selected day — Fleet / V2G / V1G savings */}
-                  {showFleet && fleetPerMode[row.key] ? (() => {
-                    const fm = fleetPerMode[row.key]!
-                    return (
-                    <div className="mb-2">
-                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
-                      <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {fm.savingsCtKwh.toFixed(2)}
-                      </span>
-                      <span className="text-[10px] text-gray-400 ml-1">{units.priceUnit} cheaper</span>
-                      <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        = {(fm.savingsEur * 100).toFixed(1)} {units.priceSym} saved per EV on {fm.totalKwh.toFixed(1)} kWh session
-                      </p>
-                    </div>
-                    )
-                  })() : isV2G && row.v2gProfit ? (
-                    <div className="mb-2">
-                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">
-                        {v2gHasNetCharge ? 'V2G benefit' : 'Arbitrage'} on selected day
-                      </p>
-                      <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {row.v2gProfit.profitEur.toFixed(2)}
-                      </span>
-                      <span className="text-[10px] text-gray-400 ml-1">{units.currency}</span>
-                      <div className="flex gap-3 mt-1 text-[9px]">
-                        {v2gHasNetCharge && <span className="text-emerald-500">Shift: {row.v2gProfit.loadShiftingBenefitEur.toFixed(2)} {units.currencySym}</span>}
-                        <span className="text-blue-500">Arb: {row.v2gProfit.arbitrageUpliftEur.toFixed(2)} {units.currencySym}</span>
-                        <span className="text-gray-400">Wear: {row.v2gProfit.degradationCostEur.toFixed(2)} {units.currencySym}</span>
+                  <div className="mb-2">
+                    <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(0,0.5fr)] gap-2">
+                      {/* Selected day — Fleet / V2G / V1G savings */}
+                      {showFleet && fleetPerMode[row.key] ? (() => {
+                        const fm = fleetPerMode[row.key]!
+                        return (
+                        <div className={`min-w-0 rounded-lg px-3.5 py-3 ${isActive ? 'border border-emerald-300/70 bg-emerald-100/85 shadow-sm ring-1 ring-emerald-200/60' : 'border border-gray-200 bg-gray-50/85'}`}>
+                          <p className="text-[8px] font-semibold text-gray-500 uppercase tracking-[0.16em] mb-1.5">Savings on selected day</p>
+                          <span className={`text-[31px] leading-none font-extrabold tabular-nums ${isActive ? 'text-emerald-700' : 'text-slate-500'}`}>
+                            {fm.savingsCtKwh.toFixed(2)}
+                          </span>
+                          <span className="text-[11px] text-gray-500 ml-1.5">{units.priceUnit} cheaper</span>
+                          <p className={`text-[10px] mt-1.5 ${isActive ? 'text-emerald-700/80' : 'text-gray-400'}`}>
+                            = {(fm.savingsEur * 100).toFixed(1)} {units.priceSym} saved per EV on {fm.totalKwh.toFixed(1)} kWh session
+                          </p>
+                        </div>
+                        )
+                      })() : isV2G && row.v2gProfit ? (
+                        <div className={`min-w-0 rounded-lg px-3.5 py-3 ${isActive ? 'border border-emerald-300/70 bg-emerald-100/85 shadow-sm ring-1 ring-emerald-200/60' : 'border border-gray-200 bg-gray-50/85'}`}>
+                          <p className="text-[8px] font-semibold text-gray-500 uppercase tracking-[0.16em] mb-1.5">Savings on selected day</p>
+                          <span className={`text-[31px] leading-none font-extrabold tabular-nums ${isActive ? 'text-emerald-700' : 'text-slate-500'}`}>
+                            {row.v2gProfit.profitEur.toFixed(2)}
+                          </span>
+                          <span className="text-[11px] text-gray-500 ml-1.5">{units.currency}</span>
+                          <div className="flex flex-wrap gap-2 mt-2 text-[9px]">
+                            {v2gHasNetCharge && <span className={isActive ? 'text-emerald-500' : 'text-emerald-400'}>Shift: {row.v2gProfit.loadShiftingBenefitEur.toFixed(2)} {units.currencySym}</span>}
+                            <span className={isActive ? 'text-blue-500' : 'text-blue-400'}>Arb: {row.v2gProfit.arbitrageUpliftEur.toFixed(2)} {units.currencySym}</span>
+                            <span className="text-gray-400">Wear: {row.v2gProfit.degradationCostEur.toFixed(2)} {units.currencySym}</span>
+                          </div>
+                        </div>
+                      ) : row.savings && (
+                        <div className={`min-w-0 rounded-lg px-3.5 py-3 ${isActive ? 'border border-emerald-300/70 bg-emerald-100/85 shadow-sm ring-1 ring-emerald-200/60' : 'border border-gray-200 bg-gray-50/85'}`}>
+                          <p className="text-[8px] font-semibold text-gray-500 uppercase tracking-[0.16em] mb-1.5">Savings on selected day</p>
+                          <span className={`text-[31px] leading-none font-extrabold tabular-nums ${isActive ? 'text-emerald-700' : 'text-slate-500'}`}>
+                            {row.savings.capturableSavingsCtKwh.toFixed(2)}
+                          </span>
+                          <span className="text-[11px] text-gray-500 ml-1.5">{units.priceUnit} cheaper</span>
+                          <p className={`text-[10px] mt-1.5 ${isActive ? 'text-emerald-700/80' : 'text-gray-400'}`}>
+                            = {(row.savings.capturableSavingsEur * 100).toFixed(1)} {units.priceSym} saved on {energyPerSession} kWh session
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="min-w-0 rounded-md border border-gray-200 bg-gray-50/70 px-2 py-1.5">
+                        <p className="text-[8px] font-semibold text-gray-500 uppercase tracking-[0.12em]">Market Spread</p>
+                        <p className={`text-[13px] font-bold tabular-nums leading-tight mt-0.5 ${isActive ? 'text-[#313131]' : 'text-gray-500'}`}>
+                          {row.spread!.marketSpreadCtKwh.toFixed(2)}
+                          <span className="text-[9px] font-medium text-gray-400 ml-1">{units.priceSym}</span>
+                        </p>
+                        <p className="text-[7px] text-gray-500 leading-tight mt-1">
+                          {row.spread!.cheapestHour} ↔ {row.spread!.expensiveHour}
+                        </p>
                       </div>
                     </div>
-                  ) : row.savings && (
-                    <div className="mb-2">
-                      <p className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">Savings on selected day</p>
-                      <span className={`text-xl font-extrabold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {row.savings.capturableSavingsCtKwh.toFixed(2)}
-                      </span>
-                      <span className="text-[10px] text-gray-400 ml-1">{units.priceUnit} cheaper</span>
-                      <p className={`text-[10px] mt-0.5 ${isActive ? 'text-emerald-600/70' : 'text-gray-400'}`}>
-                        = {(row.savings.capturableSavingsEur * 100).toFixed(1)} {units.priceSym} saved on {energyPerSession} kWh session
-                      </p>
-                    </div>
-                  )}
+                  </div>
                   {/* Last 4 weeks + Last 52 weeks — per-mode calculation */}
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-100 mb-2">
-                    <div>
-                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 4 wk</p>
-                      <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? units.currency : units.priceUnit}</span>
-                      </p>
-                      <p className="text-[8px] text-gray-400">
-                        {showFleet ? `${ms.eur4w.toFixed(2)} {units.currency}/EV · ${Math.round(ms.eur4w * 1000)} {units.currency} fleet` : `${ms.eur4w.toFixed(2)} {units.currency} total`}
-                      </p>
+                  <div className="pt-2 border-t border-gray-100 mb-2">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[9px] font-semibold text-gray-500 uppercase tracking-[0.16em]">Historical {isV2G ? 'profit' : 'savings'} with same settings</span>
+                      <span className="text-[8px] text-gray-400">{energyPerSession} kWh/session</span>
                     </div>
-                    <div>
-                      <p className="text-[8px] text-gray-400 uppercase tracking-wide">{isV2G ? 'Avg profit' : 'Avg savings'} 52 wk</p>
-                      <p className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-emerald-600' : 'text-gray-500'}`}>
-                        {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}<span className="text-[8px] font-normal text-gray-400 ml-0.5">{isV2G ? units.currencyPerYr : units.priceUnit}</span>
-                      </p>
-                      <p className="text-[8px] text-gray-400">
-                        {showFleet ? `${ms.eur52w.toFixed(0)} {units.currency}/EV/yr · ${Math.round(ms.eur52w * 1000)} {units.currency} fleet` : `${ms.eur52w.toFixed(0)} {units.currency}/yr`}
-                      </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className={`rounded-md border px-2.5 py-2 ${isActive ? 'border-emerald-100 bg-emerald-50/70' : 'border-gray-200 bg-gray-50/90'}`}>
+                        <p className="text-[8px] font-semibold text-gray-500 uppercase tracking-[0.14em]">Last 4 weeks average</p>
+                        <p className={`text-[17px] font-extrabold tabular-nums leading-tight ${isActive ? 'text-emerald-700' : 'text-[#313131]'}`}>
+                          {isV2G ? ms.eur4w.toFixed(2) : ms.ctKwh4w.toFixed(2)}
+                          <span className="text-[9px] font-medium text-gray-400 ml-1">{isV2G ? units.currency : units.priceUnit}</span>
+                        </p>
+                        <p className="text-[8px] text-gray-500 leading-relaxed">
+                          {showFleet ? `${ms.eur4w.toFixed(2)} ${units.currency}/EV · ${Math.round(ms.eur4w * 1000)} ${units.currency} fleet` : `${ms.eur4w.toFixed(2)} ${units.currency} total`}
+                        </p>
+                      </div>
+                      <div className={`rounded-md border px-2.5 py-2 ${isActive ? 'border-emerald-100 bg-emerald-50/70' : 'border-gray-200 bg-gray-50/90'}`}>
+                        <p className="text-[8px] font-semibold text-gray-500 uppercase tracking-[0.14em]">Last 52 weeks average</p>
+                        <p className={`text-[17px] font-extrabold tabular-nums leading-tight ${isActive ? 'text-emerald-700' : 'text-[#313131]'}`}>
+                          {isV2G ? ms.eur52w.toFixed(0) : ms.ctKwh52w.toFixed(2)}
+                          <span className="text-[9px] font-medium text-gray-400 ml-1">{isV2G ? units.currencyPerYr : units.priceUnit}</span>
+                        </p>
+                        <p className="text-[8px] text-gray-500 leading-relaxed">
+                          {showFleet ? `${ms.eur52w.toFixed(0)} ${units.currency}/EV/yr · ${Math.round(ms.eur52w * 1000)} ${units.currency} fleet` : `${ms.eur52w.toFixed(0)} ${units.currency}/yr`}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  {/* Market range = min↔max price in window */}
-                  <div className="flex items-baseline justify-between pt-1.5 border-t border-gray-100">
-                    <span className="text-[9px] text-gray-400 uppercase tracking-wide">Market range</span>
-                    <span className={`text-[13px] font-bold tabular-nums ${isActive ? 'text-[#313131]' : 'text-gray-500'}`}>
-                      {row.spread!.marketSpreadCtKwh.toFixed(2)}<span className="text-[9px] font-normal text-gray-400 ml-0.5">{units.priceSym}</span>
-                    </span>
-                  </div>
-                  <p className="text-[8px] text-gray-400 font-mono leading-relaxed">
-                    cheapest {row.spread!.cheapestHour} {row.spread!.minPriceCtKwh.toFixed(1)} ↔ costliest {row.spread!.expensiveHour} {row.spread!.maxPriceCtKwh.toFixed(1)} {units.priceSym}
-                  </p>
                   {/* Detail toggle */}
                   <button
                     onClick={(e) => { e.stopPropagation(); setCostDetailMode(costDetailMode === row.key ? null : row.key) }}
@@ -3676,7 +3698,8 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
                   </button>
                 </div>
               )
-            })}
+              })}
+            </div>
           </div>
         )
       })()}
