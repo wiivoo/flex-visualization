@@ -549,6 +549,7 @@ function FlowRouteCard({
   isNoSystemSelected = false,
   readOnly = false,
   unboxed = false,
+  spread = false,
 }: {
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
@@ -561,6 +562,7 @@ function FlowRouteCard({
   isNoSystemSelected?: boolean
   readOnly?: boolean
   unboxed?: boolean
+  spread?: boolean
 }) {
   const meta = FLOW_NODE_META[source]
   const Icon = meta.icon
@@ -609,23 +611,24 @@ function FlowRouteCard({
       </div>
 
       {/* Destination slots */}
-      <div className="flex w-full justify-center gap-4">
+      <div className={cn('flex w-full', spread ? 'justify-between gap-6' : 'justify-center gap-4')}>
         {routes.map((route) => {
           const flowValue = route.routeKey ? flowValues[route.routeKey] : flowValues.gridToHome
           const isEnabled = route.routeKey ? permissions[route.routeKey] : true
           const routeKey = route.routeKey
 
           return (
-            <FlowDestinationSlot
-              key={`${source}-${route.target}`}
-              target={route.target}
-              routeKey={routeKey}
-              enabled={!isCardDisabled && isEnabled}
-              flowValue={flowValue}
-              onToggle={!readOnly && !isCardDisabled && routeKey ? () => onToggle(routeKey) : undefined}
-              isStatic={route.isStatic}
-              readOnly={readOnly}
-            />
+            <div key={`${source}-${route.target}`} className={cn(spread && 'flex-1')}>
+              <FlowDestinationSlot
+                target={route.target}
+                routeKey={routeKey}
+                enabled={!isCardDisabled && isEnabled}
+                flowValue={flowValue}
+                onToggle={!readOnly && !isCardDisabled && routeKey ? () => onToggle(routeKey) : undefined}
+                isStatic={route.isStatic}
+                readOnly={readOnly}
+              />
+            </div>
           )
         })}
       </div>
@@ -1474,6 +1477,7 @@ function PvBatteryCalculatorInner() {
                         usableKwh={0}
                         isSystemSelected={isPvSelected}
                         unboxed
+                        spread
                       />
                     </div>
                   </div>
