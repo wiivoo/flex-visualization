@@ -400,14 +400,14 @@ function SegmentedPillGroup({
   return (
     <div className="flex items-center gap-3">
       <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</span>
-      <div className="inline-flex rounded-xl border border-gray-200 bg-[#F8F8F5] p-1">
+      <div className="inline-flex rounded-full border border-gray-200 bg-[#F8F8F5] p-1">
         {options.map((option) => (
           <button
             key={option.label}
             type="button"
             onClick={option.onClick}
             className={cn(
-              'rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
+              'rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors',
               option.active ? 'bg-[#313131] text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-700',
             )}
           >
@@ -422,12 +422,10 @@ function SegmentedPillGroup({
 function OptionCard({
   active,
   title,
-  detail,
   onClick,
 }: {
   active: boolean
   title: string
-  detail: string
   onClick: () => void
 }) {
   return (
@@ -435,14 +433,13 @@ function OptionCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-[20px] border p-4 text-left transition-all',
+        'rounded-[18px] border px-4 py-3 text-left transition-all',
         active
-          ? 'border-[#313131] bg-[#F8F8F5] text-gray-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)] ring-1 ring-black/5'
+          ? 'border-[#313131] bg-[#F8F8F5] text-gray-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
           : 'border-gray-200 bg-white text-gray-900 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-[#FBFBF8] hover:shadow-[0_10px_24px_rgba(15,23,42,0.04)]',
       )}
     >
       <p className="text-[14px] font-semibold">{title}</p>
-      <p className={cn('mt-1 text-[12px] leading-5', active ? 'text-gray-600' : 'text-gray-500')}>{detail}</p>
     </button>
   )
 }
@@ -479,9 +476,9 @@ function ControlBlock({
   const compactValue = value && value.length > 16
 
   return (
-    <Card className="rounded-[24px] border-gray-200 bg-white shadow-sm">
-      <CardContent className="p-5 sm:p-6">
-        <div className="mb-4 flex items-start justify-between gap-4">
+    <Card className="overflow-hidden rounded-[20px] border-gray-200 bg-white shadow-sm">
+      <CardContent className="p-0">
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-[#FBFBF8] px-5 py-4">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
             {value ? (
@@ -496,7 +493,7 @@ function ControlBlock({
           </div>
           {icon}
         </div>
-        <div>{children}</div>
+        <div className="px-5 py-5">{children}</div>
       </CardContent>
     </Card>
   )
@@ -986,6 +983,14 @@ function StatusCard({
   )
 }
 
+function MutedNote({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded-[16px] border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-[12px] leading-6 text-gray-600">
+      {children}
+    </div>
+  )
+}
+
 function PvBatteryCalculatorInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -1022,6 +1027,10 @@ function PvBatteryCalculatorInner() {
 
   const loadProfiles = useMemo(() => getSupportedLoadProfiles(CALCULATOR_COUNTRY), [])
   const tariffs = useMemo(() => getTariffsFor(CALCULATOR_COUNTRY), [])
+  const selectedLoadProfile = useMemo(
+    () => loadProfiles.find((profile) => profile.id === state.loadProfileId) ?? loadProfiles[0],
+    [loadProfiles, state.loadProfileId],
+  )
   const { loadProfile, pvProfile, loading: profilesLoading, error: profilesError } = useBatteryProfiles(
     CALCULATOR_COUNTRY,
     state.loadProfileId,
@@ -1209,10 +1218,13 @@ function PvBatteryCalculatorInner() {
                     <OptionCard
                       active
                       title="Germany"
-                      detail="SMARD replay with tariff-adjusted import pricing, market-priced export, and permission-aware battery dispatch."
                       onClick={() => {}}
                     />
                   </div>
+
+                  <MutedNote>
+                    SMARD replay with tariff-adjusted import pricing, market-priced export, and permission-aware battery dispatch.
+                  </MutedNote>
 
                   {availableYears.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
@@ -1286,11 +1298,11 @@ function PvBatteryCalculatorInner() {
                           key={profile.id}
                           active={state.loadProfileId === profile.id}
                           title={profile.label}
-                          detail={profile.detail}
                           onClick={() => setDraftState((current) => ({ ...current, loadProfileId: profile.id }))}
                         />
                       ))}
                     </div>
+                    <MutedNote>{selectedLoadProfile?.detail}</MutedNote>
                   </div>
                 </div>
               </ControlBlock>
@@ -1437,14 +1449,6 @@ function PvBatteryCalculatorInner() {
                     loading={prices.loading}
                     controls={(
                       <div className="space-y-5">
-                        <div>
-                          <SectionHeading
-                            eyebrow="Selected day"
-                            title="Flow map and price replay"
-                            help="Choose a day from the active year to inspect quarter-hour PV, battery, household, and grid flows with a separate price panel for adjusted household price, spot export value, and action windows."
-                          />
-                          <p className="text-sm leading-6 text-gray-500">{resolutionMessage}</p>
-                        </div>
                         <div className="overflow-hidden rounded-[20px] border border-gray-200 bg-white">
                           <div className="px-4 py-3">
                             <DateStrip
@@ -1456,26 +1460,6 @@ function PvBatteryCalculatorInner() {
                               forecastAfter={prices.lastRealDate || undefined}
                               country={CALCULATOR_COUNTRY}
                             />
-                          </div>
-                          <div className="border-t border-gray-200 px-5 py-4">
-                            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                              <p className="text-[12px] leading-5 text-gray-500">
-                                Choose the replay resolution, then edit dispatch rules in the routing card below.
-                              </p>
-
-                              <div className="flex flex-wrap gap-2">
-                                <PillButton active={state.resolution === 'hour'} onClick={() => setDraftState((current) => ({ ...current, resolution: 'hour' }))}>
-                                  60 min
-                                </PillButton>
-                                <PillButton
-                                  active={state.resolution === 'quarterhour'}
-                                  disabled={prices.hourlyQH.length === 0}
-                                  onClick={() => prices.hourlyQH.length > 0 && setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))}
-                                >
-                                  15 min
-                                </PillButton>
-                              </div>
-                            </div>
                           </div>
                         </div>
 
@@ -1583,6 +1567,21 @@ function PvBatteryCalculatorInner() {
                             />
                           </div>
                         </div>
+                      </div>
+                    )}
+                    priceNote={resolutionMessage}
+                    priceControls={(
+                      <div className="flex flex-wrap gap-2">
+                        <PillButton active={state.resolution === 'hour'} onClick={() => setDraftState((current) => ({ ...current, resolution: 'hour' }))}>
+                          60 min
+                        </PillButton>
+                        <PillButton
+                          active={state.resolution === 'quarterhour'}
+                          disabled={prices.hourlyQH.length === 0}
+                          onClick={() => prices.hourlyQH.length > 0 && setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))}
+                        >
+                          15 min
+                        </PillButton>
                       </div>
                     )}
                   />

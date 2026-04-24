@@ -25,6 +25,8 @@ interface Props {
   units: PriceUnits
   loading?: boolean
   controls?: ReactNode
+  priceNote?: string
+  priceControls?: ReactNode
 }
 
 interface FlowSegment {
@@ -379,7 +381,7 @@ function FlowLaneRow({
   const flowTicks = useMemo(() => buildPositiveTicks(laneScaleMax), [laneScaleMax])
   const Icon = lane.icon
   const guideTicks = flowTicks.filter((tick) => tick > 0)
-  const chartHeight = lane.mode === 'center' ? 'h-[160px]' : 'h-[88px]'
+  const chartHeight = lane.mode === 'center' ? 'h-[188px]' : 'h-[108px]'
 
   return (
     <div className={`grid grid-cols-[14px_minmax(0,1fr)] gap-3 ${chartHeight}`}>
@@ -476,40 +478,6 @@ function FlowLaneRow({
   )
 }
 
-function SliceMetric({
-  label,
-  value,
-  detail,
-  icon: Icon,
-  palette,
-}: {
-  label: string
-  value: string
-  detail?: string
-  icon: LucideIcon
-  palette: SummaryTone
-}) {
-  return (
-    <div
-      className="rounded-[20px] border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
-      style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.15em]" style={{ color: palette.text }}>
-            {label}
-          </p>
-          <p className="mt-2 text-sm font-semibold text-[#171717]">{value}</p>
-          {detail ? <p className="mt-1 text-xs text-[#5F5D55]">{detail}</p> : null}
-        </div>
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80" style={{ color: palette.text }}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-    </div>
-  )
-}
-
 function DayFlowPill({
   label,
   value,
@@ -537,6 +505,8 @@ export function PvBatteryDayChart({
   units,
   loading = false,
   controls,
+  priceNote,
+  priceControls,
 }: Props) {
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -695,42 +665,6 @@ export function PvBatteryDayChart({
     },
   ], [totals, units.currencySym])
 
-  const selectedMetrics = useMemo(() => {
-    if (!selectedSlot) return []
-
-    return [
-      {
-        label: 'PV to home',
-        value: formatKwh(selectedSlot.pvToLoadKwh),
-        icon: SunMedium,
-        palette: tone('#FFF7DA', '#7A5B00'),
-      },
-      {
-        label: 'PV to battery',
-        value: formatKwh(selectedSlot.pvToBatteryKwh),
-        icon: BatteryCharging,
-        palette: tone('#FFEAD7', '#9A4E00'),
-      },
-      {
-        label: 'Battery to home',
-        value: formatKwh(selectedSlot.batteryPvToLoadKwh + selectedSlot.batteryGridToLoadKwh),
-        detail: selectedSlot.batteryGridToLoadKwh > 0
-          ? `Stored PV ${formatKwh(selectedSlot.batteryPvToLoadKwh)} · Stored grid ${formatKwh(selectedSlot.batteryGridToLoadKwh)}`
-          : undefined,
-        icon: Home,
-        palette: tone('#FFF0E3', '#9A4E00'),
-      },
-      {
-        label: 'Grid imported',
-        value: formatKwh(selectedSlot.gridToLoadKwh + selectedSlot.gridToBatteryKwh),
-        detail: selectedSlot.gridToBatteryKwh > 0
-          ? `Home ${formatKwh(selectedSlot.gridToLoadKwh)} · Battery ${formatKwh(selectedSlot.gridToBatteryKwh)}`
-          : undefined,
-        icon: Zap,
-        palette: tone('#EEF1F5', '#435061'),
-      },
-    ].filter((item) => item.value !== formatKwh(0))
-  }, [selectedSlot])
   const dayFlowSummary = useMemo(() => ([
     { label: 'PV to home', value: totals.pvToLoad, color: COLORS.pvDirect },
     { label: 'PV to battery', value: totals.pvToBattery, color: COLORS.pvCharge },
@@ -754,45 +688,41 @@ export function PvBatteryDayChart({
   return (
     <div className="space-y-5">
       <Card className="overflow-hidden rounded-[28px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.08fr_0.92fr]">
-          <div className="border-b border-[#E5E7EB] bg-white p-6 sm:p-7 xl:border-b-0 xl:border-r xl:p-8">
-            <div className="flex flex-col gap-5">
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
-                    Selected day
-                  </span>
-                  <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
-                    {slots.length} slices
-                  </span>
-                </div>
-
-                <div className="flex flex-col gap-1">
-                  <h3 className="text-[30px] font-semibold tracking-[-0.03em] text-[#171717] sm:text-[34px]">{dayLabel}</h3>
-                  <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
-                    A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
-                  </p>
-                </div>
-
-                <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
+        <CardContent className="p-6 sm:p-7 xl:p-8">
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
+                  Selected day
+                </span>
+                <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
+                  {slots.length} slices
+                </span>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                {heroStats.map((stat) => (
-                  <SummaryTile
-                    key={stat.label}
-                    label={stat.label}
-                    value={stat.value}
-                    detail={stat.detail}
-                    icon={stat.icon}
-                    palette={stat.palette}
-                  />
-                ))}
+              <div className="flex flex-col gap-1">
+                <h3 className="text-[30px] font-semibold tracking-[-0.03em] text-[#171717] sm:text-[34px]">{dayLabel}</h3>
+                <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
+                  A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
+                </p>
               </div>
+
+              <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
             </div>
-          </div>
 
-          <div className="bg-[#FBFBF8] p-6 sm:p-7 xl:p-8">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {heroStats.map((stat) => (
+                <SummaryTile
+                  key={stat.label}
+                  label={stat.label}
+                  value={stat.value}
+                  detail={stat.detail}
+                  icon={stat.icon}
+                  palette={stat.palette}
+                />
+              ))}
+            </div>
+
             {controls ? controls : (
               <p className="text-sm leading-6 text-[#6B7280]">
                 Choose a day to inspect the same routing logic at finer detail.
@@ -879,83 +809,17 @@ export function PvBatteryDayChart({
       </Card>
 
       <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="border-b border-[#E5E7EB] bg-white p-6 sm:p-7 xl:border-b-0 xl:border-r">
-            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Selected interval</p>
-                <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Selected Slice</p>
-                <p className="mt-1 text-sm text-[#6B7280]">{selectedSlot.label}</p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs text-[#6B6A64]">
-                <span className="rounded-full border border-[#E5E7EB] bg-[#F8F8F5] px-3 py-1.5">{formatCurrency(selectedSlot.netCostEur, units.currencySym)} net</span>
-                <span className="rounded-full border border-[#E5E7EB] bg-[#F8F8F5] px-3 py-1.5">{formatKwh(selectedSlot.loadKwh)} home demand</span>
-                <span className="rounded-full border border-[#E5E7EB] bg-[#F8F8F5] px-3 py-1.5">{formatKwh(selectedSlot.pvKwh)} PV available</span>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {selectedMetrics.map((metric) => (
-                <SliceMetric
-                  key={metric.label}
-                  label={metric.label}
-                  value={metric.value}
-                  detail={metric.detail}
-                  icon={metric.icon}
-                  palette={metric.palette}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-[#F8F8F5] p-6 sm:p-7">
-            <div className="mb-4">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Secondary view</p>
-              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Grid Ledger</p>
-              <p className="mt-1 text-sm text-[#6B7280]">Secondary accounting for imports, exports, and curtailment.</p>
-            </div>
-
-            <div className="space-y-3 text-sm text-[#5F5D55]">
-              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
-                <span>Import to home</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.gridToLoadKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
-                <span>Import to battery</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.gridToBatteryKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
-                <span>Direct PV export</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.pvToGridKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
-                <span>Battery export</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.batteryPvExportKwh + selectedSlot.batteryGridExportKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
-                <span>Curtailed PV</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.curtailedKwh)}</span>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-4 text-[12px] leading-6 text-[#5F5D55]">
-              Day totals: grid imported {formatKwh(totals.gridToLoad + totals.gridToBattery)} and grid exported {formatKwh(totals.pvToGrid + totals.batteryPvExport + totals.batteryGridExport)}.
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
         <CardContent className="p-6 sm:p-7">
           <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Market context</p>
               <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Price Replay</p>
               <p className="mt-2 text-sm text-[#6B7280]">Spot, household import, and export value with the same chart language as `/v2`.</p>
+              {priceNote ? <p className="mt-2 text-[12px] leading-5 text-[#6B7280]">{priceNote}</p> : null}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {priceControls}
               <LegendPill label="Spot" color={COLORS.lineSpot} icon={Zap} />
               <LegendPill label="Household" color={COLORS.lineHousehold} icon={Home} />
               <LegendPill label="Export" color={COLORS.lineExport} icon={ArrowRight} />
