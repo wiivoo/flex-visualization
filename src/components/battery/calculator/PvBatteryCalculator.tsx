@@ -463,6 +463,7 @@ function FlowDestinationSlot({
   onToggle,
   isStatic,
   readOnly,
+  arrowDirection = 'down',
 }: {
   target: FlowNodeKey
   routeKey?: FlowPermissionKey
@@ -471,6 +472,7 @@ function FlowDestinationSlot({
   onToggle?: () => void
   isStatic?: boolean
   readOnly?: boolean
+  arrowDirection?: 'down' | 'up'
 }) {
   const Icon = FLOW_NODE_META[target].icon
 
@@ -478,10 +480,17 @@ function FlowDestinationSlot({
     <div className="flex flex-col items-center gap-1">
       {/* Vertical arrow with flow value */}
       <div className="relative flex w-6 flex-col items-center">
-        {/* Arrow line */}
-        <div className={cn('h-8 w-px', enabled ? 'bg-gray-800' : 'bg-gray-200')} />
-        {/* Arrowhead */}
-        <div className={cn('mt-[-2px] h-0 w-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[6px]', enabled ? 'border-t-gray-800' : 'border-t-gray-200')} />
+        {arrowDirection === 'down' ? (
+          <>
+            <div className={cn('h-8 w-px', enabled ? 'bg-gray-800' : 'bg-gray-200')} />
+            <div className={cn('mt-[-2px] h-0 w-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-t-[6px]', enabled ? 'border-t-gray-800' : 'border-t-gray-200')} />
+          </>
+        ) : (
+          <>
+            <div className={cn('h-0 w-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px]', enabled ? 'border-b-gray-800' : 'border-b-gray-200')} />
+            <div className={cn('mt-[-2px] h-8 w-px', enabled ? 'bg-gray-800' : 'bg-gray-200')} />
+          </>
+        )}
         {/* Flow value badge on arrow */}
         <div className={cn(
           'absolute top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[8px] font-semibold tabular-nums',
@@ -624,94 +633,14 @@ function FlowRouteCard({
                 routeKey={routeKey}
                 enabled={!isCardDisabled && isEnabled}
                 flowValue={flowValue}
-                onToggle={!readOnly && !isCardDisabled && routeKey ? () => onToggle(routeKey) : undefined}
-                isStatic={route.isStatic}
-                readOnly={readOnly}
-              />
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function GridToBatteryUpControl({
-  enabled,
-  flowValue,
-  onToggle,
-  disabled = false,
-  unboxed = false,
-}: {
-  enabled: boolean
-  flowValue: number
-  onToggle: () => void
-  disabled?: boolean
-  unboxed?: boolean
-}) {
-  const GridIcon = FLOW_NODE_META.grid.icon
-  const BatteryIcon = FLOW_NODE_META.battery.icon
-
-  return (
-    <div className={cn(
-      'w-full p-4',
-      !unboxed && 'rounded-2xl border border-gray-200 bg-white shadow-sm',
-      disabled && 'opacity-50',
-    )}>
-      <div className="flex items-center justify-center">
-        <div className="flex w-full max-w-[220px] flex-col items-center gap-1">
-          <div className={cn(
-            'flex w-full flex-col items-center justify-center gap-1 rounded-lg border px-2 py-1.5',
-            enabled && !disabled ? 'border-gray-200 bg-white text-gray-900' : 'border-gray-100 bg-gray-50 text-gray-400',
-          )}>
-            <span className={cn('flex h-5 w-5 items-center justify-center rounded-full', enabled && !disabled ? 'bg-gray-100' : 'bg-gray-200')}>
-              <BatteryIcon className={cn('h-2.5 w-2.5', enabled && !disabled ? 'text-gray-700' : 'text-gray-400')} />
-            </span>
-            <span className="text-[8px] font-bold uppercase tracking-wider">Battery</span>
+              onToggle={!readOnly && !isCardDisabled && routeKey ? () => onToggle(routeKey) : undefined}
+              isStatic={route.isStatic}
+              readOnly={readOnly}
+              arrowDirection={route.arrowDirection ?? 'down'}
+            />
           </div>
-
-          <div className="relative flex w-6 flex-col items-center">
-            <div className={cn(
-              'absolute top-1/2 -translate-y-1/2 rounded px-1 py-0.5 text-[8px] font-semibold tabular-nums',
-              enabled && !disabled ? 'bg-gray-800 text-white' : 'bg-gray-200 text-gray-400',
-            )}>
-              {formatCompactFlowKwh(flowValue)}
-            </div>
-            <div className={cn(
-              'h-0 w-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px]',
-              enabled && !disabled ? 'border-b-gray-800' : 'border-b-gray-200',
-            )} />
-            <div className={cn('h-8 w-px', enabled && !disabled ? 'bg-gray-800' : 'bg-gray-200')} />
-          </div>
-
-          <div className={cn(
-            'flex w-full flex-col items-center justify-center gap-1 rounded-lg border px-2 py-1.5',
-            enabled && !disabled ? 'border-gray-200 bg-white text-gray-900' : 'border-gray-100 bg-gray-50 text-gray-400',
-          )}>
-            <span className={cn('flex h-5 w-5 items-center justify-center rounded-full', enabled && !disabled ? 'bg-gray-100' : 'bg-gray-200')}>
-              <GridIcon className={cn('h-2.5 w-2.5', enabled && !disabled ? 'text-gray-700' : 'text-gray-400')} />
-            </span>
-            <span className="text-[8px] font-bold uppercase tracking-wider">Grid</span>
-            <button
-              type="button"
-              onClick={onToggle}
-              disabled={disabled}
-              className={cn(
-                'relative mt-0.5 h-4 w-7 rounded-full border transition-all',
-                enabled && !disabled ? 'border-gray-800 bg-gray-800' : 'border-gray-200 bg-white',
-                disabled && 'cursor-not-allowed',
-              )}
-              title={getFlowRouteOption('gridToBattery')?.detail}
-            >
-              <span
-                className={cn(
-                  'absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full transition-all',
-                  enabled && !disabled ? 'right-0.5 bg-white' : 'left-0.5 bg-gray-300',
-                )}
-              />
-            </button>
-          </div>
-        </div>
+        )
+      })}
       </div>
     </div>
   )
@@ -1577,6 +1506,7 @@ function PvBatteryCalculatorInner() {
                         routes={[
                           { target: 'home', routeKey: 'batteryToLoad' },
                           { target: 'grid', routeKey: 'batteryToGrid' },
+                          { target: 'grid', routeKey: 'gridToBattery', arrowDirection: 'up' },
                         ]}
                         permissions={state.flowPermissions}
                         flowValues={dayFlowValues}
@@ -1593,23 +1523,6 @@ function PvBatteryCalculatorInner() {
                         unboxed
                         spread
                       />
-                      <div className="flex justify-end">
-                        <div className="w-full md:max-w-[32%]">
-                        <GridToBatteryUpControl
-                          enabled={state.flowPermissions.gridToBattery}
-                          flowValue={dayFlowValues.gridToBattery}
-                          disabled={!isBatterySelected}
-                          unboxed
-                          onToggle={() => setDraftState((current) => ({
-                            ...current,
-                            flowPermissions: {
-                              ...current.flowPermissions,
-                              gridToBattery: !current.flowPermissions.gridToBattery,
-                            },
-                          }))}
-                        />
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </ControlBlock>
@@ -1707,3 +1620,4 @@ export function PvBatteryCalculator() {
     </Suspense>
   )
 }
+  routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; isStatic?: boolean; arrowDirection?: 'down' | 'up' }>
