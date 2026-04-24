@@ -548,6 +548,7 @@ function FlowRouteCard({
   isSystemSelected = true,
   isNoSystemSelected = false,
   readOnly = false,
+  unboxed = false,
 }: {
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
@@ -559,6 +560,7 @@ function FlowRouteCard({
   isSystemSelected?: boolean
   isNoSystemSelected?: boolean
   readOnly?: boolean
+  unboxed?: boolean
 }) {
   const meta = FLOW_NODE_META[source]
   const Icon = meta.icon
@@ -578,7 +580,8 @@ function FlowRouteCard({
 
   return (
     <div className={cn(
-      'w-full rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition-opacity',
+      'w-full p-4 transition-opacity',
+      !unboxed && 'rounded-2xl border border-gray-200 bg-white shadow-sm',
       isCardDisabled && 'opacity-50',
     )}>
       {/* Source header */}
@@ -1470,6 +1473,7 @@ function PvBatteryCalculatorInner() {
                         pvCapacityWp={state.pvCapacityWp}
                         usableKwh={0}
                         isSystemSelected={isPvSelected}
+                        unboxed
                       />
                     </div>
                   </div>
