@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  buildPvBatteryInputs,
   optimizePvBattery,
   type OptimizerSlotInput,
   type PvBatteryCalculatorScenario,
@@ -61,6 +62,47 @@ function expectSlotConservation(slot: PvBatterySlotResult) {
 }
 
 describe('optimizePvBattery', () => {
+  it('keeps quarter-hour PV slot energy scaling when radiation adjustment is applied', () => {
+    const prices: HourlyPrice[] = [
+      {
+        timestamp: Date.UTC(2025, 0, 1, 0, 0, 0),
+        date: '2025-01-01',
+        hour: 0,
+        minute: 0,
+        priceCtKwh: 20,
+        priceEurMwh: 200,
+      },
+      {
+        timestamp: Date.UTC(2025, 0, 1, 0, 15, 0),
+        date: '2025-01-01',
+        hour: 0,
+        minute: 15,
+        priceCtKwh: 20,
+        priceEurMwh: 200,
+      },
+    ]
+    const loadProfile = Array.from({ length: 8760 }, () => 0)
+    const pvProfile = Array.from({ length: 8760 }, () => 0)
+    pvProfile[0] = 1
+
+    const inputs = buildPvBatteryInputs(
+      prices,
+      loadProfile,
+      pvProfile,
+      {
+        ...BASE_SCENARIO,
+        annualLoadKwh: 0,
+        pvCapacityWp: 1000,
+      },
+      {
+        monthlyFactors: Array.from({ length: 12 }, () => 1),
+      },
+    )
+
+    expect(inputs[0].pvKwh).toBeCloseTo(205, 6)
+    expect(inputs[1].pvKwh).toBeCloseTo(205, 6)
+  })
+
   it('optimizes for lower net cost instead of self-sufficiency', () => {
     const slots: OptimizerSlotInput[] = [
       { ...mkPrice(12, 10, 50), pvKwh: 2 },
@@ -161,6 +203,8 @@ describe('optimizePvBattery', () => {
     expect(dischargeSlot.socKwhStart).toBeCloseTo(4, 3)
     expect(dischargeSlot.batteryPvToLoadKwh).toBeCloseTo(2, 3)
     expect(dischargeSlot.batteryGridToLoadKwh).toBeCloseTo(2, 3)
+    expect(dischargeSlot.batteryLoadSavingsEur).toBeCloseTo(1.1, 3)
+    expect(dischargeSlot.batteryDischargeSavingsEur).toBeCloseTo(1.1, 3)
     expect(dischargeSlot.gridToLoadKwh).toBeCloseTo(0, 3)
     expect(dischargeSlot.isGridChargingBattery).toBe(false)
     expect(dischargeSlot.isBatteryDischarging).toBe(true)
@@ -339,6 +383,8 @@ describe('optimizePvBattery', () => {
     expect(dischargeSlot.isBatteryDischarging).toBe(true)
     expect(dischargeSlot.isBatteryExporting).toBe(false)
     expect(dischargeSlot.batteryToLoadKwh).toBeGreaterThan(0)
+    expect(dischargeSlot.batteryLoadSavingsEur).toBeGreaterThan(0)
+    expect(dischargeSlot.batteryDischargeSavingsEur).toBeGreaterThan(0)
 
     for (const slot of result.slots) {
       expectSlotConservation(slot)

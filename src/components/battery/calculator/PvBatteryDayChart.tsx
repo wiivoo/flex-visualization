@@ -1,11 +1,14 @@
 'use client'
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { ArrowRight, BatteryCharging, Home, SunMedium, Zap, type LucideIcon } from 'lucide-react'
+import { Battery, BatteryCharging, Home, SunMedium, Zap } from 'lucide-react'
 import {
+  Area,
+  Bar,
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceDot,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -23,101 +26,109 @@ interface Props {
   annualResult: PvBatteryAnnualResult | null
   dayLabel: string
   units: PriceUnits
+  savingsCard?: {
+    selectedDay: {
+      savingsCtKwh: number
+      savingsEur: number
+      sessionKwh: number
+      marketSpreadCtKwh: number
+      cheapestHour: string
+      expensiveHour: string
+    }
+    historical: {
+      last4WeeksAvgCtKwh: number
+      last4WeeksTotalEur: number
+      last52WeeksAvgCtKwh: number
+      last52WeeksAnnualEur: number
+    }
+  } | null
   loading?: boolean
   controls?: ReactNode
-  flowHighlights?: ReactNode
-  priceNote?: string
   priceControls?: ReactNode
+  householdControls?: ReactNode
+  priceCurveMode?: 'spot' | 'end'
 }
 
-interface FlowSegment {
-  color: string
-  value: number
-}
-
-interface LaneDefinition {
-  key: string
-  label: string
-  detail: string
-  icon: LucideIcon
-  accent: string
-  mode: 'positive' | 'center'
-  positive: (slot: PvBatterySlotResult) => FlowSegment[]
-  negative?: (slot: PvBatterySlotResult) => FlowSegment[]
-}
-
-interface SummaryTone {
-  background: string
-  text: string
-}
+type HouseholdSeriesKey =
+  | 'pvLoad'
+  | 'batteryLoad'
+  | 'gridDirect'
+  | 'demand'
 
 const COLORS = {
-  pvDirect: '#F4C542',
-  pvStored: '#E07A1F',
-  pvCharge: '#E4A200',
-  gridDirect: '#A1A8B3',
-  gridStored: '#4A5565',
-  export: '#5B9BDA',
-  curtailed: '#E7A56A',
-  lineSpot: '#16181D',
-  lineHousehold: '#2C67B8',
-  lineExport: '#76AEE9',
-  bandCharge: '#D7DEE6',
-  bandBattery: '#F5D7BF',
-  bandPv: '#DDEBFA',
+  pvDirect: '#E9B94A',
+  pvStored: '#C96C1C',
+  pvCharge: '#D99F21',
+  gridDirect: '#7D8797',
+  gridStored: '#2F6FB3',
+  export: '#0F8A86',
+  curtailed: '#E8CD88',
+  lineSpot: '#0F172A',
+  lineHousehold: '#334155',
+  lineExport: '#0F8A86',
+  bandCharge: '#D8E5F8',
+  bandBattery: '#F8DFCA',
+  bandPv: '#FCEFC8',
+  bandSoc: '#FEE6BF',
+  markerCharge: '#2F6FB3',
+  markerDischarge: '#C96C1C',
+  markerPvExport: '#C59B1F',
   surface: '#FFFFFF',
   surfaceMuted: '#FFFFFF',
   surfaceInset: '#FFFFFF',
   plot: '#F8FAFC',
   border: '#E5E7EB',
   borderStrong: '#CBD5E1',
+  axis: '#64748B',
+  axisStrong: '#475569',
   text: '#171717',
-  textMuted: '#6B6A64',
-  textSoft: '#8A877E',
+  textStrong: '#111827',
+  textMuted: '#64748B',
+  textSoft: '#94A3B8',
 } as const
 
-function formatKwh(value: number): string {
-  return `${value.toFixed(2)} kWh`
-}
-
-function formatCurrency(value: number, currencySym: string): string {
-  return `${value >= 0 ? '+' : '-'}${currencySym}${Math.abs(value).toFixed(2)}`
-}
-
-function formatScaleTick(value: number): string {
-  if (value >= 10) return `${value.toFixed(0)}`
-  if (value >= 1) return `${value.toFixed(1)}`
-  return `${value.toFixed(2)}`
-}
-
-function buildRanges(slots: PvBatterySlotResult[], predicate: (slot: PvBatterySlotResult) => boolean) {
-  const ranges: Array<{ x1: number; x2: number }> = []
-  let start: number | null = null
-
-  slots.forEach((slot, index) => {
-    const active = predicate(slot)
-    if (active && start === null) start = index
-    if (!active && start !== null) {
-      ranges.push({ x1: start, x2: index - 0.001 })
-      start = null
+function buildPositiveAxis(maxValue: number, targetTicks = 5) {
+  if (!Number.isFinite(maxValue) || maxValue <= 0) {
+    return {
+      domain: [0, 1] as [number, number],
+      ticks: [0, 0.25, 0.5, 0.75, 1],
+      step: 0.25,
     }
-  })
+  }
 
-  if (start !== null) ranges.push({ x1: start, x2: slots.length - 0.001 })
-  return ranges
+  const safeTickCount = Math.max(2, targetTicks)
+  const rawStep = maxValue / Math.max(safeTickCount - 1, 1)
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep || 1)))
+  const normalized = rawStep / magnitude
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10
+  const step = multiplier * magnitude
+  const axisMax = Math.ceil(maxValue / step) * step
+  const tickCount = Math.max(2, Math.round(axisMax / step) + 1)
+  const ticks = Array.from({ length: tickCount }, (_, index) => Number((index * step).toFixed(6)))
+
+  return {
+    domain: [0, Number(axisMax.toFixed(6))] as [number, number],
+    ticks,
+    step,
+  }
 }
 
-function niceCeil(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 1
-  const magnitude = Math.pow(10, Math.floor(Math.log10(value)))
-  const normalized = value / magnitude
-  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
-  return multiplier * magnitude
+function buildSymmetricAxis(maxAbsValue: number, targetTicks = 5) {
+  const positive = buildPositiveAxis(maxAbsValue, targetTicks)
+  const positiveTicks = positive.ticks.filter((tick) => tick > 0)
+  const negativeTicks = [...positiveTicks].reverse().map((tick) => Number((-tick).toFixed(6)))
+  const ticks = [...negativeTicks, 0, ...positiveTicks]
+  return {
+    domain: [Number((-positive.domain[1]).toFixed(6)), positive.domain[1]] as [number, number],
+    ticks,
+    step: positive.step,
+  }
 }
 
-function buildPositiveTicks(maxValue: number, steps = 4): number[] {
-  const niceMax = niceCeil(maxValue)
-  return Array.from({ length: steps + 1 }, (_, index) => Number(((niceMax / steps) * index).toFixed(6)))
+function formatKwhAxisTick(value: number, step: number): string {
+  if (step >= 1) return value.toFixed(1)
+  if (step >= 0.1) return value.toFixed(2)
+  return value.toFixed(3)
 }
 
 function buildRangeTicks(minValue: number, maxValue: number, targetTicks = 5): number[] {
@@ -161,348 +172,79 @@ function formatHourTick(label: string) {
   return label.slice(0, 5)
 }
 
-function tone(background: string, text: string): SummaryTone {
-  return { background, text }
+function formatDayKwh(value: number): string {
+  return `${value.toFixed(2)} kWh`
 }
 
-function SummaryTile({
-  label,
-  value,
-  detail,
-  icon: Icon,
-  palette,
-}: {
-  label: string
-  value: string
-  detail: string
-  icon: LucideIcon
-  palette: SummaryTone
-}) {
-  return (
-    <div
-      className="rounded-[24px] border px-4 py-4"
-      style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em]" style={{ color: palette.text }}>
-            {label}
-          </p>
-          <p className="mt-2 text-lg font-semibold tracking-[-0.02em] text-[#171717]">{value}</p>
-          <p className="mt-1 text-xs text-[#5F5D55]">{detail}</p>
-        </div>
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/80" style={{ color: palette.text }}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-    </div>
-  )
+interface SegmentedBarShapeProps {
+  dataKey?: string
+  fill?: string
+  height?: number
+  payload?: Record<string, unknown>
+  value?: number | string | [number, number]
+  width?: number
+  x?: number
+  y?: number
 }
 
-function LegendPill({
-  label,
-  color,
-  icon: Icon,
-}: {
-  label: string
-  color: string
-  icon: LucideIcon
-}) {
-  return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-[#4B4A45]">
-      <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ backgroundColor: `${color}1F`, color }}>
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <span>{label}</span>
-    </span>
-  )
-}
+function SegmentedBarShape({
+  x = 0,
+  y = 0,
+  width = 0,
+  height = 0,
+  value = 0,
+  dataKey,
+  payload,
+  fill = COLORS.gridDirect,
+  blockKwh,
+}: SegmentedBarShapeProps & { blockKwh: number }) {
+  if (height <= 0 || width <= 0) return null
+  const stackedValue = Array.isArray(value) ? Math.abs((value[1] ?? 0) - (value[0] ?? 0)) : null
+  const dataKeyValue = dataKey && payload ? Number(payload[dataKey]) : null
+  const numericValue = typeof value === 'number'
+    ? value
+    : stackedValue ?? (dataKeyValue !== null && Number.isFinite(dataKeyValue) ? dataKeyValue : Number(value))
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return null
 
-function FlowScale({
-  mode,
-  ticks,
-  maxValue,
-}: {
-  mode: 'positive' | 'center'
-  ticks: number[]
-  maxValue: number
-}) {
-  const positiveTicks = ticks.filter((tick) => tick > 0)
+  const safeBlockKwh = Math.max(blockKwh, 1e-6)
+  const fullBlocks = Math.floor(numericValue / safeBlockKwh)
+  const remainderKwh = Math.max(0, numericValue - fullBlocks * safeBlockKwh)
+  const blockKwhParts = [
+    ...Array.from({ length: fullBlocks }, () => safeBlockKwh),
+    ...(remainderKwh > 1e-6 ? [remainderKwh] : []),
+  ]
+  if (blockKwhParts.length === 0) return null
 
-  return (
-    <div className="pointer-events-none absolute inset-y-0 left-0 w-[68px] border-r border-[#E5E7EB] text-[11px] text-[#64748B]">
-      <span className="absolute left-0 top-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#64748B]">kWh</span>
-
-      {mode === 'positive' ? (
-        ticks.map((tick) => {
-          const bottom = maxValue <= 0 ? 0 : (tick / maxValue) * 100
-          return (
-            <span
-              key={`positive-scale-${tick}`}
-              className="absolute left-0 -translate-y-1/2 tabular-nums"
-              style={{ bottom: `${bottom}%`, top: 'auto' }}
-            >
-              {formatScaleTick(tick)}
-            </span>
-          )
-        })
-      ) : (
-        <>
-          {positiveTicks.map((tick) => {
-            const offset = maxValue <= 0 ? 0 : (tick / maxValue) * 50
-            return (
-              <span
-                key={`center-positive-${tick}`}
-                className="absolute left-0 -translate-y-1/2 tabular-nums"
-                style={{ top: `${50 - offset}%` }}
-              >
-                +{formatScaleTick(tick)}
-              </span>
-            )
-          })}
-          <span className="absolute left-0 top-1/2 -translate-y-1/2 tabular-nums">0</span>
-          {positiveTicks.map((tick) => {
-            const offset = maxValue <= 0 ? 0 : (tick / maxValue) * 50
-            return (
-              <span
-                key={`center-negative-${tick}`}
-                className="absolute left-0 -translate-y-1/2 tabular-nums"
-                style={{ top: `${50 + offset}%` }}
-              >
-                -{formatScaleTick(tick)}
-              </span>
-            )
-          })}
-        </>
-      )}
-    </div>
-  )
-}
-
-function SlotBars({
-  slot,
-  lane,
-  maxValue,
-  active,
-  onClick,
-}: {
-  slot: PvBatterySlotResult
-  lane: LaneDefinition
-  maxValue: number
-  active: boolean
-  onClick: () => void
-}) {
-  const positive = lane.positive(slot)
-  const negative = lane.negative ? lane.negative(slot) : []
+  const pxPerKwh = height / numericValue
+  const blockX = x
+  const blockWidth = Math.max(0.75, width - 0.5)
+  let cumulativeHeight = 0
 
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative h-full min-w-0 overflow-hidden rounded-[4px] transition-all ${
-        active
-          ? 'bg-[rgba(59,130,246,0.06)] shadow-[inset_0_0_0_1px_rgba(59,130,246,0.16)]'
-          : 'hover:bg-[rgba(17,24,39,0.03)]'
-      }`}
-      title={`${lane.label} · ${slot.label}`}
-    >
-      {active ? <div className="pointer-events-none absolute inset-x-0 top-0 h-[2px] bg-[#2563EB]" /> : null}
-
-      {lane.mode === 'center' ? (
-        <div className="pointer-events-none absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-[#CBD5E1]" />
-      ) : null}
-
-      <div className={`pointer-events-none absolute inset-x-[2px] ${lane.mode === 'center' ? 'top-[4px] bottom-1/2' : 'inset-y-[4px]'}`}>
-        <div className="flex h-full flex-col justify-end gap-px">
-          {positive.map((segment, index) => {
-            if (segment.value <= 0) return null
-            const heightPct = Math.max((segment.value / Math.max(maxValue, 0.001)) * 100, 2)
-            return (
-              <div
-                key={`${slot.timestamp}-positive-${index}`}
-                className="w-full rounded-[3px]"
-                style={{ height: `${Math.min(heightPct, 100)}%`, backgroundColor: segment.color }}
-              />
-            )
-          })}
-        </div>
-      </div>
-
-      {lane.mode === 'center' ? (
-        <div className="pointer-events-none absolute inset-x-[2px] top-1/2 bottom-[4px]">
-          <div className="flex h-full flex-col gap-px">
-            {negative.map((segment, index) => {
-              if (segment.value <= 0) return null
-              const heightPct = Math.max((segment.value / Math.max(maxValue, 0.001)) * 100, 2)
-              return (
-                <div
-                  key={`${slot.timestamp}-negative-${index}`}
-                className="w-full rounded-[3px]"
-                style={{ height: `${Math.min(heightPct, 100)}%`, backgroundColor: segment.color }}
-              />
-              )
-            })}
-          </div>
-        </div>
-      ) : null}
-    </button>
-  )
-}
-
-function FlowLaneRow({
-  lane,
-  slots,
-  selectedIndex,
-  setSelectedIndex,
-  slotsPerHour,
-}: {
-  lane: LaneDefinition
-  slots: PvBatterySlotResult[]
-  selectedIndex: number
-  setSelectedIndex: (index: number) => void
-  slotsPerHour: number
-}) {
-  const maxPositive = useMemo(
-    () => Math.max(
-      ...slots.map((slot) => lane.positive(slot).reduce((sum, segment) => sum + segment.value, 0)),
-      0.1,
-    ),
-    [lane, slots],
-  )
-  const maxNegative = useMemo(
-    () => Math.max(
-      ...slots.map((slot) => (lane.negative ? lane.negative(slot).reduce((sum, segment) => sum + segment.value, 0) : 0)),
-      0.1,
-    ),
-    [lane, slots],
-  )
-  const laneScaleMax = lane.mode === 'center'
-    ? Math.max(maxPositive, maxNegative, 0.1)
-    : Math.max(maxPositive, 0.1)
-  const flowTicks = useMemo(() => buildPositiveTicks(laneScaleMax, 3), [laneScaleMax])
-  const Icon = lane.icon
-  const guideTicks = flowTicks.filter((tick) => tick > 0)
-  const chartHeight = lane.mode === 'center' ? 'h-[228px]' : 'h-[156px]'
-
-  return (
-    <div className={`grid grid-cols-[84px_minmax(0,1fr)] gap-4 ${chartHeight}`}>
-      <div
-        className="flex flex-col gap-2 pt-3"
-        style={{ color: lane.accent, backgroundColor: 'transparent' }}
-      >
-        <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-[#E5E7EB] bg-white text-current">
-          <Icon className="h-4 w-4" />
-        </span>
-        <div>
-          <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[#111827]">{lane.label}</p>
-          <p className="mt-1 text-[11px] leading-5 text-[#64748B]">{lane.detail}</p>
-        </div>
-      </div>
-
-      <div
-        className={`relative overflow-hidden rounded-[18px] border pl-[72px] pr-2 py-3 ${chartHeight}`}
-        style={{ borderColor: COLORS.border, backgroundColor: COLORS.plot }}
-        aria-label={lane.label}
-      >
-        <FlowScale mode={lane.mode} ticks={flowTicks} maxValue={laneScaleMax} />
-
-        <div className="pointer-events-none absolute inset-0">
-          {lane.mode === 'positive' ? (
-            guideTicks.map((tick) => {
-              const top = 100 - (tick / Math.max(laneScaleMax, 0.001)) * 100
-              return (
-                <div
-                  key={`${lane.key}-guide-${tick}`}
-                  className="absolute inset-x-0 border-t border-[#E5E7EB]"
-                  style={{ top: `${top}%` }}
-                />
-              )
-            })
-          ) : (
-            <>
-              {guideTicks.map((tick) => {
-                const offset = (tick / Math.max(laneScaleMax, 0.001)) * 50
-                return (
-                  <div
-                    key={`${lane.key}-guide-positive-${tick}`}
-                    className="absolute inset-x-0 border-t border-[#E5E7EB]"
-                    style={{ top: `${50 - offset}%` }}
-                  />
-                )
-              })}
-              <div className="absolute inset-x-0 top-1/2 border-t border-[#D1D5DB]" />
-              {guideTicks.map((tick) => {
-                const offset = (tick / Math.max(laneScaleMax, 0.001)) * 50
-                return (
-                  <div
-                    key={`${lane.key}-guide-negative-${tick}`}
-                    className="absolute inset-x-0 border-t border-[#E5E7EB]"
-                    style={{ top: `${50 + offset}%` }}
-                  />
-                )
-              })}
-            </>
-          )}
-        </div>
-
-        <div
-          className="pointer-events-none absolute inset-0 grid gap-[2px] px-2 py-3"
-          style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}
-        >
-          {slots.map((slot, index) => {
-            const isMajorTick = index % (slotsPerHour * 4) === 0
-            const isMidTick = index % (slotsPerHour * 2) === 0
-
-            return (
-              <div
-                key={`${lane.key}-vertical-${slot.timestamp}`}
-                className={cn(
-                  'border-l',
-                  isMajorTick
-                    ? 'border-l-[#D1D5DB]'
-                    : isMidTick
-                      ? 'border-l-[#E5E7EB]/80'
-                      : 'border-l-transparent',
-                )}
-              />
-            )
-          })}
-        </div>
-
-        <div className="grid h-full gap-[2px]" style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}>
-          {slots.map((slot, index) => (
-            <SlotBars
-              key={`${lane.key}-${slot.timestamp}`}
-              slot={slot}
-              lane={lane}
-              maxValue={laneScaleMax}
-              active={selectedIndex === index}
-              onClick={() => setSelectedIndex(index)}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function DayFlowPill({
-  label,
-  value,
-  color,
-}: {
-  label: string
-  value: string
-  color: string
-}) {
-  return (
-    <div className="rounded-2xl border border-[#E5E7EB] bg-white px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
-      <div className="flex items-center gap-2">
-        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#64748B]">{label}</span>
-      </div>
-      <p className="mt-1 text-sm font-semibold text-[#171717]">{value}</p>
-    </div>
+    <g>
+      {blockKwhParts.map((partKwh, index) => {
+        const blockPixelHeight = partKwh * pxPerKwh
+        const blockY = y + height - cumulativeHeight - blockPixelHeight
+        cumulativeHeight += blockPixelHeight
+        return (
+          <rect
+            key={index}
+            x={blockX}
+            y={blockY}
+            width={blockWidth}
+            height={blockPixelHeight}
+            rx={0}
+            ry={0}
+            fill={fill}
+            fillOpacity={1}
+            stroke="#FFFFFF"
+            strokeOpacity={0.95}
+            strokeWidth={0.8}
+            shapeRendering="geometricPrecision"
+          />
+        )
+      })}
+    </g>
   )
 }
 
@@ -510,171 +252,420 @@ export function PvBatteryDayChart({
   annualResult,
   dayLabel,
   units,
+  savingsCard = null,
   loading = false,
   controls,
-  flowHighlights,
-  priceNote,
   priceControls,
+  householdControls,
+  priceCurveMode = 'spot',
 }: Props) {
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [visibleFlowLayers, setVisibleFlowLayers] = useState({
+    charge: true,
+    discharge: true,
+    pvExport: true,
+  })
+  const [visibleSeries, setVisibleSeries] = useState<Record<HouseholdSeriesKey, boolean>>({
+    pvLoad: true,
+    batteryLoad: true,
+    gridDirect: true,
+    demand: true,
+  })
   const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(slots.length - 1, 0))
   const selectedSlot = slots[effectiveSelectedIndex]
-
-  const totals = useMemo(() => slots.reduce((acc, slot) => ({
-    pvToLoad: acc.pvToLoad + slot.pvToLoadKwh,
-    pvToBattery: acc.pvToBattery + slot.pvToBatteryKwh,
-    pvToGrid: acc.pvToGrid + slot.pvToGridKwh,
-    curtailed: acc.curtailed + slot.curtailedKwh,
-    gridToLoad: acc.gridToLoad + slot.gridToLoadKwh,
-    gridToBattery: acc.gridToBattery + slot.gridToBatteryKwh,
-    batteryPvToLoad: acc.batteryPvToLoad + slot.batteryPvToLoadKwh,
-    batteryGridToLoad: acc.batteryGridToLoad + slot.batteryGridToLoadKwh,
-    batteryPvExport: acc.batteryPvExport + slot.batteryPvExportKwh,
-    batteryGridExport: acc.batteryGridExport + slot.batteryGridExportKwh,
-    importCost: acc.importCost + slot.gridImportCostEur,
-    exportRevenue: acc.exportRevenue + slot.exportRevenueEur,
-    netCost: acc.netCost + slot.netCostEur,
-  }), {
-    pvToLoad: 0,
-    pvToBattery: 0,
-    pvToGrid: 0,
-    curtailed: 0,
-    gridToLoad: 0,
-    gridToBattery: 0,
-    batteryPvToLoad: 0,
-    batteryGridToLoad: 0,
-    batteryPvExport: 0,
-    batteryGridExport: 0,
-    importCost: 0,
-    exportRevenue: 0,
-    netCost: 0,
-  }), [slots])
-
-  const lanes: LaneDefinition[] = useMemo(() => [
-    {
-      key: 'pv',
-      label: 'PV',
-      detail: 'Generation split between home, storage, export, and curtailment.',
-      icon: SunMedium,
-      accent: COLORS.pvCharge,
-      mode: 'positive',
-      positive: (slot) => [
-        { color: COLORS.pvDirect, value: slot.pvToLoadKwh },
-        { color: COLORS.pvCharge, value: slot.pvToBatteryKwh },
-        { color: COLORS.export, value: slot.pvToGridKwh },
-        { color: COLORS.curtailed, value: slot.curtailedKwh },
-      ],
-    },
-    {
-      key: 'battery',
-      label: 'Battery',
-      detail: 'Charge above zero, discharge below zero. Same kWh scale as the other tracks.',
-      icon: BatteryCharging,
-      accent: COLORS.pvStored,
-      mode: 'center',
-      positive: (slot) => [
-        { color: COLORS.pvCharge, value: slot.pvToBatteryKwh },
-        { color: COLORS.gridDirect, value: slot.gridToBatteryKwh },
-      ],
-      negative: (slot) => [
-        { color: COLORS.pvStored, value: slot.batteryPvToLoadKwh + slot.batteryPvExportKwh },
-        { color: COLORS.gridStored, value: slot.batteryGridToLoadKwh + slot.batteryGridExportKwh },
-      ],
-    },
-    {
-      key: 'home',
-      label: 'Home',
-      detail: 'Demand covered by direct PV, stored energy, or the grid.',
-      icon: Home,
-      accent: COLORS.lineHousehold,
-      mode: 'positive',
-      positive: (slot) => [
-        { color: COLORS.pvDirect, value: slot.pvToLoadKwh },
-        { color: COLORS.pvStored, value: slot.batteryPvToLoadKwh },
-        { color: COLORS.gridStored, value: slot.batteryGridToLoadKwh },
-        { color: COLORS.gridDirect, value: slot.gridToLoadKwh },
-      ],
-    },
-  ], [])
+  const flowChartLayout = {
+    height: 420,
+    marginTop: 24,
+    marginBottom: 20,
+  } as const
 
   const slotsPerHour = useMemo(() => getSlotsPerHour(slots.length), [slots.length])
+  const flowPriceDataKey = priceCurveMode === 'end' ? 'householdImportPriceCtKwh' : 'spotPriceCtKwh'
+  const flowPriceLegendLabel = priceCurveMode === 'end' ? 'End price' : 'Spot price'
+  const flowPriceSeriesName = `${flowPriceLegendLabel} (${units.priceUnit})`
 
-  const priceData = useMemo(
-    () => slots.map((slot, index) => ({ ...slot, idx: index })),
+  const householdData = useMemo(
+    () => slots.map((slot, index) => ({
+      ...slot,
+      idx: index,
+      time: slot.label,
+      visibleGridToLoadKwh: slot.gridToLoadKwh,
+      visiblePvToLoadKwh: slot.pvToLoadKwh,
+      visibleBatteryToLoadKwh: slot.batteryPvToLoadKwh + slot.batteryGridToLoadKwh,
+      visiblePvExportKwh: slot.pvToGridKwh,
+      visibleBatteryExportKwh: slot.batteryPvExportKwh + slot.batteryGridExportKwh,
+      totalDemandKwh: slot.pvToLoadKwh + slot.batteryPvToLoadKwh + slot.batteryGridToLoadKwh + slot.gridToLoadKwh,
+    })),
     [slots],
   )
-  const hourTicks = useMemo(() => buildHourTicks(priceData.length), [priceData.length])
-  const majorHourStep = slots.length > 48 ? 4 : 2
+  const daySummary = useMemo(() => {
+    return slots.reduce((totals, slot) => {
+      const batteryToLoadKwh = slot.batteryPvToLoadKwh + slot.batteryGridToLoadKwh
+      const householdBreakdownKwh = slot.pvToLoadKwh + batteryToLoadKwh + slot.gridToLoadKwh
 
-  const ranges = useMemo(() => ({
-    gridCharge: buildRanges(slots, (slot) => slot.isGridChargingBattery),
-    batteryUse: buildRanges(slots, (slot) => slot.isBatteryDischarging),
-    pvExport: buildRanges(slots, (slot) => slot.isDirectPvExporting),
-  }), [slots])
+      totals.householdKwh += householdBreakdownKwh
+      totals.pvKwh += slot.pvToLoadKwh
+      totals.gridKwh += slot.gridToLoadKwh
+      totals.batteryToLoadKwh += batteryToLoadKwh
+      return totals
+    }, {
+      householdKwh: 0,
+      pvKwh: 0,
+      gridKwh: 0,
+      batteryToLoadKwh: 0,
+    })
+  }, [slots])
+  const maxSocKwh = useMemo(
+    () => Math.max(...slots.map((slot) => Math.max(slot.socKwhStart, slot.socKwhEnd)), 0.1),
+    [slots],
+  )
+  const maxFlowAbsKwh = useMemo(
+    () => Math.max(
+      ...slots.map((slot) =>
+        Math.max(slot.gridToBatteryKwh, slot.pvToBatteryKwh, slot.batteryToLoadKwh, slot.batteryExportKwh, slot.pvToGridKwh)),
+      0.1,
+    ),
+    [slots],
+  )
+  const flowAxis = useMemo(() => buildSymmetricAxis(maxFlowAbsKwh, 5), [maxFlowAbsKwh])
+  const batteryFlowData = useMemo(
+    () => slots.map((slot, index) => ({
+      ...slot,
+      idx: index,
+      time: slot.label,
+      chargeFromPriceKwh: slot.gridToBatteryKwh,
+      chargeFromExcessPvKwh: slot.pvToBatteryKwh,
+      dischargeToHouseholdKwh: -slot.batteryToLoadKwh,
+      dischargeToPriceKwh: -slot.batteryExportKwh,
+      sellExcessPvKwh: -slot.pvToGridKwh,
+      chargeMarkerPrice: slot.chargeToBatteryKwh > 0 ? slot[flowPriceDataKey] : null,
+      dischargeMarkerPrice: (slot.batteryToLoadKwh + slot.batteryExportKwh) > 0 ? slot[flowPriceDataKey] : null,
+      pvExportMarkerPrice: slot.pvToGridKwh > 0 ? slot[flowPriceDataKey] : null,
+      socBandKwh: maxSocKwh > 0
+        ? (slot.socKwhEnd / maxSocKwh) * flowAxis.domain[1] * 0.9
+        : 0,
+    })),
+    [flowAxis.domain, flowPriceDataKey, maxSocKwh, slots],
+  )
+  const hourTicks = useMemo(() => buildHourTicks(householdData.length), [householdData.length])
+  const householdIndexByTime = useMemo(
+    () => new Map(householdData.map((point) => [point.time, point.idx])),
+    [householdData],
+  )
+  const householdTickTimes = useMemo(
+    () => hourTicks.map((tick) => householdData[tick]?.time).filter((tick): tick is string => Boolean(tick)),
+    [hourTicks, householdData],
+  )
+  const homeMajorHourStep = 2
 
-  const priceAxis = useMemo(() => {
+  const flowPriceAxis = useMemo(() => {
     let minValue = Number.POSITIVE_INFINITY
     let maxValue = Number.NEGATIVE_INFINITY
 
     for (const slot of slots) {
-      minValue = Math.min(minValue, slot.spotPriceCtKwh, slot.householdImportPriceCtKwh, slot.exportPriceCtKwh)
-      maxValue = Math.max(maxValue, slot.spotPriceCtKwh, slot.householdImportPriceCtKwh, slot.exportPriceCtKwh)
+      const priceValue = slot[flowPriceDataKey]
+      minValue = Math.min(minValue, priceValue)
+      maxValue = Math.max(maxValue, priceValue)
     }
 
     if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
       return { ticks: [0, 5, 10], domain: [0, 10] as [number, number] }
     }
 
-    const padding = Math.max((maxValue - minValue) * 0.08, 1.5)
-    const ticks = buildRangeTicks(minValue - padding, maxValue + padding, 5)
-    return { ticks, domain: [ticks[0], ticks[ticks.length - 1]] as [number, number] }
+    if (Math.abs(maxValue - minValue) < 1e-6) {
+      const halfSpan = Math.max(Math.abs(minValue) * 0.03, 0.5)
+      const domain = [Number((minValue - halfSpan).toFixed(6)), Number((maxValue + halfSpan).toFixed(6))] as [number, number]
+      return { ticks: buildRangeTicks(domain[0], domain[1], 5), domain }
+    }
+
+    const padding = Math.max((maxValue - minValue) * 0.03, 0.4)
+    const domain = [Number((minValue - padding).toFixed(6)), Number((maxValue + padding).toFixed(6))] as [number, number]
+    return { ticks: buildRangeTicks(domain[0], domain[1], 5), domain }
+  }, [flowPriceDataKey, slots])
+
+  const isQuarterHour = slotsPerHour >= 4
+  const socTurnAnnotations = useMemo(() => {
+    if (slots.length < 3 || maxSocKwh <= 0) return [] as Array<{ key: string; time: string; y: number; label: string }>
+
+    const epsilon = Math.max(maxSocKwh * 0.001, 0.01)
+    const direction = (delta: number) => (delta > epsilon ? 1 : delta < -epsilon ? -1 : 0)
+    const annotations: Array<{ key: string; time: string; y: number; label: string }> = []
+    for (let index = 1; index < slots.length - 1; index += 1) {
+      const prevDir = direction(slots[index].socKwhEnd - slots[index - 1].socKwhEnd)
+      const nextDir = direction(slots[index + 1].socKwhEnd - slots[index].socKwhEnd)
+      const hasTurn = prevDir !== nextDir && !(prevDir === 0 && nextDir === 0)
+      if (!hasTurn) continue
+
+      const percent = Math.round((slots[index].socKwhEnd / maxSocKwh) * 100)
+      const point = batteryFlowData[index]
+      if (!point) continue
+
+      annotations.push({
+        key: `soc-turn-${index}`,
+        time: point.time,
+        y: point.socBandKwh,
+        label: `${percent}%`,
+      })
+    }
+
+    return annotations
+  }, [batteryFlowData, maxSocKwh, slots])
+  const flowPills = useMemo(() => {
+    let chargeKwh = 0
+    let chargeWeightedCt = 0
+    let dischargeKwh = 0
+    let dischargeWeightedCt = 0
+    let dischargeSavingsEur = 0
+    let pvExportKwh = 0
+    let pvExportWeightedCt = 0
+
+    for (const slot of slots) {
+      if (slot.chargeToBatteryKwh > 0) {
+        chargeKwh += slot.chargeToBatteryKwh
+        chargeWeightedCt += slot.chargeToBatteryKwh * slot.spotPriceCtKwh
+      }
+
+      const slotDischargeKwh = slot.batteryToLoadKwh + slot.batteryExportKwh
+      if (slotDischargeKwh > 0) {
+        dischargeKwh += slotDischargeKwh
+        dischargeWeightedCt += slotDischargeKwh * slot.spotPriceCtKwh
+        dischargeSavingsEur += slot.batteryDischargeSavingsEur
+      }
+
+      if (slot.pvToGridKwh > 0) {
+        pvExportKwh += slot.pvToGridKwh
+        pvExportWeightedCt += slot.pvToGridKwh * slot.exportPriceCtKwh
+      }
+    }
+
+    const chargeAvgCtKwh = chargeKwh > 0 ? chargeWeightedCt / chargeKwh : null
+    const chargeTotalEur = chargeWeightedCt / 100
+    const dischargeAvgCtKwh = dischargeKwh > 0 ? dischargeWeightedCt / dischargeKwh : null
+    const pvExportAvgCtKwh = pvExportKwh > 0 ? pvExportWeightedCt / pvExportKwh : null
+
+    return {
+      charge: chargeAvgCtKwh === null
+        ? null
+        : {
+            avgCtKwh: chargeAvgCtKwh,
+            totalEur: chargeTotalEur,
+          },
+      discharge: dischargeAvgCtKwh === null
+        ? null
+        : {
+            avgCtKwh: dischargeAvgCtKwh,
+            totalEur: dischargeSavingsEur,
+          },
+      pvExport: pvExportAvgCtKwh === null
+        ? null
+        : {
+            avgCtKwh: pvExportAvgCtKwh,
+            totalEur: pvExportWeightedCt / 100,
+          },
+    }
   }, [slots])
+  const flowTopStats = useMemo(() => {
+    let pvExportKwh = 0
+    let pvExportWeightedCt = 0
+    let batteryExportSpotKwh = 0
+    let batteryExportSpotSavingsEur = 0
+    let batteryExportPvKwh = 0
+    let batteryExportPvSavingsEur = 0
+    let chargeFromGridKwh = 0
+    let chargeFromGridWeightedCt = 0
+    let chargeFromPvKwh = 0
+    let chargeFromPvWeightedCt = 0
 
-  const heroStats = useMemo(() => [
-    {
-      label: 'PV kept on site',
-      value: formatKwh(totals.pvToLoad + totals.pvToBattery),
-      detail: `${formatKwh(totals.pvToGrid)} exported`,
-      icon: SunMedium,
-      palette: tone('#FFF7DA', '#7A5B00'),
-    },
-    {
-      label: 'Battery delivered',
-      value: formatKwh(totals.batteryPvToLoad + totals.batteryGridToLoad + totals.batteryPvExport + totals.batteryGridExport),
-      detail: `${formatKwh(totals.gridToBattery)} grid-charged`,
-      icon: BatteryCharging,
-      palette: tone('#FFEAD7', '#9A4E00'),
-    },
-    {
-      label: 'Grid imported',
-      value: formatKwh(totals.gridToLoad + totals.gridToBattery),
-      detail: `${formatKwh(totals.gridToLoad)} to the home`,
-      icon: Zap,
-      palette: tone('#EEF1F5', '#435061'),
-    },
-    {
-      label: 'Net energy cost',
-      value: formatCurrency(totals.netCost, units.currencySym),
-      detail: `${formatCurrency(totals.exportRevenue, units.currencySym)} export revenue`,
-      icon: ArrowRight,
-      palette: tone('#EDF5FF', '#28538B'),
-    },
-  ], [totals, units.currencySym])
+    // Reference price for savings calculation depends on mode
+    const referencePriceKey = priceCurveMode === 'end' ? 'householdImportPriceCtKwh' : 'spotPriceCtKwh'
 
-  const dayFlowSummary = useMemo(() => ([
-    { label: 'PV to home', value: totals.pvToLoad, color: COLORS.pvDirect },
-    { label: 'PV to battery', value: totals.pvToBattery, color: COLORS.pvCharge },
-    { label: 'PV to grid', value: totals.pvToGrid, color: COLORS.export },
-    { label: 'Battery to home', value: totals.batteryPvToLoad + totals.batteryGridToLoad, color: COLORS.pvStored },
-    { label: 'Battery to grid', value: totals.batteryPvExport + totals.batteryGridExport, color: COLORS.gridStored },
-    { label: 'Grid to battery', value: totals.gridToBattery, color: COLORS.gridDirect },
-    { label: 'Grid to home', value: totals.gridToLoad, color: COLORS.gridDirect },
-  ]).filter((item) => item.value > 0.001), [totals])
+    for (const slot of slots) {
+      if (slot.pvToGridKwh > 0) {
+        pvExportKwh += slot.pvToGridKwh
+        pvExportWeightedCt += slot.pvToGridKwh * slot.exportPriceCtKwh
+      }
+      if (slot.batteryGridExportKwh > 0) {
+        batteryExportSpotKwh += slot.batteryGridExportKwh
+        // Calculate savings vs reference price
+        const referencePrice = slot[referencePriceKey]
+        const savingsEur = (slot.exportPriceCtKwh - referencePrice) * slot.batteryGridExportKwh / 100
+        batteryExportSpotSavingsEur += savingsEur
+      }
+      if (slot.batteryPvExportKwh > 0) {
+        batteryExportPvKwh += slot.batteryPvExportKwh
+        // Calculate savings vs reference price
+        const referencePrice = slot[referencePriceKey]
+        const savingsEur = (slot.exportPriceCtKwh - referencePrice) * slot.batteryPvExportKwh / 100
+        batteryExportPvSavingsEur += savingsEur
+      }
+      if (slot.gridToBatteryKwh > 0) {
+        chargeFromGridKwh += slot.gridToBatteryKwh
+        chargeFromGridWeightedCt += slot.gridToBatteryKwh * slot[referencePriceKey]
+      }
+      if (slot.pvToBatteryKwh > 0) {
+        chargeFromPvKwh += slot.pvToBatteryKwh
+        chargeFromPvWeightedCt += slot.pvToBatteryKwh * slot[referencePriceKey]
+      }
+    }
+
+    return {
+      pvExport: {
+        kwh: pvExportKwh,
+        avgCtKwh: pvExportKwh > 0 ? pvExportWeightedCt / pvExportKwh : null,
+      },
+      batteryExportSpot: {
+        kwh: batteryExportSpotKwh,
+        avgSavingCtKwh: batteryExportSpotKwh > 0 ? (batteryExportSpotSavingsEur * 100) / batteryExportSpotKwh : null,
+      },
+      batteryExportPv: {
+        kwh: batteryExportPvKwh,
+        avgSavingCtKwh: batteryExportPvKwh > 0 ? (batteryExportPvSavingsEur * 100) / batteryExportPvKwh : null,
+      },
+      chargeFromGrid: {
+        kwh: chargeFromGridKwh,
+        avgCtKwh: chargeFromGridKwh > 0 ? chargeFromGridWeightedCt / chargeFromGridKwh : null,
+      },
+      chargeFromPv: {
+        kwh: chargeFromPvKwh,
+        avgCtKwh: chargeFromPvKwh > 0 ? chargeFromPvWeightedCt / chargeFromPvKwh : null,
+      },
+    }
+  }, [slots, priceCurveMode])
+  const anchoredFlowPills = useMemo(() => {
+    if (slots.length === 0) return []
+
+    const toPercent = (index: number) => ((index + 0.5) / slots.length) * 100
+    const clampPercent = (value: number) => Math.min(94, Math.max(6, value))
+    const minGapPercent = 23
+    const plotTopPx = flowChartLayout.marginTop
+    const plotBottomPx = flowChartLayout.height - flowChartLayout.marginBottom
+    const plotHeightPx = Math.max(1, plotBottomPx - plotTopPx)
+    const priceDomainSpan = Math.max(1e-6, flowPriceAxis.domain[1] - flowPriceAxis.domain[0])
+    const yMin = plotTopPx + 6
+    const yMax = plotBottomPx - 22
+
+    const weightedCenter = (
+      predicate: (slot: PvBatterySlotResult) => boolean,
+      weight: (slot: PvBatterySlotResult) => number,
+    ) => {
+      let weightedIndex = 0
+      let totalWeight = 0
+
+      slots.forEach((slot, index) => {
+        if (!predicate(slot)) return
+        const w = Math.max(weight(slot), 1e-6)
+        weightedIndex += index * w
+        totalWeight += w
+      })
+
+      if (totalWeight <= 0) return null
+      return clampPercent(toPercent(weightedIndex / totalWeight))
+    }
+    const weightedPrice = (
+      predicate: (slot: PvBatterySlotResult) => boolean,
+      weight: (slot: PvBatterySlotResult) => number,
+    ) => {
+      let weightedPrice = 0
+      let totalWeight = 0
+
+      slots.forEach((slot) => {
+        if (!predicate(slot)) return
+        const w = Math.max(weight(slot), 1e-6)
+        weightedPrice += slot[flowPriceDataKey] * w
+        totalWeight += w
+      })
+
+      if (totalWeight <= 0) return null
+      return weightedPrice / totalWeight
+    }
+    const toCurveYPx = (priceCtKwh: number) => {
+      const ratio = (flowPriceAxis.domain[1] - priceCtKwh) / priceDomainSpan
+      return plotTopPx + ratio * plotHeightPx
+    }
+    const clampYPx = (y: number) => Math.min(yMax, Math.max(yMin, y))
+
+    const candidates: Array<{ id: 'charge' | 'discharge' | 'pvExport'; xPercent: number; curveYPx: number }> = []
+
+    if (flowPills.charge) {
+      const center = weightedCenter(
+        (slot) => slot.chargeToBatteryKwh > 0,
+        (slot) => slot.chargeToBatteryKwh,
+      )
+      const price = weightedPrice(
+        (slot) => slot.chargeToBatteryKwh > 0,
+        (slot) => slot.chargeToBatteryKwh,
+      )
+      if (center !== null && price !== null) candidates.push({ id: 'charge', xPercent: center, curveYPx: toCurveYPx(price) })
+    }
+    if (flowPills.discharge) {
+      const center = weightedCenter(
+        (slot) => (slot.batteryToLoadKwh + slot.batteryExportKwh) > 0,
+        (slot) => slot.batteryToLoadKwh + slot.batteryExportKwh,
+      )
+      const price = weightedPrice(
+        (slot) => (slot.batteryToLoadKwh + slot.batteryExportKwh) > 0,
+        (slot) => slot.batteryToLoadKwh + slot.batteryExportKwh,
+      )
+      if (center !== null && price !== null) candidates.push({ id: 'discharge', xPercent: center, curveYPx: toCurveYPx(price) })
+    }
+    if (flowPills.pvExport) {
+      const center = weightedCenter(
+        (slot) => slot.pvToGridKwh > 0,
+        (slot) => slot.pvToGridKwh,
+      )
+      const price = weightedPrice(
+        (slot) => slot.pvToGridKwh > 0,
+        (slot) => slot.pvToGridKwh,
+      )
+      if (center !== null && price !== null) candidates.push({ id: 'pvExport', xPercent: center, curveYPx: toCurveYPx(price) })
+    }
+
+    const placed: Array<{ id: 'charge' | 'discharge' | 'pvExport'; xPercent: number; yPx: number }> = []
+    ;[...candidates]
+      .sort((a, b) => a.xPercent - b.xPercent)
+      .forEach((pill) => {
+        const placeBelowCurve = pill.curveYPx < plotTopPx + plotHeightPx / 2
+        const offsetDirection = placeBelowCurve ? 1 : -1
+        let yPx = clampYPx(pill.curveYPx + (offsetDirection * 26))
+
+        for (const other of placed) {
+          const collidesX = Math.abs(pill.xPercent - other.xPercent) < minGapPercent
+          const collidesY = Math.abs(yPx - other.yPx) < 24
+          if (!collidesX || !collidesY) continue
+          yPx = clampYPx(yPx + (offsetDirection * 24))
+        }
+
+        placed.push({ id: pill.id, xPercent: pill.xPercent, yPx })
+      })
+    return placed
+  }, [flowChartLayout.height, flowChartLayout.marginBottom, flowChartLayout.marginTop, flowPills.charge, flowPills.discharge, flowPills.pvExport, flowPriceAxis.domain, flowPriceDataKey, slots])
+
+  const maxHomeStackKwh = useMemo(
+    () => Math.max(
+      ...slots.map(
+        (slot) =>
+          slot.pvToLoadKwh +
+          slot.batteryPvToLoadKwh +
+          slot.batteryGridToLoadKwh +
+          slot.gridToLoadKwh,
+      ),
+      0.1,
+    ),
+    [slots],
+  )
+  const homeAxis = useMemo(() => buildPositiveAxis(maxHomeStackKwh, 5), [maxHomeStackKwh])
+  const demandBlockKwh = useMemo(() => Math.max(0.05, homeAxis.step / 4), [homeAxis.step])
+  const toggleSeries = (key: HouseholdSeriesKey) => {
+    setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
+  const toggleFlowLayer = (key: 'charge' | 'discharge' | 'pvExport') => {
+    setVisibleFlowLayers((prev) => ({ ...prev, [key]: !prev[key] }))
+  }
 
   if (loading || slots.length === 0 || !selectedSlot) {
     return (
-      <Card className="rounded-[28px] border-[#E5E7EB] bg-white shadow-sm">
+      <Card className="rounded-[28px] border-gray-200 bg-white shadow-sm">
         <CardContent className="flex h-[420px] items-center justify-center p-8">
           <p className="text-sm text-gray-400">{loading ? 'Computing day profile…' : 'No complete day selected yet.'}</p>
         </CardContent>
@@ -684,233 +675,632 @@ export function PvBatteryDayChart({
 
   return (
     <div className="space-y-5">
-      <div className="space-y-4">
-        {controls ? controls : null}
+      {controls ? <div>{controls}</div> : null}
 
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {heroStats.map((stat) => (
-            <SummaryTile
-              key={stat.label}
-              label={stat.label}
-              value={stat.value}
-              detail={stat.detail}
-              icon={stat.icon}
-              palette={stat.palette}
-            />
-          ))}
-        </div>
-
-        {flowHighlights ?? (
-          <div>
-            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-              {dayFlowSummary.map((flow) => (
-                <DayFlowPill
-                  key={flow.label}
-                  label={flow.label}
-                  value={formatKwh(flow.value)}
-                  color={flow.color}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="p-6 sm:p-7">
-          <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Primary replay</p>
-              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Intraday routing shape</p>
-              <p className="mt-2 text-sm leading-6 text-[#6B7280]">
-                {dayLabel}. PV, battery, and home over the selected 24 hours with larger scales so the routing stays readable.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <LegendPill label="Direct PV" color={COLORS.pvDirect} icon={SunMedium} />
-              <LegendPill label="Stored PV" color={COLORS.pvStored} icon={BatteryCharging} />
-              <LegendPill label="Grid" color={COLORS.gridDirect} icon={Zap} />
-              <LegendPill label="Stored grid" color={COLORS.gridStored} icon={BatteryCharging} />
-              <LegendPill label="Export" color={COLORS.export} icon={ArrowRight} />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            {lanes.map((lane) => (
-              <FlowLaneRow
-                key={lane.key}
-                lane={lane}
-                slots={slots}
-                selectedIndex={effectiveSelectedIndex}
-                setSelectedIndex={setSelectedIndex}
-                slotsPerHour={slotsPerHour}
-              />
-            ))}
-
-            <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-4">
+      {/* Household consumption */}
+      <Card className="overflow-hidden shadow-sm border-gray-200/80">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+            <div className="grid gap-4 lg:grid-cols-[minmax(240px,1fr)_minmax(560px,2fr)_auto] lg:items-center">
+              <div className="pt-0.5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Household</p>
+                <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Consumption Profile</p>
+                <p className="mt-1 text-[13px] font-medium text-slate-500">{dayLabel}</p>
+              </div>
+              <div className="min-w-0">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Total household load</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(daySummary.householdKwh)}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">PV + Grid + Battery</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">PV to household</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(daySummary.pvKwh)}</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Grid to household</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(daySummary.gridKwh)}</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Battery to household</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(daySummary.batteryToLoadKwh)}</p>
+                  </div>
+                </div>
+              </div>
               <div />
-              <div className="grid gap-[2px] pl-[72px] pr-2" style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}>
-                {slots.map((slot, index) => {
-                  const isHourTick = index % slotsPerHour === 0
-                  const isMajorTick = index % (slotsPerHour * majorHourStep) === 0
-                  const showLabel = index === 0 || index === slots.length - 1 || isMajorTick
+            </div>
+          </div>
 
+          <div className="px-4 pb-3 pt-3 sm:px-5">
+            <div className="mb-2 flex flex-wrap items-start gap-2 px-1 py-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => toggleSeries('demand')}
+                  className={`inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${visibleSeries.demand ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-400 hover:bg-slate-50'}`}
+                >
+                  <span className="h-3 w-4 rounded-sm border border-slate-600/35 bg-slate-300/55" style={{ opacity: visibleSeries.demand ? 1 : 0.35 }} />
+                  Total household
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleSeries('pvLoad')}
+                  className={`inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${visibleSeries.pvLoad ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-400 hover:bg-slate-50'}`}
+                >
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.pvDirect, opacity: visibleSeries.pvLoad ? 1 : 0.35 }} />
+                  PV - load
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleSeries('batteryLoad')}
+                  className={`inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${visibleSeries.batteryLoad ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-400 hover:bg-slate-50'}`}
+                >
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.pvStored, opacity: visibleSeries.batteryLoad ? 1 : 0.35 }} />
+                  Battery - load
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleSeries('gridDirect')}
+                  className={`inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium transition-colors ${visibleSeries.gridDirect ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-400 hover:bg-slate-50'}`}
+                >
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.gridDirect, opacity: visibleSeries.gridDirect ? 1 : 0.35 }} />
+                  Grid direct
+                </button>
+              </div>
+              {householdControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{householdControls}</div> : null}
+            </div>
+            <div className="relative h-[420px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={householdData} margin={{ top: 8, right: 26, bottom: 20, left: 10 }} barCategoryGap={1} barGap={0}>
+                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={true} />
+
+                  <XAxis
+                    dataKey="time"
+                    type="category"
+                    ticks={householdTickTimes}
+                    tickFormatter={(value) => {
+                      const index = householdIndexByTime.get(String(value))
+                      if (index === undefined) return ''
+                      return index === 0 || index === householdData.length - 1 || index % (slotsPerHour * homeMajorHourStep) === 0
+                        ? formatHourTick(String(value))
+                        : ''
+                    }}
+                    tick={{ fontSize: 11, fill: COLORS.axisStrong }}
+                    tickLine={{ stroke: COLORS.textSoft }}
+                    axisLine={{ stroke: COLORS.textSoft }}
+                    height={40}
+                  />
+
+                  <YAxis
+                    width={56}
+                    domain={homeAxis.domain}
+                    ticks={homeAxis.ticks}
+                    tick={{ fontSize: 11, fill: COLORS.axis }}
+                    tickLine={{ stroke: COLORS.textSoft }}
+                    axisLine={{ stroke: COLORS.textSoft }}
+                    tickFormatter={(value: number) => formatKwhAxisTick(value, homeAxis.step)}
+                    label={{ value: 'kWh', angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 11 }}
+                  />
+                  {!selectedSlot.label.endsWith('00:00') ? (
+                    <ReferenceLine x={selectedSlot.label} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
+                  ) : null}
+
+                  <Tooltip
+                    contentStyle={{ borderRadius: 18, borderColor: COLORS.border, boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
+                    formatter={(value: number | string | undefined, name: string | undefined) => {
+                      if (typeof value !== 'number') return [value ?? '—', name ?? 'Value']
+                      if (name?.toLowerCase().includes('price')) return [`${value.toFixed(2)} ${units.priceUnit}`, name ?? 'Value']
+                      return [`${value.toFixed(3)} kWh`, name ?? 'Value']
+                    }}
+                    labelFormatter={(value) => {
+                      const index = householdIndexByTime.get(String(value))
+                      const slot = index === undefined ? null : householdData[index]
+                      if (!slot) return dayLabel
+                      const actions = [
+                        slot.isGridChargingBattery ? 'Grid charge' : null,
+                        slot.isBatteryDischarging ? 'Battery discharge' : null,
+                      ].filter(Boolean).join(' · ')
+                      return `${dayLabel} · ${slot.label}${actions ? ` · ${actions}` : ''}`
+                    }}
+                  />
+
+                  {visibleSeries.demand ? (
+                    <Area
+                      name="Household consumption"
+                      type="monotone"
+                      dataKey="totalDemandKwh"
+                      stroke={COLORS.lineHousehold}
+                      strokeOpacity={0.95}
+                      strokeWidth={0}
+                      fill={COLORS.borderStrong}
+                      fillOpacity={0.09}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
+                  {/* Stacked pixel bars for household consumption composition */}
+                  {visibleSeries.pvLoad ? (
+                    <Bar
+                      name="PV -> load"
+                      dataKey="visiblePvToLoadKwh"
+                      fill={COLORS.pvDirect}
+                      minPointSize={2}
+                      isAnimationActive={false}
+                      stackId="consumption"
+                      shape={(props) => <SegmentedBarShape {...props} blockKwh={demandBlockKwh} />}
+                    />
+                  ) : null}
+                  {visibleSeries.batteryLoad ? (
+                    <Bar
+                      name="Battery -> load"
+                      dataKey="visibleBatteryToLoadKwh"
+                      fill={COLORS.pvStored}
+                      minPointSize={2}
+                      isAnimationActive={false}
+                      stackId="consumption"
+                      shape={(props) => <SegmentedBarShape {...props} blockKwh={demandBlockKwh} />}
+                    />
+                  ) : null}
+                  {visibleSeries.gridDirect ? (
+                    <Bar
+                      name="Grid direct"
+                      dataKey="visibleGridToLoadKwh"
+                      fill={COLORS.gridDirect}
+                      minPointSize={2}
+                      isAnimationActive={false}
+                      stackId="consumption"
+                      shape={(props) => <SegmentedBarShape {...props} blockKwh={demandBlockKwh} />}
+                    />
+                  ) : null}
+                  {visibleSeries.demand ? (
+                    <Line
+                      name="Household demand"
+                      type="linear"
+                      dataKey="totalDemandKwh"
+                      stroke={COLORS.lineHousehold}
+                      strokeOpacity={0.95}
+                      strokeWidth={2.2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
+
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden shadow-sm border-gray-200/80">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+            <div className="grid gap-4 lg:grid-cols-[minmax(240px,1fr)_minmax(560px,2fr)_auto] lg:items-center">
+              <div className="pt-0.5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Asset Optimization</p>
+                <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Asset Optimization</p>
+                <p className="mt-1 text-[13px] font-medium text-slate-500">{dayLabel}</p>
+              </div>
+              <div className="min-w-0">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">PV export</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.pvExport.kwh)}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
+                      Avg {flowTopStats.pvExport.avgCtKwh === null ? '—' : `${flowTopStats.pvExport.avgCtKwh.toFixed(2)} ${units.priceUnit}`}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Battery export (Spot)</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.batteryExportSpot.kwh)}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
+                      Avg saving {flowTopStats.batteryExportSpot.avgSavingCtKwh === null ? '—' : `${flowTopStats.batteryExportSpot.avgSavingCtKwh.toFixed(2)} ${units.priceUnit}`}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Battery export (PV)</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.batteryExportPv.kwh)}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
+                      Avg saving {flowTopStats.batteryExportPv.avgSavingCtKwh === null ? '—' : `${flowTopStats.batteryExportPv.avgSavingCtKwh.toFixed(2)} ${units.priceUnit}`}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Charge from grid</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.chargeFromGrid.kwh)}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
+                      Avg {flowTopStats.chargeFromGrid.avgCtKwh === null ? '—' : `${flowTopStats.chargeFromGrid.avgCtKwh.toFixed(2)} ${units.priceUnit}`}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Charge from own PV</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.chargeFromPv.kwh)}</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
+                      Avg {flowTopStats.chargeFromPv.avgCtKwh === null ? '—' : `${flowTopStats.chargeFromPv.avgCtKwh.toFixed(2)} ${units.priceUnit}`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div />
+            </div>
+          </div>
+
+          <div className="px-4 pb-3 pt-3 sm:px-5">
+            <div className="mb-2 flex flex-wrap items-start gap-2 px-1 py-1">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.gridStored }} />
+                  Charge from price (grid)
+                </span>
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.pvCharge }} />
+                  Charge from excess PV
+                </span>
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.pvStored }} />
+                  Discharge to household
+                </span>
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.export }} />
+                  Discharge to price (export)
+                </span>
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.curtailed }} />
+                  Sell excess PV (direct)
+                </span>
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.bandSoc }} />
+                  SoC presence band
+                </span>
+                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
+                  <span className="h-3 w-4 border-b-2" style={{ borderColor: COLORS.lineSpot }} />
+                  {flowPriceLegendLabel}
+                </span>
+              </div>
+              {priceControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{priceControls}</div> : null}
+            </div>
+            <div className="relative h-[420px]">
+              {anchoredFlowPills.map((pill) => {
+                if (pill.id === 'charge' && flowPills.charge) {
                   return (
                     <button
-                      key={`flow-axis-${slot.timestamp}`}
                       type="button"
-                      onClick={() => setSelectedIndex(index)}
-                      className={`flex flex-col items-center gap-1 px-0.5 py-1 text-center transition-colors ${
-                        effectiveSelectedIndex === index ? 'text-[#2563EB]' : 'text-[#94A3B8] hover:text-[#475569]'
-                      }`}
+                      key={pill.id}
+                      onClick={() => toggleFlowLayer('charge')}
+                      className="absolute z-20 -translate-x-1/2"
+                      aria-pressed={visibleFlowLayers.charge}
+                      title={`${visibleFlowLayers.charge ? 'Hide' : 'Show'} charge layers`}
+                      style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
                     >
-                      <span className={`w-px ${isHourTick ? 'bg-[#CBD5E1]' : 'bg-[#E5E7EB]'} ${isMajorTick ? 'h-4' : 'h-2.5'}`} />
-                      <span className={`text-[11px] ${showLabel ? 'font-medium' : 'opacity-0'}`}>
-                        {showLabel ? formatHourTick(slot.label) : '.'}
-                      </span>
+                      <div className={cn(
+                        'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
+                        visibleFlowLayers.charge
+                          ? 'bg-blue-50/80 border-blue-300/50 text-blue-800'
+                          : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
+                      )}>
+                        <BatteryCharging className="h-3 w-3 text-blue-700" />
+                        <span className="font-semibold">Charge</span>
+                        <span className="font-bold tabular-nums">
+                          Avg {flowPills.charge.avgCtKwh.toFixed(2)} {units.priceUnit}
+                        </span>
+                        <span>·</span>
+                        <span className="tabular-nums font-semibold">
+                          Total {units.currencySym}{flowPills.charge.totalEur.toFixed(2)}
+                        </span>
+                      </div>
                     </button>
                   )
-                })}
+                }
+
+                if (pill.id === 'discharge' && flowPills.discharge) {
+                  return (
+                    <button
+                      type="button"
+                      key={pill.id}
+                      onClick={() => toggleFlowLayer('discharge')}
+                      className="absolute z-20 -translate-x-1/2"
+                      aria-pressed={visibleFlowLayers.discharge}
+                      title={`${visibleFlowLayers.discharge ? 'Hide' : 'Show'} discharge layers`}
+                      style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+                    >
+                      <div className={cn(
+                        'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
+                        visibleFlowLayers.discharge
+                          ? 'bg-amber-50/80 border-amber-300/50 text-amber-800'
+                          : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
+                      )}>
+                        <Battery className="h-3 w-3 text-amber-700" />
+                        <span className="font-semibold">Discharge</span>
+                        <span className="font-bold tabular-nums">
+                          Avg {flowPills.discharge.avgCtKwh.toFixed(2)} {units.priceUnit}
+                        </span>
+                        <span>·</span>
+                        <span className="tabular-nums font-semibold">
+                          Total {units.currencySym}{flowPills.discharge.totalEur.toFixed(2)}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                }
+
+                if (pill.id === 'pvExport' && flowPills.pvExport) {
+                  return (
+                    <button
+                      type="button"
+                      key={pill.id}
+                      onClick={() => toggleFlowLayer('pvExport')}
+                      className="absolute z-20 -translate-x-1/2"
+                      aria-pressed={visibleFlowLayers.pvExport}
+                      title={`${visibleFlowLayers.pvExport ? 'Hide' : 'Show'} PV export layers`}
+                      style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+                    >
+                      <div className={cn(
+                        'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
+                        visibleFlowLayers.pvExport
+                          ? 'bg-yellow-50/85 border-yellow-300/50 text-yellow-800'
+                          : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
+                      )}>
+                        <SunMedium className="h-3 w-3 text-yellow-700" />
+                        <span className="font-semibold">PV Export</span>
+                        <span className="font-bold tabular-nums">
+                          Avg {flowPills.pvExport.avgCtKwh.toFixed(2)} {units.priceUnit}
+                        </span>
+                        <span>·</span>
+                        <span className="tabular-nums font-semibold">
+                          Total {units.currencySym}{flowPills.pvExport.totalEur.toFixed(2)}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                }
+
+                return null
+              })}
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart
+                  data={batteryFlowData}
+                  margin={{ top: flowChartLayout.marginTop, right: 18, bottom: flowChartLayout.marginBottom, left: 10 }}
+                  barCategoryGap={1}
+                  barGap={0}
+                >
+                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={true} />
+
+                  <XAxis
+                    dataKey="time"
+                    type="category"
+                    ticks={householdTickTimes}
+                    tickFormatter={(value) => {
+                      const index = householdIndexByTime.get(String(value))
+                      if (index === undefined) return ''
+                      return index === 0 || index === householdData.length - 1 || index % (slotsPerHour * homeMajorHourStep) === 0
+                        ? formatHourTick(String(value))
+                        : ''
+                    }}
+                    tick={{ fontSize: 11, fill: COLORS.axisStrong }}
+                    tickLine={{ stroke: COLORS.textSoft }}
+                    axisLine={{ stroke: COLORS.textSoft }}
+                    height={40}
+                  />
+
+                  <YAxis
+                    yAxisId="flow"
+                    orientation="left"
+                    width={56}
+                    domain={flowAxis.domain}
+                    ticks={flowAxis.ticks}
+                    tick={{ fontSize: 11, fill: COLORS.axis }}
+                    tickLine={{ stroke: COLORS.textSoft }}
+                    axisLine={{ stroke: COLORS.textSoft }}
+                    tickFormatter={(value: number) => formatKwhAxisTick(value, flowAxis.step)}
+                    label={{ value: 'kWh', angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 11 }}
+                  />
+                  <YAxis
+                    yAxisId="price"
+                    orientation="right"
+                    domain={flowPriceAxis.domain}
+                    ticks={flowPriceAxis.ticks}
+                    width={62}
+                    tick={{ fontSize: 10, fill: COLORS.axis }}
+                    tickLine={{ stroke: COLORS.textSoft }}
+                    axisLine={{ stroke: COLORS.textSoft }}
+                    tickFormatter={(value: number) => `${value.toFixed(0)} ${units.priceSym}`}
+                    label={{ value: units.priceUnit, angle: 90, position: 'insideRight', fill: COLORS.axis, fontSize: 10 }}
+                  />
+                  <ReferenceLine yAxisId="flow" y={0} stroke={COLORS.textSoft} strokeDasharray="3 3" />
+
+                  <Tooltip
+                    contentStyle={{ borderRadius: 18, borderColor: COLORS.border, boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
+                    formatter={(value: number | string | undefined, name: string | undefined) => {
+                      if (typeof value !== 'number') return [value ?? '—', name ?? 'Value']
+                      if (name?.toLowerCase().includes('spot price')) return [`${value.toFixed(2)} ${units.priceUnit}`, name ?? 'Value']
+                      return [`${Math.abs(value).toFixed(3)} kWh`, name ?? 'Value']
+                    }}
+                    labelFormatter={(value) => `${dayLabel} · ${String(value)}`}
+                  />
+
+                  <Area
+                    yAxisId="flow"
+                    type="monotone"
+                    dataKey="socBandKwh"
+                    stroke="none"
+                    fill={COLORS.bandSoc}
+                    fillOpacity={0.22}
+                    isAnimationActive={false}
+                    tooltipType="none"
+                  />
+                  {socTurnAnnotations.map((annotation) => (
+                    <ReferenceDot
+                      key={annotation.key}
+                      yAxisId="flow"
+                      x={annotation.time}
+                      y={annotation.y}
+                      r={0}
+                      ifOverflow="hidden"
+                      label={{
+                        value: annotation.label,
+                        position: 'inside',
+                        fill: COLORS.pvStored,
+                        fontSize: 10,
+                        fontWeight: 500,
+                        opacity: 0.22,
+                      }}
+                    />
+                  ))}
+
+                  {visibleFlowLayers.charge ? (
+                    <Bar yAxisId="flow" name="Charge from price (grid)" dataKey="chargeFromPriceKwh" fill={COLORS.gridStored} isAnimationActive={false} stackId="flow" />
+                  ) : null}
+                  {visibleFlowLayers.charge ? (
+                    <Bar yAxisId="flow" name="Charge from excess PV" dataKey="chargeFromExcessPvKwh" fill={COLORS.pvCharge} isAnimationActive={false} stackId="flow" />
+                  ) : null}
+                  {visibleFlowLayers.discharge ? (
+                    <Bar yAxisId="flow" name="Discharge to household" dataKey="dischargeToHouseholdKwh" fill={COLORS.pvStored} isAnimationActive={false} stackId="flow" />
+                  ) : null}
+                  {visibleFlowLayers.discharge ? (
+                    <Bar yAxisId="flow" name="Discharge to price (export)" dataKey="dischargeToPriceKwh" fill={COLORS.export} isAnimationActive={false} stackId="flow" />
+                  ) : null}
+                  {visibleFlowLayers.pvExport ? (
+                    <Bar yAxisId="flow" name="Sell excess PV (direct)" dataKey="sellExcessPvKwh" fill={COLORS.curtailed} isAnimationActive={false} stackId="flow" />
+                  ) : null}
+
+                  <Line
+                    yAxisId="price"
+                    name={flowPriceSeriesName}
+                    type="monotone"
+                    dataKey={flowPriceDataKey}
+                    stroke={COLORS.lineSpot}
+                    strokeWidth={1.8}
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                  {visibleFlowLayers.charge ? (
+                    <Line
+                      yAxisId="price"
+                      name="Battery charge"
+                      type="monotone"
+                      dataKey="chargeMarkerPrice"
+                      stroke={COLORS.markerCharge}
+                      strokeWidth={isQuarterHour ? 2 : 3}
+                      dot={isQuarterHour
+                        ? { r: 2, fill: COLORS.markerCharge, stroke: '#fff', strokeWidth: 1 }
+                        : { r: 3.5, fill: COLORS.markerCharge, stroke: '#fff', strokeWidth: 1.5 }}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
+                  {visibleFlowLayers.discharge ? (
+                    <Line
+                      yAxisId="price"
+                      name="Battery discharge"
+                      type="monotone"
+                      dataKey="dischargeMarkerPrice"
+                      stroke={COLORS.markerDischarge}
+                      strokeWidth={isQuarterHour ? 2 : 3}
+                      dot={isQuarterHour
+                        ? { r: 2, fill: COLORS.markerDischarge, stroke: '#fff', strokeWidth: 1 }
+                        : { r: 3.5, fill: COLORS.markerDischarge, stroke: '#fff', strokeWidth: 1.5 }}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
+                  {visibleFlowLayers.pvExport ? (
+                    <Line
+                      yAxisId="price"
+                      name="PV export on price"
+                      type="monotone"
+                      dataKey="pvExportMarkerPrice"
+                      stroke={COLORS.markerPvExport}
+                      strokeWidth={isQuarterHour ? 2 : 3}
+                      dot={isQuarterHour
+                        ? { r: 2, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1 }
+                        : { r: 3.5, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1.5 }}
+                      connectNulls={false}
+                      isAnimationActive={false}
+                    />
+                  ) : null}
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {savingsCard ? (
+        <Card className="overflow-hidden shadow-sm border-gray-200/80">
+          <CardContent className="p-0">
+            <div className="px-6 py-5 sm:px-7">
+              <div className="mb-5 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Savings</p>
+                  <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Selected Day Replay</p>
+                </div>
+                <p className="text-[12px] text-slate-400 tabular-nums">
+                  {savingsCard.selectedDay.sessionKwh.toFixed(1)} kWh/session
+                </p>
+              </div>
+
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,0.5fr)]">
+                <div className="rounded-lg border border-emerald-300/70 bg-emerald-100/85 px-5 py-4 shadow-sm ring-1 ring-emerald-200/60">
+                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.16em] mb-1.5">Savings on selected day</p>
+                  <span className="text-[64px] leading-none font-extrabold tabular-nums text-emerald-700">
+                    {savingsCard.selectedDay.savingsCtKwh.toFixed(2)}
+                  </span>
+                  <span className="text-[40px] font-semibold text-slate-500 ml-2">{units.priceUnit}</span>
+                  <span className="text-[40px] font-medium text-slate-500 ml-2">cheaper</span>
+                  <p className="text-[40px] mt-2 text-emerald-700/80">
+                    = {(savingsCard.selectedDay.savingsEur * 100).toFixed(1)} {units.priceSym} saved on {savingsCard.selectedDay.sessionKwh.toFixed(1)} kWh session
+                  </p>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-3">
+                  <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.16em]">Market spread</p>
+                  <p className="mt-1 text-[48px] font-bold tabular-nums leading-none text-slate-800">
+                    {savingsCard.selectedDay.marketSpreadCtKwh.toFixed(2)}
+                    <span className="text-[32px] font-medium text-slate-400 ml-2">{units.priceSym}</span>
+                  </p>
+                  <p className="mt-2 text-[12px] text-gray-500">
+                    {savingsCard.selectedDay.cheapestHour} ↔ {savingsCard.selectedDay.expensiveHour}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 border-t border-gray-100 pt-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-[0.16em]">Historical savings with same settings</span>
+                  <span className="text-[12px] text-slate-400 tabular-nums">
+                    {savingsCard.selectedDay.sessionKwh.toFixed(1)} kWh/session
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+                    <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-[0.14em]">Last 4 weeks average</p>
+                    <p className="text-[44px] font-extrabold tabular-nums leading-none text-emerald-700">
+                      {savingsCard.historical.last4WeeksAvgCtKwh.toFixed(2)}
+                      <span className="text-[28px] font-medium text-slate-400 ml-2">{units.priceUnit}</span>
+                    </p>
+                    <p className="text-[32px] mt-1 text-gray-500 leading-relaxed">
+                      {savingsCard.historical.last4WeeksTotalEur.toFixed(2)} {units.currency} total
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50/70 px-4 py-3">
+                    <p className="text-[9px] font-semibold text-gray-500 uppercase tracking-[0.14em]">Last 52 weeks average</p>
+                    <p className="text-[44px] font-extrabold tabular-nums leading-none text-emerald-700">
+                      {savingsCard.historical.last52WeeksAvgCtKwh.toFixed(2)}
+                      <span className="text-[28px] font-medium text-slate-400 ml-2">{units.priceUnit}</span>
+                    </p>
+                    <p className="text-[32px] mt-1 text-gray-500 leading-relaxed">
+                      {Math.round(savingsCard.historical.last52WeeksAnnualEur)} {units.currency}/yr
+                    </p>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      ) : null}
 
-      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="p-6 sm:p-7">
-          <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Market context</p>
-              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Price Replay</p>
-              <p className="mt-2 text-sm text-[#6B7280]">Spot, household import, and export value with the same chart language as `/v2`.</p>
-              {priceNote ? <p className="mt-2 text-[12px] leading-5 text-[#6B7280]">{priceNote}</p> : null}
-            </div>
-
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {priceControls}
-              <LegendPill label="Spot" color={COLORS.lineSpot} icon={Zap} />
-              <LegendPill label="Household" color={COLORS.lineHousehold} icon={Home} />
-              <LegendPill label="Export" color={COLORS.lineExport} icon={ArrowRight} />
-            </div>
-          </div>
-
-          <div className="h-[392px] rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={priceData} margin={{ top: 8, right: 18, bottom: 18, left: 18 }}>
-                <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" vertical={false} />
-
-                <XAxis
-                  dataKey="idx"
-                  type="number"
-                  domain={[0, Math.max(priceData.length - 1, 1)]}
-                  ticks={hourTicks}
-                  tickFormatter={(value) => {
-                    const slot = priceData[Number(value)]
-                    if (!slot) return ''
-                    const index = Number(value)
-                    return index === 0 || index === priceData.length - 1 || index % (slotsPerHour * majorHourStep) === 0
-                      ? formatHourTick(slot.label)
-                      : ''
-                  }}
-                  tick={{ fontSize: 11, fill: '#475569' }}
-                  tickLine={false}
-                  axisLine={false}
-                  allowDecimals={false}
-                  height={40}
-                />
-
-                <YAxis
-                  domain={priceAxis.domain}
-                  ticks={priceAxis.ticks}
-                  width={84}
-                  tick={{ fontSize: 11, fill: '#64748B' }}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(value) => `${value.toFixed(0)} ${units.priceSym}`}
-                />
-
-                {ranges.gridCharge.map((range, index) => (
-                  <ReferenceArea key={`charge-${index}`} x1={range.x1} x2={range.x2} fill={COLORS.bandCharge} fillOpacity={0.18} ifOverflow="hidden" />
-                ))}
-                {ranges.batteryUse.map((range, index) => (
-                  <ReferenceArea key={`battery-${index}`} x1={range.x1} x2={range.x2} fill={COLORS.bandBattery} fillOpacity={0.16} ifOverflow="hidden" />
-                ))}
-                {ranges.pvExport.map((range, index) => (
-                  <ReferenceArea key={`pv-${index}`} x1={range.x1} x2={range.x2} fill={COLORS.bandPv} fillOpacity={0.22} ifOverflow="hidden" />
-                ))}
-
-                <ReferenceLine x={effectiveSelectedIndex} stroke="#111827" strokeOpacity={0.26} strokeDasharray="3 4" />
-
-                <Tooltip
-                  contentStyle={{ borderRadius: 18, borderColor: '#E5E0D5', boxShadow: '0 18px 40px rgba(15,23,42,0.12)' }}
-                  formatter={(value: number | string | undefined, name: string | undefined) => {
-                    if (typeof value !== 'number') return [value ?? '—', name ?? 'Value']
-                    return [value.toFixed(2), name ?? 'Value']
-                  }}
-                  labelFormatter={(value) => {
-                    const slot = priceData[Number(value)]
-                    if (!slot) return dayLabel
-                    const actions = [
-                      slot.isGridChargingBattery ? 'Grid charge' : null,
-                      slot.isBatteryExporting ? 'Battery export' : slot.isBatteryDischarging ? 'Battery discharge' : null,
-                      slot.isDirectPvExporting ? 'PV export' : null,
-                    ].filter(Boolean).join(' · ')
-                    return `${dayLabel} · ${slot.label}${actions ? ` · ${actions}` : ''}`
-                  }}
-                />
-
-                <Line
-                  type="monotone"
-                  name={`Spot price (${units.priceUnit})`}
-                  dataKey="spotPriceCtKwh"
-                  stroke={COLORS.lineSpot}
-                  strokeWidth={2.1}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  name={`Household price (${units.priceUnit})`}
-                  dataKey="householdImportPriceCtKwh"
-                  stroke={COLORS.lineHousehold}
-                  strokeWidth={1.9}
-                  strokeDasharray="5 4"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-                <Line
-                  type="monotone"
-                  name={`Export value (${units.priceUnit})`}
-                  dataKey="exportPriceCtKwh"
-                  stroke={COLORS.lineExport}
-                  strokeWidth={1.7}
-                  strokeDasharray="3 5"
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-
-          <div className="mt-3 grid gap-2 text-[12px] text-[#5F5D55] sm:grid-cols-3">
-            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
-              <p className="font-semibold text-[#171717]">Gray bands</p>
-              <p className="mt-1 leading-6">Grid-charging windows.</p>
-            </div>
-            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
-              <p className="font-semibold text-[#171717]">Amber bands</p>
-              <p className="mt-1 leading-6">Battery discharge or export windows.</p>
-            </div>
-            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
-              <p className="font-semibold text-[#171717]">Blue bands</p>
-              <p className="mt-1 leading-6">Direct PV export windows.</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   )
 }

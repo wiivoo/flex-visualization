@@ -227,36 +227,14 @@ function V2Inner() {
                   <span className="text-[10px] text-gray-400">Tariff view</span>
                 </Link>
                 <Link
-                  href="/battery"
+                  href="/battery/calculator"
                   className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
                 >
                   Battery
-                  <span className="text-[10px] text-gray-400">Home storage</span>
-                </Link>
-                <Link
-                  href="/v2/calculator"
-                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
-                >
-                  Calculator
-                  <span className="text-[10px] text-gray-400">Fast value estimate</span>
-                </Link>
-                <Link
-                  href="/v2/insights"
-                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
-                >
-                  Management
-                  <span className="text-[10px] text-gray-400">Exec KPIs</span>
+                  <span className="text-[10px] text-gray-400">Calculation</span>
                 </Link>
               </div>
             </details>
-            <Link
-              href="/v2/insights"
-              className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              Insights
-            </Link>
             <button
               onClick={() => setShowTutorial(true)}
               className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-600 transition-colors">

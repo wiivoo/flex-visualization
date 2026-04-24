@@ -50,11 +50,16 @@ export interface PvBatterySlotResult {
   batteryToLoadKwh: number
   batteryPvToLoadKwh: number
   batteryGridToLoadKwh: number
+  batteryLoadSavingsEur: number
   directExportKwh: number
   pvToGridKwh: number
   batteryExportKwh: number
   batteryPvExportKwh: number
   batteryGridExportKwh: number
+  batteryPvExportSavingsEur: number
+  batteryGridExportSavingsEur: number
+  batteryExportSavingsEur: number
+  batteryDischargeSavingsEur: number
   curtailedKwh: number
   gridImportKwh: number
   gridToLoadKwh: number
@@ -153,6 +158,11 @@ interface ExactBatteryDischargeSplit {
   batteryGridToLoadKwh: number
   batteryPvExportKwh: number
   batteryGridExportKwh: number
+  batteryPvExportSavingsEur: number
+  batteryGridExportSavingsEur: number
+  batteryLoadSavingsEur: number
+  batteryExportSavingsEur: number
+  batteryDischargeSavingsEur: number
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -400,7 +410,8 @@ function storePvChargeLots(
 
   insertStoredLot(pvLots, curtailedChargeKwh, 0)
   insertStoredLot(pvLots, exportChargeKwh, slot.exportPriceCtKwh)
-  insertStoredLot(pvLots, directUseChargeKwh, slot.importPriceCtKwh)
+  // Savings valuation uses spot price as reference for displaced direct load.
+  insertStoredLot(pvLots, directUseChargeKwh, slot.price.priceCtKwh)
 
   if (remainingChargeKwh > EPSILON) {
     insertStoredLot(pvLots, remainingChargeKwh, slot.exportPriceCtKwh)
@@ -423,6 +434,11 @@ function consumeLowerValueStoredEnergy(
       batteryGridToLoadKwh: 0,
       batteryPvExportKwh: 0,
       batteryGridExportKwh: 0,
+      batteryPvExportSavingsEur: 0,
+      batteryGridExportSavingsEur: 0,
+      batteryLoadSavingsEur: 0,
+      batteryExportSavingsEur: 0,
+      batteryDischargeSavingsEur: 0,
     }
   }
 
@@ -444,6 +460,11 @@ function consumeLowerValueStoredEnergy(
     batteryGridToLoadKwh: 0,
     batteryPvExportKwh: 0,
     batteryGridExportKwh: 0,
+    batteryPvExportSavingsEur: 0,
+    batteryGridExportSavingsEur: 0,
+    batteryLoadSavingsEur: 0,
+    batteryExportSavingsEur: 0,
+    batteryDischargeSavingsEur: 0,
   }
 
   let remainingStoredKwh = storedToRemoveKwh
@@ -473,11 +494,21 @@ function consumeLowerValueStoredEnergy(
       const allocatedKwh = Math.min(sink.remainingKwh, remainingOutputKwh)
       sink.remainingKwh = round6(sink.remainingKwh - allocatedKwh)
       remainingOutputKwh = Math.max(0, remainingOutputKwh - allocatedKwh)
+      const storedInputEquivalentKwh = allocatedKwh / roundTripEff
+      const realizedSavingsEur = (
+        (sink.valueCtKwh * allocatedKwh) -
+        (lot.valueCtKwh * storedInputEquivalentKwh)
+      ) / 100
 
       if (origin === 'pv' && sink.key === 'load') split.batteryPvToLoadKwh += allocatedKwh
       if (origin === 'grid' && sink.key === 'load') split.batteryGridToLoadKwh += allocatedKwh
       if (origin === 'pv' && sink.key === 'export') split.batteryPvExportKwh += allocatedKwh
       if (origin === 'grid' && sink.key === 'export') split.batteryGridExportKwh += allocatedKwh
+      if (sink.key === 'load') split.batteryLoadSavingsEur += realizedSavingsEur
+      if (sink.key === 'export') split.batteryExportSavingsEur += realizedSavingsEur
+      if (origin === 'pv' && sink.key === 'export') split.batteryPvExportSavingsEur += realizedSavingsEur
+      if (origin === 'grid' && sink.key === 'export') split.batteryGridExportSavingsEur += realizedSavingsEur
+      split.batteryDischargeSavingsEur += realizedSavingsEur
     }
   }
 
@@ -486,6 +517,11 @@ function consumeLowerValueStoredEnergy(
     batteryGridToLoadKwh: round6(split.batteryGridToLoadKwh),
     batteryPvExportKwh: round6(split.batteryPvExportKwh),
     batteryGridExportKwh: round6(split.batteryGridExportKwh),
+    batteryPvExportSavingsEur: round6(split.batteryPvExportSavingsEur),
+    batteryGridExportSavingsEur: round6(split.batteryGridExportSavingsEur),
+    batteryLoadSavingsEur: round6(split.batteryLoadSavingsEur),
+    batteryExportSavingsEur: round6(split.batteryExportSavingsEur),
+    batteryDischargeSavingsEur: round6(split.batteryDischargeSavingsEur),
   }
 }
 
@@ -624,6 +660,7 @@ function buildDischargeDispatch(
   if (!permissions.batteryToLoad && !permissions.batteryToGrid) return null
 
   if (!permissions.batteryToLoad) {
+    // Battery can only discharge to grid - check if discharge exceeds export cap
     if (!permissions.batteryToGrid || dischargeOutputKwh > cappedExport + EPSILON) return null
     const pvToLoadKwh = choosePvToLoad(
       pvKwh,
@@ -657,6 +694,8 @@ function buildDischargeDispatch(
   }
 
   if (!permissions.batteryToGrid) {
+    // Battery can only discharge to load - no export cap constraint needed
+    // Discharge is limited by load, not by feed-in cap
     if (dischargeOutputKwh > loadKwh + EPSILON) return null
     const pvToLoadKwh = choosePvToLoad(
       pvKwh,
@@ -690,6 +729,8 @@ function buildDischargeDispatch(
   }
 
   if (!permissions.pvToGrid) {
+    // No PV export allowed - battery can export but PV excess is curtailed
+    // Battery discharge split: prioritize load first, then export up to cap
     const directSelfKwh = permissions.pvToLoad ? Math.min(pvKwh, loadKwh) : 0
     const residualLoadKwh = Math.max(0, loadKwh - directSelfKwh)
     let batteryToLoadKwh = exportPriceCtKwh > importPriceCtKwh
@@ -697,6 +738,7 @@ function buildDischargeDispatch(
       : Math.min(dischargeOutputKwh, residualLoadKwh)
 
     const batteryExportKwh = dischargeOutputKwh - batteryToLoadKwh
+    // Validate: battery to load cannot exceed residual load, battery export cannot exceed cap
     if (
       batteryToLoadKwh > residualLoadKwh + EPSILON ||
       batteryExportKwh > cappedExport + EPSILON
@@ -723,6 +765,9 @@ function buildDischargeDispatch(
     }
   }
 
+  // Full flexibility: both PV and battery can export
+  // z = total energy serving load (PV + battery combined)
+  // Battery export is capped at feedInCapKwh, but total discharge is not limited by it
   const pvLoadMax = permissions.pvToLoad ? pvKwh : 0
   const zMin = 0
   const zMax = Math.min(loadKwh, dischargeOutputKwh + pvLoadMax)
@@ -740,6 +785,7 @@ function buildDischargeDispatch(
     const directSelfKwh = Math.min(pvLoadMax, z)
     const batteryToLoadKwh = z - directSelfKwh
     const batteryExportKwh = dischargeOutputKwh - batteryToLoadKwh
+    // Only the grid export portion is capped, not total discharge
     if (batteryExportKwh > cappedExport + EPSILON) continue
 
     const pvRemaining = Math.max(0, pvKwh - directSelfKwh)
@@ -848,16 +894,36 @@ export function buildProfileSeries(
   })
 }
 
+export interface PvRadiationAdjustment {
+  monthlyFactors: number[] // 12 monthly multipliers (e.g., 0.95, 1.05, etc.)
+}
+
 export function buildPvBatteryInputs(
   rawPrices: HourlyPrice[],
   loadProfile: number[],
   pvProfile: number[],
   scenario: PvBatteryCalculatorScenario,
+  radiationAdjustment?: PvRadiationAdjustment | null,
 ): OptimizerSlotInput[] {
   const importPrices = mapPricesToRetailTariff(rawPrices, scenario.tariffId, scenario.country)
   const annualPvKwh = (scenario.pvCapacityWp / 1000) * PV_YIELD_KWH_PER_KWP[scenario.country]
+  const slotHours = getSlotHours(rawPrices)
   const loadKwh = buildProfileSeries(rawPrices, loadProfile, scenario.annualLoadKwh)
-  const pvKwh = buildProfileSeries(rawPrices, pvProfile, annualPvKwh)
+
+  // Apply radiation adjustment if available
+  let pvKwh: number[]
+  if (radiationAdjustment) {
+    pvKwh = rawPrices.map((point, index) => {
+      const hourIdx = hourIndexFromTimestamp(point.timestamp)
+      const baseValue = (pvProfile[hourIdx] ?? 0) * annualPvKwh * slotHours
+      // Apply monthly factor based on the date
+      const month = new Date(point.timestamp).getUTCMonth()
+      const monthlyFactor = radiationAdjustment.monthlyFactors[month] ?? 1.0
+      return baseValue * monthlyFactor
+    })
+  } else {
+    pvKwh = buildProfileSeries(rawPrices, pvProfile, annualPvKwh)
+  }
 
   return rawPrices.map((price, index) => ({
     price,
@@ -992,8 +1058,9 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       throw new Error(`optimizePvBattery: infeasible dispatch reconstruction at slot ${slotIndex}`)
     }
 
-    const slotBaselineCostEur = (slot.loadKwh * slot.importPriceCtKwh) / 100
-    const slotImportCostEur = ((dispatch.gridImportKwh + dispatch.gridToBatteryKwh) * slot.importPriceCtKwh) / 100
+    const spotReferenceCtKwh = slot.price.priceCtKwh
+    const slotBaselineCostEur = (slot.loadKwh * spotReferenceCtKwh) / 100
+    const slotImportCostEur = ((dispatch.gridImportKwh + dispatch.gridToBatteryKwh) * spotReferenceCtKwh) / 100
     const slotExportRevenueEur = ((dispatch.directExportKwh + dispatch.batteryExportKwh) * slot.exportPriceCtKwh) / 100
     const slotNetCostEur = slotImportCostEur - slotExportRevenueEur
     const slotSavingsEur = slotBaselineCostEur - slotNetCostEur
@@ -1002,7 +1069,7 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       storePvChargeLots(pvLots, slot, permissions, dispatch, feedInCapKwh)
     }
     if (dispatch.gridToBatteryKwh > EPSILON) {
-      insertStoredLot(gridLots, dispatch.gridToBatteryKwh, slot.importPriceCtKwh)
+      insertStoredLot(gridLots, dispatch.gridToBatteryKwh, spotReferenceCtKwh)
     }
 
     const exactDischargeSplit = consumeLowerValueStoredEnergy(
@@ -1012,7 +1079,7 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       dispatch.batteryToLoadKwh,
       dispatch.batteryExportKwh,
       roundTripEff,
-      slot.importPriceCtKwh,
+      spotReferenceCtKwh,
       slot.exportPriceCtKwh,
     )
     pvBatteryToLoadKwh += exactDischargeSplit.batteryPvToLoadKwh
@@ -1068,11 +1135,16 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       batteryToLoadKwh: round3(dispatch.batteryToLoadKwh),
       batteryPvToLoadKwh: round3(exactDischargeSplit.batteryPvToLoadKwh),
       batteryGridToLoadKwh: round3(exactDischargeSplit.batteryGridToLoadKwh),
+      batteryLoadSavingsEur: round3(exactDischargeSplit.batteryLoadSavingsEur),
       directExportKwh: round3(dispatch.directExportKwh),
       pvToGridKwh: round3(dispatch.directExportKwh),
       batteryExportKwh: round3(dispatch.batteryExportKwh),
       batteryPvExportKwh: round3(exactDischargeSplit.batteryPvExportKwh),
       batteryGridExportKwh: round3(exactDischargeSplit.batteryGridExportKwh),
+      batteryPvExportSavingsEur: round3(exactDischargeSplit.batteryPvExportSavingsEur),
+      batteryGridExportSavingsEur: round3(exactDischargeSplit.batteryGridExportSavingsEur),
+      batteryExportSavingsEur: round3(exactDischargeSplit.batteryExportSavingsEur),
+      batteryDischargeSavingsEur: round3(exactDischargeSplit.batteryDischargeSavingsEur),
       curtailedKwh: round3(dispatch.curtailedKwh),
       gridImportKwh: round3(dispatch.gridImportKwh),
       gridToLoadKwh: round3(dispatch.gridImportKwh),

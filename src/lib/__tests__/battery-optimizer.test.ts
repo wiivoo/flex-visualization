@@ -161,6 +161,33 @@ describe('runBatteryDay — round-trip efficiency', () => {
   })
 })
 
+describe('runBatteryDay — no-PV arbitrage dispatch', () => {
+  it('discharges on profitable evening load even if absolute peak prices occur at low-load hours', () => {
+    // Night is cheap (charge), midday is very expensive but load is near-zero,
+    // evening is still expensive enough for profitable discharge and has demand.
+    const prices = mkHourlyPrices([
+      10, 10, 10, 10, 10, 10, 20, 20, 20, 20, 50, 50,
+      50, 50, 25, 25, 25, 25, 35, 35, 35, 35, 20, 15,
+    ])
+    const noPv = mkNoPv()
+    const load = Array(96).fill(0).map((_, i) => {
+      const hour = Math.floor(i / 4)
+      if (hour >= 10 && hour <= 13) return 0.01 // near-zero during absolute price peaks
+      if (hour >= 18 && hour <= 21) return 0.16 // clear evening demand
+      return 0.04
+    })
+
+    const { slots } = runBatteryDay(prices, noPv, load, BASE_PARAMS)
+    const eveningDischarge = slots
+      .filter((slot) => slot.hour >= 18 && slot.hour <= 21)
+      .reduce((sum, slot) => sum + slot.dischargeToLoadKwh, 0)
+    const totalGridCharge = slots.reduce((sum, slot) => sum + slot.chargeFromGridKwh, 0)
+
+    expect(totalGridCharge).toBeGreaterThan(0.1)
+    expect(eveningDischarge).toBeGreaterThan(0.05)
+  })
+})
+
 describe('runBatteryDay — guards', () => {
   it('returns zeroed result when usableKwh === 0', () => {
     const prices = mkHourlyPrices(Array(24).fill(20))

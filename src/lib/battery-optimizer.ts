@@ -23,7 +23,7 @@
  *  Pass 2  Walk chronologically. For each slot:
  *            (a) Charge battery from PV surplus (free).
  *            (b) If price is in the cheap quantile, charge from grid up to budget.
- *            (c) If price is in the expensive quantile and SoC > 0, discharge to load
+ *            (c) If price clears an economic discharge floor and SoC > 0, discharge to load
  *                up to min(maxDischarge, residual load, socKwh × roundTripEff, feedInCap).
  *          Require a minimum cheap/expensive spread (> 0.5 ct/kWh) before cycling,
  *          so flat-price days leave the battery idle (matches physical reality and the
@@ -231,6 +231,23 @@ export function runBatteryDay(
   const expensiveCutoff = maxPrice - priceRange * 0.2
   const hasArbitrageSpread = expensiveCutoff - cheapCutoff > MIN_ARBITRAGE_SPREAD_CT_KWH
 
+  // Economic discharge threshold:
+  // If the battery was charged around the cheap-band average, discharging below
+  // chargePrice/eff is value-destructive. Add the minimum spread guard so we only
+  // cycle when margin is meaningfully positive.
+  let cheapPriceSum = 0
+  let cheapPriceCount = 0
+  for (let i = 0; i < N; i++) {
+    const price = slots[i].priceCtKwh
+    if (price <= cheapCutoff) {
+      cheapPriceSum += price
+      cheapPriceCount++
+    }
+  }
+  const avgCheapPriceCtKwh = cheapPriceCount > 0 ? cheapPriceSum / cheapPriceCount : cheapCutoff
+  const minEff = Math.max(0.01, params.roundTripEff)
+  const dischargePriceFloorCtKwh = avgCheapPriceCtKwh / minEff + MIN_ARBITRAGE_SPREAD_CT_KWH
+
   let socKwh = Math.max(0, Math.min(startSocKwh, params.usableKwh))
 
   for (let i = 0; i < N; i++) {
@@ -258,8 +275,8 @@ export function runBatteryDay(
       }
     }
 
-    // (c) Discharge to load when price is expensive and battery has energy.
-    if (hasArbitrageSpread && s.priceCtKwh >= expensiveCutoff && socKwh > 0) {
+    // (c) Discharge to load when current price clears the economic floor.
+    if (hasArbitrageSpread && s.priceCtKwh >= dischargePriceFloorCtKwh && socKwh > 0) {
       // Energy delivered to load = socKwh × roundTripEff (penalty on discharge side).
       // Capped by: max discharge power, residual load (no export!), feed-in cap.
       const residualLoad = Math.max(0, s.loadKwh - s.pvSelfKwh - s.dischargeToLoadKwh)
