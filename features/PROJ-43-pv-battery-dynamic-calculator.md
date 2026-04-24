@@ -209,3 +209,217 @@ Rules:
 - [ ] The selected-day chart shows price plus routed energy flows, including battery charge, battery discharge to load, direct export, battery export, grid import, and curtailment when present.
 - [ ] The selected-day controls let the user inspect any valid replay day without changing the annual optimization result.
 - [ ] If the requested replay year or selected day lacks sufficient data, the UI states that limitation clearly instead of showing a misleading annual result or unsupported fine-grain replay.
+
+## Tech Design (Solution Architect)
+
+### 1) Component Structure (PM-friendly visual tree)
+
+`/battery/calculator` page
++-- `CalculatorLayoutShell` (two-column `/v2`-style frame)  
++-- Left Rail: `CalculatorControlsRail` (sticky)
+  - Tariff and replay-year controls
+  - Household demand and load-profile controls
+  - PV and battery sizing controls
+  - Operational limits controls (charge/discharge/export)
+  - Permission matrix toggles for allowed energy flows
+  - Selected-day picker and resolution selector
+  - Input provenance hints (user-entered vs inferred)
++-- Right Panel: `CalculatorResultsPanel`
+  - `AnnualKpiStrip` (baseline vs optimized totals, savings, self-sufficiency, self-consumption)
+  - `AnnualCostBreakdownCard` (import cost, export revenue, modeled deductions)
+  - `FlowPermissionSummaryCard` (active operational mode summary)
+  - `SelectedDayReplayCard`
+  - `SelectedDayRoutingChart` (price + flows + SoC trace)
+  - `DataQualityStateCard` (full-year, partial-year, or unsupported replay states)
+
+Notes:
+- Existing components under `src/components/battery/calculator/` remain the implementation anchor.
+- This feature adds or refines responsibilities, not a second competing calculator architecture.
+
+### 2) Data Model (plain-language domain entities)
+
+`ScenarioInput` (user-provided)
+- Tariff identifier
+- Replay year
+- Annual household demand
+- Load profile choice (temporary assumption set `H25/P25/S25` until ambiguity is resolved)
+- PV size
+- Battery usable capacity
+- Charge power limit
+- Discharge power limit
+- Round-trip efficiency
+- Export limit
+- Flow permission toggles
+- Selected day
+- Requested replay resolution
+
+`InferredMarketData` (system-derived)
+- Import price time series for selected tariff/year
+- Export valuation time series for selected tariff/year
+- Interval calendar and resolution availability
+
+`InferredProfiles` (system-derived)
+- Normalized annual household load shape for selected profile
+- Normalized PV generation shape for Germany
+- Annual PV yield assumptions used for scaling
+
+`DispatchIntervalResult` (optimizer output per interval)
+- Household load served by PV
+- Household load served by battery
+- Household load served by grid
+- PV to battery charging
+- Grid to battery charging
+- Direct PV export
+- Battery export
+- PV curtailment
+- Battery state of charge (start/end interval)
+- Interval objective contribution (cost/revenue components)
+
+`AnnualSummaryResult` (aggregated output)
+- Baseline total modeled electricity cost
+- Optimized total modeled electricity cost
+- Absolute savings and relative savings
+- Total import energy and cost
+- Total export energy and revenue
+- Total curtailment
+- Self-sufficiency and self-consumption as outcome metrics only
+- Data completeness status and confidence label
+
+`CalculationMeta`
+- Versioned assumption bundle ID
+- Completeness flags and missing-interval counts
+- Constraint status (feasible/infeasible)
+- User-vs-inferred provenance map for display copy
+
+### 3) Optimization Model (objective, constraints, routing/permissions)
+
+Objective:
+- Minimize annual net household electricity cost.
+- Net cost equals import costs minus export revenues plus modeled export-related deductions.
+
+Primary constraints:
+- Energy balance holds each interval.
+- Battery state of charge stays within 0 and usable capacity.
+- Charge and discharge power limits are enforced.
+- Shared export connection cap is enforced for combined PV export and battery export.
+- Battery cannot charge and discharge in the same interval.
+- No deliberate same-interval import/export arbitrage loop.
+
+Routing and permissions model:
+- Permission toggles define which directed flow edges are available.
+- Disabled flow edges are removed from feasible routing, not deprioritized.
+- `Grid -> household` is always enabled fallback and not user-disableable.
+- Surplus PV with no enabled destination is curtailed.
+- Residual household demand with no enabled non-grid supply is imported from grid.
+
+Feasibility handling:
+- If a scenario is physically feasible, return least-cost dispatch.
+- If controls create a structurally constrained but still feasible system, return higher-cost result with explanatory notes.
+- If an input set is infeasible, block final KPI claim and return explicit constraint-error state.
+
+### 4) Calculation Flow (end-to-end)
+
+1. Capture current `ScenarioInput` from left rail.
+2. Resolve inferred market data and profile shapes for tariff/year/profile.
+3. Validate input bounds and permission coherence.
+4. Build annual interval replay dataset at available resolution.
+5. Run baseline replay with same tariff/year/demand but without PV and battery value.
+6. Run optimized replay with PV+battery and active permissions.
+7. Aggregate annual KPIs and cost breakdown.
+8. Slice selected-day data from the annual optimized replay result.
+9. Render right-panel cards and selected-day chart from the same annual run.
+10. Attach completeness and provenance messages before displaying final outcome labels.
+
+Design rule for day view:
+- The selected-day chart is always an explanatory slice of annual optimization output, never a separate day-only re-optimization.
+
+### 5) Assumptions
+
+- This feature is Germany-only in this iteration.
+- Market price and export valuation logic follows existing repo market assumptions.
+- Household profile normalization and PV normalization are treated as stable inferred models for this release.
+- Interval replay granularity is bounded by available historical data.
+- Fixed tariff fees are excluded from dispatch optimization and may be shown in totals only if consistently applied to baseline and optimized cases.
+
+### 6) Edge Case Strategy
+
+- `PV = 0`: run as non-generating scenario; battery value depends on grid-charging permission.
+- `Battery = 0`: run as PV-only scenario with all battery flows fixed to zero.
+- All export disabled: enforce load, battery, or curtailment only.
+- `PV -> load` disabled while export enabled: allow export plus simultaneous grid supply to household when dictated by permissions.
+- Negative prices: allow economically rational charging/import while preserving no-loop rule.
+- Export-cap saturation: cap exports and reroute remaining feasible energy or curtail.
+- Selected day unavailable: prevent invalid selection and auto-fallback to valid day with visible notice.
+
+### 7) Data Completeness Handling
+
+Completeness states:
+- `Complete`: full replay coverage for requested annual horizon.
+- `Partial`: missing intervals or reduced temporal granularity for part of year.
+- `Insufficient`: replay horizon too incomplete for trustworthy annual claim.
+
+Display policy:
+- `Complete`: show annual savings and KPI labels normally.
+- `Partial`: show annual numbers with explicit partial-data badge and quantified coverage.
+- `Insufficient`: suppress definitive annual savings claim and show limitation state with next valid actions.
+
+Guardrail:
+- Never label a result as full-year annual optimization when the underlying replay is partial.
+
+### 8) Dependencies
+
+Internal dependencies:
+- `src/lib/pv-battery-calculator.ts` for optimization and aggregation logic.
+- `src/app/battery/calculator/` route composition.
+- `src/components/battery/calculator/` rendering and interaction components.
+- Existing market/time-series utilities already used in battery and dynamic tariff flows.
+
+External package dependencies:
+- No mandatory new package dependency is required for this design.
+- Recharts (already used in-app) remains sufficient for selected-day visualization needs.
+
+### 9) QA Acceptance Mapping
+
+AC mapping to verifiable behavior:
+- Live input reactivity: every controlled input invalidates prior scenario result and re-runs deterministic replay.
+- Objective correctness: optimized outcome never chosen by self-sufficiency priority over lower net cost.
+- Baseline parity: baseline and optimized runs share tariff/year/demand assumptions.
+- Permission enforcement: toggling any flow changes feasible edge set in both annual and day outputs.
+- Constraint integrity: SoC bounds, power caps, export cap, and no simultaneous charge/discharge are always respected.
+- Day-view consistency: selected day always reflects annual run interval slice.
+- Data completeness honesty: annual-result labels follow completeness state and never over-claim.
+- Ambiguous profile list handling: temporary assumption and unresolved ambiguity remain explicit until product clarification.
+
+### 10) Rollout Risks and Mitigations
+
+Risk: annual vs selected-day mismatch creates user distrust.  
+Mitigation: enforce day-slice-from-annual rule and cross-check daily energy totals against annual interval subset.
+
+Risk: tariff cost component inconsistencies between baseline and optimized paths.  
+Mitigation: single shared cost component ledger used by both replay paths with QA parity checks.
+
+Risk: permission toggles appear cosmetic if not fully wired into optimizer constraints.  
+Mitigation: permission matrix is modeled as hard feasibility gates, not UI-only switches.
+
+Risk: partial-year data interpreted as complete annual economics.  
+Mitigation: strict completeness state machine and blocked full-claim labels when insufficient.
+
+Risk: unresolved load-profile ambiguity causes downstream inconsistency.  
+Mitigation: freeze temporary `H25/P25/S25` assumption with explicit product sign-off checkpoint.
+
+### 11) Decisions and Tradeoffs
+
+Decision: optimize for net cost, not self-sufficiency.  
+Tradeoff: some user-intuitive “autarky” behavior may be reduced when it is economically suboptimal.
+
+Decision: use hard permission gating for energy flows.  
+Tradeoff: users can create counterintuitive but valid operating modes that raise modeled cost.
+
+Decision: keep no new backend API for this iteration.  
+Tradeoff: limited flexibility for custom user-uploaded traces and broader market expansion in this phase.
+
+Decision: selected-day view is explanatory only.  
+Tradeoff: less interactive experimentation at day level, but strong consistency with annual KPI claims.
+
+Decision: completeness-aware result labeling.  
+Tradeoff: reduced apparent coverage in sparse data years, but materially stronger trust and auditability.
