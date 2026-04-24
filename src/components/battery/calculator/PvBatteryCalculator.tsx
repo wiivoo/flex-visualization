@@ -3,11 +3,10 @@
 import Link from 'next/link'
 import { Suspense, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ArrowRight, Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, SunMedium, Zap, type LucideIcon } from 'lucide-react'
+import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 
 import { PvBatteryDayChart } from '@/components/battery/calculator/PvBatteryDayChart'
 import { DateStrip } from '@/components/v2/DateStrip'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -255,6 +254,10 @@ function formatKwh(value: number): string {
   return `${Math.round(value).toLocaleString()} kWh`
 }
 
+function formatExactKwh(value: number): string {
+  return `${value.toFixed(2)} kWh`
+}
+
 function sumAnnualSlotMetric(
   annual: PvBatteryAnnualResult,
   key: keyof PvBatteryAnnualResult['slots'][number],
@@ -391,30 +394,25 @@ function PillButton({
 }
 
 function SegmentedPillGroup({
-  label,
   options,
 }: {
-  label: string
   options: Array<{ label: string; active: boolean; onClick: () => void }>
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</span>
-      <div className="inline-flex rounded-full border border-gray-200 bg-[#F8F8F5] p-1">
-        {options.map((option) => (
-          <button
-            key={option.label}
-            type="button"
-            onClick={option.onClick}
-            className={cn(
-              'rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors',
-              option.active ? 'bg-[#313131] text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-700',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+    <div className="inline-flex rounded-full border border-gray-200 bg-[#F8F8F5] p-1">
+      {options.map((option) => (
+        <button
+          key={option.label}
+          type="button"
+          onClick={option.onClick}
+          className={cn(
+            'rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors',
+            option.active ? 'bg-[#313131] text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-700',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -505,7 +503,7 @@ function FlowNodeBadge({ node }: { node: FlowNodeKey }) {
 
   return (
     <div
-      className="inline-flex min-w-[106px] items-center justify-center gap-2 rounded-[12px] border px-3.5 py-2.5 shadow-[0_8px_18px_rgba(15,23,42,0.045)]"
+      className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border px-4 py-3 shadow-[0_8px_18px_rgba(15,23,42,0.045)]"
       style={{ backgroundColor: meta.background, borderColor: 'rgba(17,24,39,0.05)', color: meta.text }}
     >
       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
@@ -585,8 +583,6 @@ function FlowVerticalRoute({
 
 function FlowSourceColumn({
   source,
-  title,
-  tone,
   routes,
   permissions,
   onToggle,
@@ -594,26 +590,15 @@ function FlowSourceColumn({
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
   source: FlowNodeKey
-  title: string
-  tone: 'primary' | 'secondary'
   routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; staticLabel?: string }>
 }) {
-  const isSecondary = tone === 'secondary'
-
   return (
-    <div className="rounded-[24px] border border-[#E5E7EB] bg-[#FBFCFD] p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{title}</p>
-          <p className="mt-1 text-[14px] font-semibold text-gray-900">{isSecondary ? 'Secondary routes' : 'Primary routes'}</p>
-        </div>
-      </div>
-
-      <div className="flex flex-col items-center">
+    <div className="h-full rounded-[24px] border border-[#E5E7EB] bg-[#FBFCFD] p-5">
+      <div className="flex h-full flex-col items-center">
         <FlowNodeBadge node={source} />
-        <div className="mt-3 h-6 w-px bg-[#D7DCE3]" />
-        <div className="h-px w-[82%] bg-[#D7DCE3]" />
-        <div className="mt-4 grid w-full gap-4" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
+        <div className="mt-4 h-7 w-px bg-[#D7DCE3]" />
+        <div className="h-px w-[88%] bg-[#D7DCE3]" />
+        <div className="mt-5 grid w-full gap-5" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
           {routes.map((route) => (
             <FlowVerticalRoute
               key={`${source}-${route.target}-${route.routeKey ?? route.staticLabel}`}
@@ -640,12 +625,10 @@ function FlowRouteDiagram({
   const toggle = (key: FlowPermissionKey) => onToggle(key, !permissions[key])
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="grid gap-4 xl:grid-cols-3">
         <FlowSourceColumn
           source="pv"
-          title="PV"
-          tone="primary"
           routes={[
             { target: 'home', routeKey: 'pvToLoad' },
             { target: 'battery', routeKey: 'pvToBattery' },
@@ -657,8 +640,6 @@ function FlowRouteDiagram({
 
         <FlowSourceColumn
           source="battery"
-          title="Battery"
-          tone="primary"
           routes={[
             { target: 'home', routeKey: 'batteryToLoad' },
             { target: 'grid', routeKey: 'batteryToGrid' },
@@ -669,8 +650,6 @@ function FlowRouteDiagram({
 
         <FlowSourceColumn
           source="grid"
-          title="Grid"
-          tone="secondary"
           routes={[
             { target: 'home', staticLabel: 'Always' },
             { target: 'battery', routeKey: 'gridToBattery' },
@@ -679,9 +658,6 @@ function FlowRouteDiagram({
           onToggle={toggle}
         />
       </div>
-      <p className="text-[12px] leading-5 text-gray-500">
-        Grid -&gt; load is always available, so household demand remains served even when storage and export paths are disabled.
-      </p>
     </div>
   )
 }
@@ -1139,12 +1115,38 @@ function PvBatteryCalculatorInner() {
     .filter(({ key }) => state.flowPermissions[key])
     .map(({ key }) => key)
   const activeFlowSummary = formatFlowPermissionList(activeFlowKeys)
-  const requestedConstraintSummary = disabledFlowKeys.length > 0
-    ? `Blocked routes: ${formatFlowPermissionList(disabledFlowKeys)}.`
-    : 'All optional PV and battery routes are currently allowed.'
   const disabledFlowConsequences = getDisabledFlowConsequences(state.flowPermissions)
   const annualPvToBatteryKwh = annualResult ? sumAnnualSlotMetric(annualResult, 'chargeToBatteryKwh') : 0
   const hasCustomFlowPermissions = pendingFlowPermissionKeys.length > 0
+  const dayFlowHighlights = useMemo(() => {
+    if (!dayResult) return null
+
+    const highlights = [
+      { label: 'PV to home', value: sumAnnualSlotMetric(dayResult, 'pvToLoadKwh'), color: '#F4C542' },
+      { label: 'PV to battery', value: sumAnnualSlotMetric(dayResult, 'pvToBatteryKwh'), color: '#E4A200' },
+      { label: 'PV to grid', value: sumAnnualSlotMetric(dayResult, 'pvToGridKwh'), color: '#5B9BDA' },
+      { label: 'Battery to home', value: sumAnnualSlotMetric(dayResult, 'batteryToLoadKwh'), color: '#E07A1F' },
+      { label: 'Battery to grid', value: sumAnnualSlotMetric(dayResult, 'batteryExportKwh'), color: '#4A5565' },
+      { label: 'Grid to home', value: sumAnnualSlotMetric(dayResult, 'gridToLoadKwh'), color: '#A1A8B3' },
+    ].filter((item) => item.value > 0.001)
+
+    return (
+      <div className="mt-5 border-t border-gray-200 pt-4">
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {highlights.map((item) => (
+            <div key={item.label} className="rounded-2xl border border-[#E5E7EB] bg-[#FBFCFD] px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#64748B]">{item.label}</span>
+              </div>
+              <p className="mt-1 text-sm font-semibold text-[#171717]">{formatExactKwh(item.value)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }, [dayResult])
 
   return (
     <TooltipProvider delayDuration={120}>
@@ -1172,40 +1174,7 @@ function PvBatteryCalculatorInner() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="max-w-[860px]">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Home battery optimization</p>
-              <h2 className="mt-2 text-[34px] font-semibold tracking-tight text-gray-900 sm:text-4xl">
-                Interactive PV + battery calculator
-              </h2>
-              <p className="mt-3 text-[15px] leading-7 text-gray-500">
-                Same visual language as{' '}
-                <Link href="/v2" className="font-semibold text-gray-700 transition-colors hover:text-gray-900">
-                  /v2
-                </Link>
-                , adapted for household load, PV generation, and battery routing. Configure the system on the left, inspect the day replay first,
-                then sanity-check the annual rollup below.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <Button asChild className="w-fit rounded-full bg-[#313131] hover:bg-[#1f1f1f]">
-                <Link href="/battery">
-                  Open battery business case
-                  <ArrowRight className="h-4 w-4" />
-                </Link>
-              </Button>
-              <Button
-                asChild
-                variant="outline"
-                className="w-fit rounded-full border-gray-200 bg-white text-gray-700 hover:bg-[#F8F8F5] hover:text-gray-900"
-              >
-                <Link href="/v2">See EV calculator</Link>
-              </Button>
-            </div>
-          </div>
-
+        <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:gap-5">
             <aside className="order-2 space-y-4 lg:order-1 lg:sticky lg:top-20 lg:self-start">
               <ControlBlock
@@ -1444,7 +1413,6 @@ function PvBatteryCalculatorInner() {
                   <PvBatteryDayChart
                     annualResult={dayResult}
                     dayLabel={formatDayLabel(prices.selectedDate)}
-                    flowPermissions={state.flowPermissions}
                     units={units}
                     loading={prices.loading}
                     controls={(
@@ -1464,8 +1432,8 @@ function PvBatteryCalculatorInner() {
                         </div>
 
                         <div className="rounded-[24px] border border-gray-200 bg-white p-5">
-                          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                            <div className="space-y-2">
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                               <div className="flex flex-wrap items-center gap-2">
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Dispatch routes</p>
                                 <span className="rounded-full bg-[#F5F5F2] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-700">
@@ -1477,83 +1445,73 @@ function PvBatteryCalculatorInner() {
                                   </span>
                                 ) : null}
                               </div>
-                              <p className="text-[12px] leading-5 text-gray-500">Use the quick policies or the live diagram to open and close each allowed path.</p>
-                              {disabledFlowKeys.length > 0 ? (
-                                <p className="text-[12px] leading-5 text-amber-800">
-                                  Blocked: {formatFlowPermissionList(disabledFlowKeys)}
-                                </p>
-                              ) : (
-                                <p className="text-[12px] leading-5 text-gray-500">{requestedConstraintSummary}</p>
-                              )}
+
+                              <div className="flex flex-wrap items-center gap-3">
+                                <SegmentedPillGroup
+                                  options={[
+                                    {
+                                      label: 'PV',
+                                      active: state.flowPermissions.pvToLoad && !state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
+                                      onClick: () => setDraftState((current) => ({
+                                        ...current,
+                                        flowPermissions: {
+                                          ...current.flowPermissions,
+                                          pvToLoad: true,
+                                          pvToBattery: false,
+                                          pvToGrid: true,
+                                        },
+                                      })),
+                                    },
+                                    {
+                                      label: 'PV+B',
+                                      active: state.flowPermissions.pvToLoad && state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
+                                      onClick: () => setDraftState((current) => ({
+                                        ...current,
+                                        flowPermissions: {
+                                          ...current.flowPermissions,
+                                          pvToLoad: true,
+                                          pvToBattery: true,
+                                          pvToGrid: true,
+                                        },
+                                      })),
+                                    },
+                                  ]}
+                                />
+
+                                <SegmentedPillGroup
+                                  options={[
+                                    {
+                                      label: 'Uni-Directional',
+                                      active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && !state.flowPermissions.batteryToGrid,
+                                      onClick: () => setDraftState((current) => ({
+                                        ...current,
+                                        flowPermissions: {
+                                          ...current.flowPermissions,
+                                          batteryToLoad: true,
+                                          gridToBattery: true,
+                                          batteryToGrid: false,
+                                        },
+                                      })),
+                                    },
+                                    {
+                                      label: 'Bi-Directional',
+                                      active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && state.flowPermissions.batteryToGrid,
+                                      onClick: () => setDraftState((current) => ({
+                                        ...current,
+                                        flowPermissions: {
+                                          ...current.flowPermissions,
+                                          batteryToLoad: true,
+                                          gridToBattery: true,
+                                          batteryToGrid: true,
+                                        },
+                                      })),
+                                    },
+                                  ]}
+                                />
+                              </div>
                             </div>
 
-                            <div className="flex flex-wrap items-center gap-4">
-                              <SegmentedPillGroup
-                                label="Solar"
-                                options={[
-                                  {
-                                    label: 'PV',
-                                    active: state.flowPermissions.pvToLoad && !state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
-                                    onClick: () => setDraftState((current) => ({
-                                      ...current,
-                                      flowPermissions: {
-                                        ...current.flowPermissions,
-                                        pvToLoad: true,
-                                        pvToBattery: false,
-                                        pvToGrid: true,
-                                      },
-                                    })),
-                                  },
-                                  {
-                                    label: 'PV+B',
-                                    active: state.flowPermissions.pvToLoad && state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
-                                    onClick: () => setDraftState((current) => ({
-                                      ...current,
-                                      flowPermissions: {
-                                        ...current.flowPermissions,
-                                        pvToLoad: true,
-                                        pvToBattery: true,
-                                        pvToGrid: true,
-                                      },
-                                    })),
-                                  },
-                                ]}
-                              />
-
-                              <SegmentedPillGroup
-                                label="Battery"
-                                options={[
-                                  {
-                                    label: 'Uni-Directional',
-                                    active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && !state.flowPermissions.batteryToGrid,
-                                    onClick: () => setDraftState((current) => ({
-                                      ...current,
-                                      flowPermissions: {
-                                        ...current.flowPermissions,
-                                        batteryToLoad: true,
-                                        gridToBattery: true,
-                                        batteryToGrid: false,
-                                      },
-                                    })),
-                                  },
-                                  {
-                                    label: 'Bi-Directional',
-                                    active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && state.flowPermissions.batteryToGrid,
-                                    onClick: () => setDraftState((current) => ({
-                                      ...current,
-                                      flowPermissions: {
-                                        ...current.flowPermissions,
-                                        batteryToLoad: true,
-                                        gridToBattery: true,
-                                        batteryToGrid: true,
-                                      },
-                                    })),
-                                  },
-                                ]}
-                              />
                             </div>
-                          </div>
-
                           <div className="mt-4 border-t border-gray-200 pt-4">
                             <FlowRouteDiagram
                               permissions={state.flowPermissions}
@@ -1566,9 +1524,12 @@ function PvBatteryCalculatorInner() {
                               }))}
                             />
                           </div>
+
+                          {dayFlowHighlights}
                         </div>
                       </div>
                     )}
+                    flowHighlights={dayFlowHighlights ?? <></>}
                     priceNote={resolutionMessage}
                     priceControls={(
                       <div className="flex flex-wrap gap-2">

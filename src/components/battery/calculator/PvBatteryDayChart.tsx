@@ -15,16 +15,17 @@ import {
 } from 'recharts'
 
 import { Card, CardContent } from '@/components/ui/card'
-import type { PvBatteryAnnualResult, PvBatteryFlowPermissions, PvBatterySlotResult } from '@/lib/pv-battery-calculator'
+import type { PvBatteryAnnualResult, PvBatterySlotResult } from '@/lib/pv-battery-calculator'
+import { cn } from '@/lib/utils'
 import type { PriceUnits } from '@/lib/v2-config'
 
 interface Props {
   annualResult: PvBatteryAnnualResult | null
   dayLabel: string
-  flowPermissions: PvBatteryFlowPermissions
   units: PriceUnits
   loading?: boolean
   controls?: ReactNode
+  flowHighlights?: ReactNode
   priceNote?: string
   priceControls?: ReactNode
 }
@@ -229,8 +230,8 @@ function FlowScale({
   const positiveTicks = ticks.filter((tick) => tick > 0)
 
   return (
-    <div className="pointer-events-none absolute inset-y-0 left-0 w-[56px] border-r border-[#E5E7EB] text-[10px] text-[#94A3B8]">
-      <span className="absolute left-0 top-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">kWh</span>
+    <div className="pointer-events-none absolute inset-y-0 left-0 w-[68px] border-r border-[#E5E7EB] text-[11px] text-[#64748B]">
+      <span className="absolute left-0 top-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#64748B]">kWh</span>
 
       {mode === 'positive' ? (
         ticks.map((tick) => {
@@ -378,32 +379,32 @@ function FlowLaneRow({
   const laneScaleMax = lane.mode === 'center'
     ? Math.max(maxPositive, maxNegative, 0.1)
     : Math.max(maxPositive, 0.1)
-  const flowTicks = useMemo(() => buildPositiveTicks(laneScaleMax), [laneScaleMax])
+  const flowTicks = useMemo(() => buildPositiveTicks(laneScaleMax, 3), [laneScaleMax])
   const Icon = lane.icon
   const guideTicks = flowTicks.filter((tick) => tick > 0)
-  const chartHeight = lane.mode === 'center' ? 'h-[188px]' : 'h-[108px]'
+  const chartHeight = lane.mode === 'center' ? 'h-[228px]' : 'h-[156px]'
 
   return (
-    <div className={`grid grid-cols-[14px_minmax(0,1fr)] gap-3 ${chartHeight}`}>
+    <div className={`grid grid-cols-[84px_minmax(0,1fr)] gap-4 ${chartHeight}`}>
       <div
-        className="flex items-start justify-center pt-3"
+        className="flex flex-col gap-2 pt-3"
         style={{ color: lane.accent, backgroundColor: 'transparent' }}
-        aria-hidden="true"
       >
-        <span className="text-current">
+        <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-[#E5E7EB] bg-white text-current">
           <Icon className="h-4 w-4" />
         </span>
+        <div>
+          <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[#111827]">{lane.label}</p>
+          <p className="mt-1 text-[11px] leading-5 text-[#64748B]">{lane.detail}</p>
+        </div>
       </div>
 
       <div
-        className={`relative overflow-hidden rounded-[14px] border pl-[60px] pr-1.5 py-2 ${chartHeight}`}
+        className={`relative overflow-hidden rounded-[18px] border pl-[72px] pr-2 py-3 ${chartHeight}`}
         style={{ borderColor: COLORS.border, backgroundColor: COLORS.plot }}
         aria-label={lane.label}
       >
         <FlowScale mode={lane.mode} ticks={flowTicks} maxValue={laneScaleMax} />
-        <div className="pointer-events-none absolute left-[60px] top-3 text-[11px] font-semibold text-[#334155]">
-          {lane.label}
-        </div>
 
         <div className="pointer-events-none absolute inset-0">
           {lane.mode === 'positive' ? (
@@ -445,17 +446,24 @@ function FlowLaneRow({
         </div>
 
         <div
-          className="pointer-events-none absolute inset-0 grid gap-[2px] px-1.5 py-2"
+          className="pointer-events-none absolute inset-0 grid gap-[2px] px-2 py-3"
           style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}
         >
           {slots.map((slot, index) => {
-            const isHourTick = index % slotsPerHour === 0
             const isMajorTick = index % (slotsPerHour * 4) === 0
+            const isMidTick = index % (slotsPerHour * 2) === 0
 
             return (
               <div
                 key={`${lane.key}-vertical-${slot.timestamp}`}
-                className={`border-l ${isHourTick ? 'opacity-100' : 'opacity-0'} ${isMajorTick ? 'border-l-[#D1D5DB]' : 'border-l-[#E5E7EB]'}`}
+                className={cn(
+                  'border-l',
+                  isMajorTick
+                    ? 'border-l-[#D1D5DB]'
+                    : isMidTick
+                      ? 'border-l-[#E5E7EB]/80'
+                      : 'border-l-transparent',
+                )}
               />
             )
           })}
@@ -501,10 +509,10 @@ function DayFlowPill({
 export function PvBatteryDayChart({
   annualResult,
   dayLabel,
-  flowPermissions,
   units,
   loading = false,
   controls,
+  flowHighlights,
   priceNote,
   priceControls,
 }: Props) {
@@ -512,17 +520,6 @@ export function PvBatteryDayChart({
   const [selectedIndex, setSelectedIndex] = useState(0)
   const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(slots.length - 1, 0))
   const selectedSlot = slots[effectiveSelectedIndex]
-
-  const disabledFlowSummary = useMemo(() => {
-    const disabled: string[] = []
-    if (!flowPermissions.pvToLoad) disabled.push('PV -> load')
-    if (!flowPermissions.pvToBattery) disabled.push('PV -> battery')
-    if (!flowPermissions.gridToBattery) disabled.push('Grid -> battery')
-    if (!flowPermissions.batteryToLoad) disabled.push('Battery -> load')
-    if (!flowPermissions.pvToGrid) disabled.push('PV -> grid')
-    if (!flowPermissions.batteryToGrid) disabled.push('Battery -> grid')
-    return disabled.length > 0 ? disabled.join(', ') : 'None'
-  }, [flowPermissions])
 
   const totals = useMemo(() => slots.reduce((acc, slot) => ({
     pvToLoad: acc.pvToLoad + slot.pvToLoadKwh,
@@ -688,25 +685,7 @@ export function PvBatteryDayChart({
   return (
     <div className="space-y-5">
       <div className="space-y-4">
-        <div className="flex flex-col gap-3 px-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
-              Selected day
-            </span>
-            <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
-              {slots.length} slices
-            </span>
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <h3 className="text-[30px] font-semibold tracking-[-0.03em] text-[#171717] sm:text-[34px]">{dayLabel}</h3>
-            <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
-              A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
-            </p>
-          </div>
-
-          <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
-        </div>
+        {controls ? controls : null}
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {heroStats.map((stat) => (
@@ -721,10 +700,20 @@ export function PvBatteryDayChart({
           ))}
         </div>
 
-        {controls ? controls : (
-          <p className="text-sm leading-6 text-[#6B7280]">
-            Choose a day to inspect the same routing logic at finer detail.
-          </p>
+        {flowHighlights ?? (
+          <div>
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {dayFlowSummary.map((flow) => (
+                <DayFlowPill
+                  key={flow.label}
+                  label={flow.label}
+                  value={formatKwh(flow.value)}
+                  color={flow.color}
+                />
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -735,7 +724,7 @@ export function PvBatteryDayChart({
               <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Primary replay</p>
               <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Intraday routing shape</p>
               <p className="mt-2 text-sm leading-6 text-[#6B7280]">
-                PV, battery, and home over the selected 24 hours. Each lane uses its own kWh scale so the shapes stay readable.
+                {dayLabel}. PV, battery, and home over the selected 24 hours with larger scales so the routing stays readable.
               </p>
             </div>
 
@@ -749,20 +738,6 @@ export function PvBatteryDayChart({
           </div>
 
           <div className="space-y-4">
-            <div>
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                {dayFlowSummary.map((flow) => (
-                  <DayFlowPill
-                    key={flow.label}
-                    label={flow.label}
-                    value={formatKwh(flow.value)}
-                    color={flow.color}
-                  />
-                ))}
-              </div>
-            </div>
-
             {lanes.map((lane) => (
               <FlowLaneRow
                 key={lane.key}
@@ -774,9 +749,9 @@ export function PvBatteryDayChart({
               />
             ))}
 
-            <div className="grid grid-cols-[14px_minmax(0,1fr)] gap-3">
+            <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-4">
               <div />
-              <div className="grid gap-[2px] pl-[60px] pr-2" style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}>
+              <div className="grid gap-[2px] pl-[72px] pr-2" style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}>
                 {slots.map((slot, index) => {
                   const isHourTick = index % slotsPerHour === 0
                   const isMajorTick = index % (slotsPerHour * majorHourStep) === 0
@@ -792,7 +767,7 @@ export function PvBatteryDayChart({
                       }`}
                     >
                       <span className={`w-px ${isHourTick ? 'bg-[#CBD5E1]' : 'bg-[#E5E7EB]'} ${isMajorTick ? 'h-4' : 'h-2.5'}`} />
-                      <span className={`text-[10px] ${showLabel ? 'font-medium' : 'opacity-0'}`}>
+                      <span className={`text-[11px] ${showLabel ? 'font-medium' : 'opacity-0'}`}>
                         {showLabel ? formatHourTick(slot.label) : '.'}
                       </span>
                     </button>
@@ -822,7 +797,7 @@ export function PvBatteryDayChart({
             </div>
           </div>
 
-          <div className="h-[344px] rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
+          <div className="h-[392px] rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={priceData} margin={{ top: 8, right: 18, bottom: 18, left: 18 }}>
                 <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" vertical={false} />
@@ -840,7 +815,7 @@ export function PvBatteryDayChart({
                       ? formatHourTick(slot.label)
                       : ''
                   }}
-                  tick={{ fontSize: 10, fill: '#6B7280' }}
+                  tick={{ fontSize: 11, fill: '#475569' }}
                   tickLine={false}
                   axisLine={false}
                   allowDecimals={false}
@@ -850,8 +825,8 @@ export function PvBatteryDayChart({
                 <YAxis
                   domain={priceAxis.domain}
                   ticks={priceAxis.ticks}
-                  width={72}
-                  tick={{ fontSize: 10, fill: '#9CA3AF' }}
+                  width={84}
+                  tick={{ fontSize: 11, fill: '#64748B' }}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={(value) => `${value.toFixed(0)} ${units.priceSym}`}
