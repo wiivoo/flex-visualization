@@ -40,6 +40,7 @@ type FlowPermissionKey =
   | 'batteryToGrid'
 
 type FlowPermissions = PvBatteryFlowPermissions
+type DayFlowByRoute = Record<FlowPermissionKey | 'gridToHome', number>
 const CALCULATOR_COUNTRY: PvBatteryCountry = 'DE'
 
 const FLOW_PERMISSION_QUERY_KEYS: Record<FlowPermissionKey, string> = {
@@ -258,6 +259,13 @@ function formatExactKwh(value: number): string {
   return `${value.toFixed(2)} kWh`
 }
 
+function formatCompactFlowKwh(value: number): string {
+  if (!Number.isFinite(value)) return '--'
+  if (Math.abs(value) >= 100) return `${value.toFixed(0)}`
+  if (Math.abs(value) >= 10) return `${value.toFixed(1)}`
+  return `${value.toFixed(2)}`
+}
+
 function sumAnnualSlotMetric(
   annual: PvBatteryAnnualResult,
   key: keyof PvBatteryAnnualResult['slots'][number],
@@ -399,15 +407,15 @@ function SegmentedPillGroup({
   options: Array<{ label: string; active: boolean; onClick: () => void }>
 }) {
   return (
-    <div className="inline-flex rounded-full border border-gray-200 bg-[#F8F8F5] p-1">
+    <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
       {options.map((option) => (
         <button
           key={option.label}
           type="button"
           onClick={option.onClick}
           className={cn(
-            'rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors',
-            option.active ? 'bg-[#313131] text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-700',
+            'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
+            option.active ? 'bg-white text-[#313131] shadow-sm ring-1 ring-gray-200' : 'text-gray-400 hover:text-gray-600',
           )}
         >
           {option.label}
@@ -471,27 +479,17 @@ function ControlBlock({
   icon?: ReactNode
   children: ReactNode
 }) {
-  const compactValue = value && value.length > 16
-
   return (
-    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-white shadow-sm">
-      <CardContent className="p-0">
-        <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-[#FBFBF8] px-5 py-4">
+    <Card className="rounded-[24px] border-gray-200 bg-white shadow-sm">
+      <CardContent className="p-5">
+        <div className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
-            {value ? (
-              <p className={cn(
-                'mt-1 font-semibold tracking-tight text-gray-900',
-                compactValue ? 'text-lg' : 'text-2xl',
-              )}
-              >
-                {value}
-              </p>
-            ) : null}
+            {value ? <p className="mt-1 text-2xl font-semibold tracking-tight text-gray-900">{value}</p> : null}
           </div>
           {icon}
         </div>
-        <div className="px-5 py-5">{children}</div>
+        {children}
       </CardContent>
     </Card>
   )
@@ -503,13 +501,13 @@ function FlowNodeBadge({ node }: { node: FlowNodeKey }) {
 
   return (
     <div
-      className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border px-4 py-3 shadow-[0_8px_18px_rgba(15,23,42,0.045)]"
+      className="inline-flex w-full items-center justify-center gap-1.5 rounded-[12px] border px-3 py-2"
       style={{ backgroundColor: meta.background, borderColor: 'rgba(17,24,39,0.05)', color: meta.text }}
     >
-      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
-        <Icon className="h-3.5 w-3.5" />
+      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-white/82">
+        <Icon className="h-3 w-3" />
       </span>
-      <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">{meta.label}</span>
+      <span className="text-[10px] font-semibold uppercase tracking-[0.1em]">{meta.label}</span>
     </div>
   )
 }
@@ -535,17 +533,17 @@ function FlowLineSwitch({
       aria-pressed={checked}
       onClick={onToggle}
       className={cn(
-        'relative z-10 inline-flex h-7 w-[46px] items-center rounded-full border transition-all duration-200',
+        'relative z-10 inline-flex h-5 w-8 items-center rounded-md border transition-all duration-200',
         checked
-          ? 'border-[#171717]/10 bg-[#171717] shadow-[0_10px_24px_rgba(15,23,42,0.10)]'
+          ? 'border-[#171717]/20 bg-[#171717]'
           : 'border-[#CBD5E1] bg-white hover:border-[#94A3B8] hover:bg-[#F8FAFC]',
       )}
       title={option?.title ?? routeKey}
     >
       <span
         className={cn(
-          'absolute h-[18px] w-[18px] rounded-full bg-white shadow-[0_2px_8px_rgba(15,23,42,0.16)] transition-transform duration-200',
-          checked ? 'translate-x-[23px]' : 'translate-x-[3px]',
+          'absolute h-3 w-3 rounded-[3px] bg-white transition-transform duration-200',
+          checked ? 'translate-x-[17px]' : 'translate-x-[3px]',
         )}
       />
     </button>
@@ -558,25 +556,54 @@ function FlowVerticalRoute({
   onToggle,
   target,
   staticLabel,
+  flowValueKwh,
 }: {
   routeKey?: FlowPermissionKey
   checked?: boolean
   onToggle?: () => void
   target: FlowNodeKey
   staticLabel?: string
+  flowValueKwh?: number
 }) {
+  const isAlways = !routeKey
+  const isOn = isAlways || Boolean(checked)
+  const routeLabel = routeKey ? (getFlowRouteOption(routeKey)?.title ?? routeKey) : (staticLabel ?? 'Always')
+  const displayFlow = formatCompactFlowKwh(flowValueKwh ?? 0)
+  const flowTitle = `${routeLabel}: ${formatExactKwh(flowValueKwh ?? 0)}`
+
   return (
     <div className="flex min-w-0 flex-col items-center">
-      <div className="my-2 h-6 w-px bg-[#D7DCE3]" />
-      {routeKey && onToggle ? (
-        <FlowLineSwitch routeKey={routeKey} checked={Boolean(checked)} onToggle={onToggle} />
-      ) : (
-        <span className="relative z-10 rounded-full border border-[#D7DCE3] bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#94A3B8]">
-          {staticLabel}
+      <div className="relative my-1 flex h-10 w-7 items-center justify-center">
+        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[#D7DCE3]" />
+        <div
+          className={cn(
+            'absolute bottom-0 left-1/2 h-0 w-0 -translate-x-1/2 border-x-[5px] border-x-transparent border-t-[7px]',
+            isOn ? 'border-t-[#334155]' : 'border-t-[#CBD5E1]',
+          )}
+        />
+        <span
+          className={cn(
+            'absolute left-1/2 top-1.5 inline-flex h-4 min-w-4 -translate-x-1/2 items-center justify-center rounded-full border px-1 text-[9px] font-semibold tabular-nums',
+            isOn
+              ? 'border-[#94A3B8] bg-[#F8FAFC] text-[#111827]'
+              : 'border-[#E2E8F0] bg-white text-[#64748B]',
+          )}
+          title={flowTitle}
+        >
+          {displayFlow}
         </span>
-      )}
-      <div className="my-2 h-6 w-px bg-[#D7DCE3]" />
+      </div>
+      <div className="my-1 h-3 w-px bg-[#D7DCE3]" />
       <FlowNodeBadge node={target} />
+      <div className="mt-1 min-h-5">
+        {routeKey && onToggle ? (
+          <FlowLineSwitch routeKey={routeKey} checked={Boolean(checked)} onToggle={onToggle} />
+        ) : (
+          <span className="inline-flex items-center rounded-full border border-[#D7DCE3] bg-white px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.1em] text-[#94A3B8]">
+            {staticLabel}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -586,19 +613,19 @@ function FlowSourceColumn({
   routes,
   permissions,
   onToggle,
+  flowValues,
 }: {
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
   source: FlowNodeKey
   routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; staticLabel?: string }>
+  flowValues: DayFlowByRoute
 }) {
   return (
-    <div className="h-full rounded-[24px] border border-[#E5E7EB] bg-[#FBFCFD] p-5">
+    <div className="h-full rounded-[20px] border border-[#E5E7EB] bg-white p-4">
       <div className="flex h-full flex-col items-center">
         <FlowNodeBadge node={source} />
-        <div className="mt-4 h-7 w-px bg-[#D7DCE3]" />
-        <div className="h-px w-[88%] bg-[#D7DCE3]" />
-        <div className="mt-5 grid w-full gap-5" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
+        <div className="mt-3 grid w-full gap-3" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
           {routes.map((route) => (
             <FlowVerticalRoute
               key={`${source}-${route.target}-${route.routeKey ?? route.staticLabel}`}
@@ -607,6 +634,7 @@ function FlowSourceColumn({
               onToggle={route.routeKey ? () => onToggle(route.routeKey as FlowPermissionKey) : undefined}
               staticLabel={route.staticLabel}
               target={route.target}
+              flowValueKwh={route.routeKey ? flowValues[route.routeKey] : flowValues.gridToHome}
             />
           ))}
         </div>
@@ -618,9 +646,11 @@ function FlowSourceColumn({
 function FlowRouteDiagram({
   permissions,
   onToggle,
+  flowValues,
 }: {
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey, checked: boolean) => void
+  flowValues: DayFlowByRoute
 }) {
   const toggle = (key: FlowPermissionKey) => onToggle(key, !permissions[key])
 
@@ -635,6 +665,7 @@ function FlowRouteDiagram({
             { target: 'grid', routeKey: 'pvToGrid' },
           ]}
           permissions={permissions}
+          flowValues={flowValues}
           onToggle={toggle}
         />
 
@@ -645,6 +676,7 @@ function FlowRouteDiagram({
             { target: 'grid', routeKey: 'batteryToGrid' },
           ]}
           permissions={permissions}
+          flowValues={flowValues}
           onToggle={toggle}
         />
 
@@ -655,6 +687,7 @@ function FlowRouteDiagram({
             { target: 'battery', routeKey: 'gridToBattery' },
           ]}
           permissions={permissions}
+          flowValues={flowValues}
           onToggle={toggle}
         />
       </div>
@@ -1118,6 +1151,28 @@ function PvBatteryCalculatorInner() {
   const disabledFlowConsequences = getDisabledFlowConsequences(state.flowPermissions)
   const annualPvToBatteryKwh = annualResult ? sumAnnualSlotMetric(annualResult, 'chargeToBatteryKwh') : 0
   const hasCustomFlowPermissions = pendingFlowPermissionKeys.length > 0
+  const dayFlowValues = useMemo<DayFlowByRoute>(() => {
+    if (!dayResult) {
+      return {
+        pvToLoad: 0,
+        pvToBattery: 0,
+        gridToBattery: 0,
+        batteryToLoad: 0,
+        pvToGrid: 0,
+        batteryToGrid: 0,
+        gridToHome: 0,
+      }
+    }
+    return {
+      pvToLoad: sumAnnualSlotMetric(dayResult, 'pvToLoadKwh'),
+      pvToBattery: sumAnnualSlotMetric(dayResult, 'pvToBatteryKwh'),
+      gridToBattery: sumAnnualSlotMetric(dayResult, 'gridToBatteryKwh'),
+      batteryToLoad: sumAnnualSlotMetric(dayResult, 'batteryToLoadKwh'),
+      pvToGrid: sumAnnualSlotMetric(dayResult, 'pvToGridKwh'),
+      batteryToGrid: sumAnnualSlotMetric(dayResult, 'batteryExportKwh'),
+      gridToHome: sumAnnualSlotMetric(dayResult, 'gridToLoadKwh'),
+    }
+  }, [dayResult])
   const dayFlowHighlights = useMemo(() => {
     if (!dayResult) return null
 
@@ -1463,6 +1518,19 @@ function PvBatteryCalculatorInner() {
                                       })),
                                     },
                                     {
+                                      label: 'B',
+                                      active: !state.flowPermissions.pvToLoad && state.flowPermissions.pvToBattery && !state.flowPermissions.pvToGrid,
+                                      onClick: () => setDraftState((current) => ({
+                                        ...current,
+                                        flowPermissions: {
+                                          ...current.flowPermissions,
+                                          pvToLoad: false,
+                                          pvToBattery: true,
+                                          pvToGrid: false,
+                                        },
+                                      })),
+                                    },
+                                    {
                                       label: 'PV+B',
                                       active: state.flowPermissions.pvToLoad && state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
                                       onClick: () => setDraftState((current) => ({
@@ -1515,6 +1583,7 @@ function PvBatteryCalculatorInner() {
                           <div className="mt-4 border-t border-gray-200 pt-4">
                             <FlowRouteDiagram
                               permissions={state.flowPermissions}
+                              flowValues={dayFlowValues}
                               onToggle={(key, checked) => setDraftState((current) => ({
                                 ...current,
                                 flowPermissions: {
