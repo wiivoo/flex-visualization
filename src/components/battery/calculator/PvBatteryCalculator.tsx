@@ -641,17 +641,23 @@ function GridToBatteryUpControl({
   flowValue,
   onToggle,
   disabled = false,
+  unboxed = false,
 }: {
   enabled: boolean
   flowValue: number
   onToggle: () => void
   disabled?: boolean
+  unboxed?: boolean
 }) {
   const GridIcon = FLOW_NODE_META.grid.icon
   const BatteryIcon = FLOW_NODE_META.battery.icon
 
   return (
-    <div className={cn('w-full rounded-2xl border border-gray-200 bg-white p-4 shadow-sm', disabled && 'opacity-50')}>
+    <div className={cn(
+      'w-full p-4',
+      !unboxed && 'rounded-2xl border border-gray-200 bg-white shadow-sm',
+      disabled && 'opacity-50',
+    )}>
       <div className="flex items-center justify-center">
         <div className="flex w-full max-w-[220px] flex-col items-center gap-1">
           <div className={cn(
@@ -1564,39 +1570,46 @@ function PvBatteryCalculatorInner() {
                       </button>
                     </div>
 
-                    <div className="space-y-2 border-t border-gray-200 pt-4">
+                    <div className="space-y-2 pt-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Battery flow routing</p>
-                      <FlowRouteCard
-                        source="battery"
-                        routes={[
-                          { target: 'home', routeKey: 'batteryToLoad' },
-                          { target: 'grid', routeKey: 'batteryToGrid' },
-                        ]}
-                        permissions={state.flowPermissions}
-                        flowValues={dayFlowValues}
-                        onToggle={(key) => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: {
-                            ...current.flowPermissions,
-                            [key]: !current.flowPermissions[key],
-                          },
-                        }))}
-                        pvCapacityWp={0}
-                        usableKwh={state.usableKwh}
-                        isSystemSelected={isBatterySelected}
-                      />
-                      <GridToBatteryUpControl
-                        enabled={state.flowPermissions.gridToBattery}
-                        flowValue={dayFlowValues.gridToBattery}
-                        disabled={!isBatterySelected}
-                        onToggle={() => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: {
-                            ...current.flowPermissions,
-                            gridToBattery: !current.flowPermissions.gridToBattery,
-                          },
-                        }))}
-                      />
+                      <div className="grid gap-2 md:grid-cols-3">
+                        <div className="md:col-span-2">
+                          <FlowRouteCard
+                            source="battery"
+                            routes={[
+                              { target: 'home', routeKey: 'batteryToLoad' },
+                              { target: 'grid', routeKey: 'batteryToGrid' },
+                            ]}
+                            permissions={state.flowPermissions}
+                            flowValues={dayFlowValues}
+                            onToggle={(key) => setDraftState((current) => ({
+                              ...current,
+                              flowPermissions: {
+                                ...current.flowPermissions,
+                                [key]: !current.flowPermissions[key],
+                              },
+                            }))}
+                            pvCapacityWp={0}
+                            usableKwh={state.usableKwh}
+                            isSystemSelected={isBatterySelected}
+                            unboxed
+                            spread
+                          />
+                        </div>
+                        <GridToBatteryUpControl
+                          enabled={state.flowPermissions.gridToBattery}
+                          flowValue={dayFlowValues.gridToBattery}
+                          disabled={!isBatterySelected}
+                          unboxed
+                          onToggle={() => setDraftState((current) => ({
+                            ...current,
+                            flowPermissions: {
+                              ...current.flowPermissions,
+                              gridToBattery: !current.flowPermissions.gridToBattery,
+                            },
+                          }))}
+                        />
+                      </div>
                     </div>
                   </div>
                 </ControlBlock>
