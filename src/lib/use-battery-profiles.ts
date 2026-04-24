@@ -24,10 +24,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { getDayType, getProfileHourlyWeights } from '@/lib/slp-h25'
 import { getNlDayType, getNlHourlyWeights } from '@/lib/nl-slp'
 import {
+  type DeBatteryLoadProfileId,
   getDefaultLoadProfileId,
   isLoadProfileValidForCountry,
   type BatteryLoadProfileId,
 } from '@/lib/battery-config'
+import { buildDeYearLoadProfile } from '@/lib/pv-battery-calculator'
 
 export interface BatteryProfiles {
   /** 8760 hourly fractions summing to ~1.0; null while loading or on error. */
@@ -80,6 +82,16 @@ function buildH25YearProfile(year: number): number[] {
   }
 
   const normalized = normalizeProfile(hours)
+  generatedLoadCache.set(key, normalized)
+  return normalized
+}
+
+function buildDeYearProfile(profileId: Exclude<DeBatteryLoadProfileId, 'H0'>, year: number): number[] {
+  const key = `DE:${profileId}:${year}`
+  const cached = generatedLoadCache.get(key)
+  if (cached) return cached
+
+  const normalized = profileId === 'H25' ? buildH25YearProfile(year) : buildDeYearLoadProfile(profileId, year)
   generatedLoadCache.set(key, normalized)
   return normalized
 }
@@ -164,7 +176,7 @@ export function useBatteryProfiles(
         ? loadProfileJson('bdew-h0-profile')
         : Promise.resolve(
             country === 'DE'
-              ? buildH25YearProfile(year)
+              ? buildDeYearProfile(effectiveLoadProfileId as Exclude<DeBatteryLoadProfileId, 'H0'>, year)
               : buildNlYearProfile(year, effectiveLoadProfileId as 'E1A' | 'E1B' | 'E1C'),
           )
 

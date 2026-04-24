@@ -161,7 +161,7 @@ export const NL_TARIFFS: Tariff[] = [
 // Household load profiles
 // ---------------------------------------------------------------------------
 
-export type DeBatteryLoadProfileId = 'H0' | 'H25'
+export type DeBatteryLoadProfileId = 'H0' | 'H25' | 'P25' | 'S25'
 export type NlBatteryLoadProfileId = 'E1A' | 'E1B' | 'E1C'
 export type BatteryLoadProfileId = DeBatteryLoadProfileId | NlBatteryLoadProfileId
 
@@ -184,6 +184,18 @@ export const DE_BATTERY_LOAD_PROFILES: BatteryLoadProfileOption[] = [
     label: 'BDEW H25',
     description: '2025 household SLP',
     detail: 'Official BDEW H25 profile with a broader all-day residential demand shape.',
+  },
+  {
+    id: 'P25',
+    label: 'BDEW P25',
+    description: 'Household + PV',
+    detail: 'BDEW P25 profile for homes with PV. Better suited when midday demand already shifts around local generation.',
+  },
+  {
+    id: 'S25',
+    label: 'BDEW S25',
+    description: 'Household + PV + battery',
+    detail: 'BDEW S25 profile for homes with PV and storage. Useful when you want the background demand shape to reflect a prosumer household.',
   },
 ]
 
