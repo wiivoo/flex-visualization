@@ -578,7 +578,7 @@ function FlowRouteCard({
 
   return (
     <div className={cn(
-      'rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition-opacity',
+      'w-full rounded-2xl border border-gray-200 bg-white p-4 shadow-sm transition-opacity',
       isCardDisabled && 'opacity-50',
     )}>
       {/* Source header */}
@@ -606,7 +606,7 @@ function FlowRouteCard({
       </div>
 
       {/* Destination slots */}
-      <div className="flex justify-center gap-4">
+      <div className="flex w-full justify-center gap-4">
         {routes.map((route) => {
           const flowValue = route.routeKey ? flowValues[route.routeKey] : flowValues.gridToHome
           const isEnabled = route.routeKey ? permissions[route.routeKey] : true
@@ -1374,7 +1374,7 @@ function PvBatteryCalculatorInner() {
                       )}
                     </div>
 
-                    <div className="space-y-2 border-t border-gray-200 pt-4">
+                    <div className="pt-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">PV flow routing</p>
                       <FlowRouteCard
                         source="pv"
