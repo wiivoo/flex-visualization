@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePvRadiation } from '@/lib/use-pv-radiation'
 import {
+  DE_BATTERY_LOAD_PROFILES,
   type BatteryLoadProfileId,
 } from '@/lib/battery-config'
 import { useBatteryProfiles } from '@/lib/use-battery-profiles'
@@ -57,6 +58,13 @@ const DEFAULT_FLOW_PERMISSIONS: FlowPermissions = {
   batteryToLoad: true,
   pvToGrid: true,
   batteryToGrid: true,
+}
+
+const ALLOWED_DE_LOAD_PROFILES = ['H25', 'P25', 'S25'] as const
+type AllowedDeLoadProfile = typeof ALLOWED_DE_LOAD_PROFILES[number]
+
+function isAllowedDeLoadProfile(value: string): value is AllowedDeLoadProfile {
+  return (ALLOWED_DE_LOAD_PROFILES as readonly string[]).includes(value)
 }
 
 const FLOW_PERMISSION_OPTIONS: Array<{
@@ -303,7 +311,10 @@ function getDisabledFlowConsequences(flowPermissions: FlowPermissions): string[]
 
 function parseState(params: URLSearchParams): CalculatorState {
   const country: PvBatteryCountry = CALCULATOR_COUNTRY
-  const loadProfileId = getDefaultCalculatorLoadProfileId(country)
+  const rawLoadProfileId = params.get('profile') ?? ''
+  const loadProfileId = isAllowedDeLoadProfile(rawLoadProfileId)
+    ? rawLoadProfileId
+    : getDefaultCalculatorLoadProfileId(country)
   const parsedYear = Number(params.get('year'))
   const tariffIds = new Set(getTariffsFor(country).map((tariff) => tariff.id))
   const tariffId = tariffIds.has(params.get('tariff') ?? '')
@@ -897,7 +908,9 @@ function normalizeCalculatorState(
   state: CalculatorState,
   availableYears: number[],
 ): CalculatorState {
-  const loadProfileId = getDefaultCalculatorLoadProfileId(state.country)
+  const loadProfileId = isAllowedDeLoadProfile(state.loadProfileId)
+    ? state.loadProfileId
+    : getDefaultCalculatorLoadProfileId(state.country)
 
   const availableTariffs = new Set(getTariffsFor(state.country).map((tariff) => tariff.id))
   const tariffId = availableTariffs.has(state.tariffId)
@@ -1035,6 +1048,10 @@ function PvBatteryCalculatorInner() {
   const effectiveYear = state.year || availableYears[0] || new Date().getUTCFullYear()
 
   const tariffs = useMemo(() => getTariffsFor(CALCULATOR_COUNTRY), [])
+  const loadProfileOptions = useMemo(
+    () => DE_BATTERY_LOAD_PROFILES.filter((profile) => isAllowedDeLoadProfile(profile.id)),
+    [],
+  )
   const isPvSelected = state.pvCapacityWp > 0
   const isBatterySelected = state.usableKwh > 0
   const { loadProfile, pvProfile, loading: profilesLoading, error: profilesError } = useBatteryProfiles(
@@ -1126,27 +1143,16 @@ function PvBatteryCalculatorInner() {
     )
   }, [annualPrices, loadProfile, pvProfile, scenario, radiationAdjustment])
 
-  const daySource = useMemo(
-    () => {
-      if (state.resolution !== 'quarterhour') return prices.hourly
-      if (!prices.selectedDate) return prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
-      const hasQuarterHourForDay = prices.hourlyQH.some((point) => point.date === prices.selectedDate)
-      return hasQuarterHourForDay ? prices.hourlyQH : prices.hourly
-    },
-    [prices.hourly, prices.hourlyQH, prices.selectedDate, state.resolution],
-  )
-  const dayPrices = useMemo(() => {
-    if (!prices.selectedDate) return []
-    return daySource.filter((point) => point.date === prices.selectedDate)
-  }, [daySource, prices.selectedDate])
-
   const dayResult = useMemo(() => {
-    if (!loadProfile || !pvProfile || dayPrices.length === 0) return null
-    return optimizePvBattery(
-      buildPvBatteryInputs(dayPrices, loadProfile, pvProfile, scenario, radiationAdjustment),
-      scenario,
-    )
-  }, [dayPrices, loadProfile, pvProfile, scenario, radiationAdjustment])
+    if (!annualResult || !prices.selectedDate) return null
+    const slots = annualResult.slots.filter((slot) => slot.date === prices.selectedDate)
+    if (slots.length === 0) return null
+    return {
+      ...annualResult,
+      months: [],
+      slots,
+    }
+  }, [annualResult, prices.selectedDate])
 
   const loading = prices.loading || profilesLoading
   const noYearData = !loading && !prices.error && availableYears.length === 0
@@ -1253,6 +1259,29 @@ function PvBatteryCalculatorInner() {
                       minLabel="1,500"
                       maxLabel="15,000"
                     />
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          Load profile
+                        </label>
+                        <span className="text-[10px] text-gray-400">H25 / P25 / S25</span>
+                      </div>
+                      <select
+                        value={state.loadProfileId}
+                        onChange={(event) => setDraftState((current) => ({
+                          ...current,
+                          loadProfileId: event.target.value as BatteryLoadProfileId,
+                        }))}
+                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+                      >
+                        {loadProfileOptions.map((profile) => (
+                          <option key={profile.id} value={profile.id}>
+                            {profile.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
                     {/* Horizontal line + Assets toggles */}
                     <div className="border-t border-gray-200 pt-4">
@@ -1516,6 +1545,8 @@ function PvBatteryCalculatorInner() {
                 />
               ) : annualResult ? (
                 <>
+                  <AnnualHero annual={annualResult} units={units} />
+                  <MonthlyBars annual={annualResult} units={units} />
                   <PvBatteryDayChart
                     annualResult={dayResult}
                     dayLabel={formatDayLabel(prices.selectedDate)}
