@@ -13,6 +13,8 @@ import { ExportDialog } from '@/components/v2/ExportDialog'
 import type { FleetConfig } from '@/lib/v2-config'
 import type { EnrichedWindow } from '@/lib/excel-export'
 
+type Resolution = 'hour' | 'quarterhour'
+
 // Parse scenario from URL search params, falling back to defaults
 function parseScenario(params: URLSearchParams): ChargingScenario {
   const get = (key: string, fallback: number) => {
@@ -65,6 +67,15 @@ function parseGbAuction(params: URLSearchParams): GbDayAheadAuction {
   return params.get('gb_auction') === 'daa2' ? 'daa2' : DEFAULT_GB_DAY_AHEAD_AUCTION
 }
 
+function parseResolution(
+  params: URLSearchParams,
+  country: 'DE' | 'NL' | 'GB',
+  gbAuction: GbDayAheadAuction,
+): Resolution {
+  if (params.get('resolution') === 'quarterhour') return 'quarterhour'
+  return country === 'GB' && gbAuction === 'daa2' ? 'quarterhour' : 'hour'
+}
+
 function fallbackCopy(text: string, setCopied: (v: boolean) => void) {
   try {
     const el = document.createElement('textarea')
@@ -91,6 +102,7 @@ export default function V2Page() {
 function V2Inner() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const [initialUrlDate] = useState(() => searchParams.get('date'))
 
   const [scenario, setScenario] = useState<ChargingScenario>(() => parseScenario(searchParams))
   const [copied, setCopied] = useState(false)
@@ -104,15 +116,19 @@ function V2Inner() {
   } | null>(null)
   const [country, setCountry] = useState<'DE' | 'NL' | 'GB'>(() => parseCountry(searchParams))
   const [gbAuction, setGbAuction] = useState<GbDayAheadAuction>(() => parseGbAuction(searchParams))
+  const [resolution, setResolution] = useState<Resolution>(() => {
+    const initialCountry = parseCountry(searchParams)
+    const initialAuction = parseGbAuction(searchParams)
+    return parseResolution(searchParams, initialCountry, initialAuction)
+  })
 
   const prices = usePrices(country, gbAuction)
 
   // On mount: if URL has a date param, apply it once prices are loaded
-  const urlDate = searchParams.get('date')
   useEffect(() => {
-    if (urlDate && prices.daily.length > 0) {
-      const exists = prices.daily.some(d => d.date === urlDate)
-      if (exists) prices.setSelectedDate(urlDate)
+    if (initialUrlDate && prices.daily.length > 0) {
+      const exists = prices.daily.some(d => d.date === initialUrlDate)
+      if (exists) prices.setSelectedDate(initialUrlDate)
     }
     // only run once when prices first load
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -131,9 +147,10 @@ function V2Inner() {
     p.set('departure',   String(scenario.departureTime))
     if (scenario.chargePowerKw !== 7) p.set('power', String(scenario.chargePowerKw))
     if (scenario.chargingMode !== 'overnight') p.set('mode', scenario.chargingMode)
+    if (resolution === 'quarterhour') p.set('resolution', 'quarterhour')
     if (scenario.plugInDays) p.set('days', [...scenario.plugInDays].sort((a, b) => a - b).join(','))
     router.replace(`/v2?${p.toString()}`, { scroll: false })
-  }, [scenario, prices.selectedDate, country, gbAuction]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [scenario, prices.selectedDate, country, gbAuction, resolution]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleShare = useCallback(() => {
     const url = window.location.href
@@ -217,6 +234,13 @@ function V2Inner() {
                   <span className="text-[10px] text-gray-400">Home storage</span>
                 </Link>
                 <Link
+                  href="/v2/calculator"
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Calculator
+                  <span className="text-[10px] text-gray-400">Fast value estimate</span>
+                </Link>
+                <Link
                   href="/v2/insights"
                   className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 hover:bg-gray-50 transition-colors"
                 >
@@ -283,6 +307,8 @@ function V2Inner() {
           setCountry={setCountry}
           gbAuction={gbAuction}
           setGbAuction={setGbAuction}
+          resolution={resolution}
+          setResolution={setResolution}
           onExportReady={useCallback((data: { overnightWindows: EnrichedWindow[]; showFleet: boolean; fleetConfig: FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => setExportData(data), [])}
         />
       </main>

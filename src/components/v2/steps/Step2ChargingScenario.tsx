@@ -73,11 +73,24 @@ interface Props {
   setCountry?: (c: 'DE' | 'NL' | 'GB') => void
   gbAuction?: GbDayAheadAuction
   setGbAuction?: (auction: GbDayAheadAuction) => void
+  resolution: 'hour' | 'quarterhour'
+  setResolution: (resolution: 'hour' | 'quarterhour') => void
   onExportReady?: (data: { overnightWindows: import('@/lib/excel-export').EnrichedWindow[]; showFleet: boolean; fleetConfig: import('@/lib/v2-config').FleetConfig; resolution: 'hour' | 'quarterhour' } | null) => void
 }
 
 /* ────── Main Component ────── */
-export function Step2ChargingScenario({ prices, scenario, setScenario, country = 'DE', setCountry, gbAuction = 'daa1', setGbAuction, onExportReady }: Props) {
+export function Step2ChargingScenario({
+  prices,
+  scenario,
+  setScenario,
+  country = 'DE',
+  setCountry,
+  gbAuction = 'daa1',
+  setGbAuction,
+  resolution,
+  setResolution,
+  onExportReady,
+}: Props) {
   const isGb = country === 'GB'
   const units = getPriceUnits(country)
   const intradaySeriesLabel = country === 'GB' ? 'RPD HH' : 'ID3'
@@ -115,9 +128,6 @@ export function Step2ChargingScenario({ prices, scenario, setScenario, country =
   const chartRef = useRef<HTMLDivElement>(null)
   const [isDragging, setIsDragging] = useState<'arrival' | 'departure' | 'fleetArrival' | 'fleetDeparture' | null>(null)
   const [costDetailMode, setCostDetailMode] = useState<string | null>(null)
-  const [resolution, setResolution] = useState<'hour' | 'quarterhour'>(() => (
-    country === 'GB' && gbAuction === 'daa2' ? 'quarterhour' : 'hour'
-  ))
   const [plotArea, setPlotArea] = useState<{ left: number; width: number; top: number; height: number } | null>(null)
   const [showRenewable, setShowRenewable] = useState(false)
   const [showIntraday, setShowIntraday] = useState(false)
