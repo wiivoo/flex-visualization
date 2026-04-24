@@ -41,6 +41,8 @@
 | PROJ-39 | Plug-in Battery Business Case (DE/NL) | In Progress | [spec](PROJ-39-plug-in-battery-business-case.md) | `src/app/battery/`, `src/components/battery/`, `src/lib/battery-*.ts` |
 | PROJ-40 | Management Dashboard | Planned | [spec](PROJ-40-management-dashboard.md) | `src/app/management/`, `src/components/management/`, `src/lib/management-*.ts`, `public/data/management-monthly.json` |
 | PROJ-41 | AI Team Orchestration | Deployed | [spec](PROJ-41-ai-team-orchestration.md) | `CLAUDE.md`, `.claude/TEAM.md`, `.claude/agents/`, `.claude/rules/team-orchestration.md` |
+| PROJ-42 | EV Flex Value Calculator | In Review | [spec](PROJ-42-ev-flex-value-calculator.md) | `src/app/v2/calculator/`, `src/components/v2/calculator/`, `src/lib/flex-calculator.ts` |
+| PROJ-43 | PV + Battery Dynamic Tariff Calculator | In Progress | [spec](PROJ-43-pv-battery-dynamic-calculator.md) | `src/app/battery/calculator/`, `src/components/battery/calculator/`, `src/lib/pv-battery-calculator.ts` |
 
 ## Archived Features
 
@@ -61,4 +63,4 @@
 ## Notes
 
 - `PROJ-28` was backfilled on 2026-04-21 to close the inventory gap for an already-deployed layout refresh.
-- Next available ID: `PROJ-42`
+- Next available ID: `PROJ-44`

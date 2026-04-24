@@ -254,6 +254,10 @@ function formatKwh(value: number): string {
   return `${Math.round(value).toLocaleString()} kWh`
 }
 
+function formatExactKwh(value: number): string {
+  return `${value.toFixed(2)} kWh`
+}
+
 function sumAnnualSlotMetric(
   annual: PvBatteryAnnualResult,
   key: keyof PvBatteryAnnualResult['slots'][number],
@@ -377,8 +381,10 @@ function PillButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors',
-        active ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+        'rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors',
+        active
+          ? 'border-[#313131] bg-[#313131] text-white shadow-sm'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-[#F8F8F5] hover:text-gray-900',
         disabled && 'cursor-not-allowed opacity-40 hover:border-gray-200',
       )}
     >
@@ -388,30 +394,25 @@ function PillButton({
 }
 
 function SegmentedPillGroup({
-  label,
   options,
 }: {
-  label: string
   options: Array<{ label: string; active: boolean; onClick: () => void }>
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</span>
-      <div className="inline-flex rounded-full border border-gray-200 bg-[#F5F5F2] p-1">
-        {options.map((option) => (
-          <button
-            key={option.label}
-            type="button"
-            onClick={option.onClick}
-            className={cn(
-              'rounded-full px-3 py-1 text-[12px] font-semibold transition-colors',
-              option.active ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700',
-            )}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+    <div className="inline-flex rounded-full border border-gray-200 bg-[#F8F8F5] p-1">
+      {options.map((option) => (
+        <button
+          key={option.label}
+          type="button"
+          onClick={option.onClick}
+          className={cn(
+            'rounded-full px-3 py-1.5 text-[12px] font-semibold transition-colors',
+            option.active ? 'bg-[#313131] text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-700',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   )
 }
@@ -419,12 +420,10 @@ function SegmentedPillGroup({
 function OptionCard({
   active,
   title,
-  detail,
   onClick,
 }: {
   active: boolean
   title: string
-  detail: string
   onClick: () => void
 }) {
   return (
@@ -432,14 +431,13 @@ function OptionCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-2xl border p-4 text-left transition-all',
+        'rounded-2xl border px-4 py-3 text-left transition-all',
         active
-          ? 'border-gray-900 bg-gray-900 text-white shadow-[0_10px_24px_rgba(0,0,0,0.10)]'
-          : 'border-gray-200 bg-white text-gray-900 hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-[0_10px_24px_rgba(0,0,0,0.05)]',
+          ? 'border-[#313131] bg-[#F8F8F5] text-gray-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
+          : 'border-gray-200 bg-white text-gray-900 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-[#FBFBF8] hover:shadow-[0_10px_24px_rgba(15,23,42,0.04)]',
       )}
     >
       <p className="text-[14px] font-semibold">{title}</p>
-      <p className={cn('mt-1 text-[12px] leading-5', active ? 'text-gray-200' : 'text-gray-500')}>{detail}</p>
     </button>
   )
 }
@@ -454,7 +452,7 @@ function MetricTile({
   hint?: string
 }) {
   return (
-    <div className="rounded-2xl bg-[#F5F5F2] p-4">
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
       {hint ? <p className="mt-1 text-[12px] leading-5 text-gray-500">{hint}</p> : null}
@@ -465,32 +463,35 @@ function MetricTile({
 function ControlBlock({
   label,
   value,
+  icon,
   children,
 }: {
   label: string
   value?: string
+  icon?: ReactNode
   children: ReactNode
 }) {
   const compactValue = value && value.length > 16
 
   return (
-    <Card className="overflow-hidden rounded-[20px] border-gray-200 bg-white shadow-sm">
+    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-white shadow-sm">
       <CardContent className="p-0">
-        <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-5 py-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
-          {value ? (
-            <p className={cn(
-              'font-semibold tracking-tight text-gray-900',
-              compactValue ? 'text-lg' : 'text-2xl',
-            )}
-            >
-              {value}
-            </p>
-          ) : null}
+        <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-[#FBFBF8] px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
+            {value ? (
+              <p className={cn(
+                'mt-1 font-semibold tracking-tight text-gray-900',
+                compactValue ? 'text-lg' : 'text-2xl',
+              )}
+              >
+                {value}
+              </p>
+            ) : null}
+          </div>
+          {icon}
         </div>
-        <div className="px-5 py-5">
-          {children}
-        </div>
+        <div className="px-5 py-5">{children}</div>
       </CardContent>
     </Card>
   )
@@ -502,7 +503,7 @@ function FlowNodeBadge({ node }: { node: FlowNodeKey }) {
 
   return (
     <div
-      className="inline-flex min-w-[106px] items-center justify-center gap-2 rounded-[12px] border px-3.5 py-2.5 shadow-[0_8px_18px_rgba(15,23,42,0.045)]"
+      className="inline-flex w-full items-center justify-center gap-2 rounded-[14px] border px-4 py-3 shadow-[0_8px_18px_rgba(15,23,42,0.045)]"
       style={{ backgroundColor: meta.background, borderColor: 'rgba(17,24,39,0.05)', color: meta.text }}
     >
       <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/82 shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]">
@@ -582,8 +583,6 @@ function FlowVerticalRoute({
 
 function FlowSourceColumn({
   source,
-  title,
-  tone,
   routes,
   permissions,
   onToggle,
@@ -591,26 +590,15 @@ function FlowSourceColumn({
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
   source: FlowNodeKey
-  title: string
-  tone: 'primary' | 'secondary'
   routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; staticLabel?: string }>
 }) {
-  const isSecondary = tone === 'secondary'
-
   return (
-    <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFCFD] p-4">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{title}</p>
-          <p className="mt-1 text-[14px] font-semibold text-gray-900">{isSecondary ? 'Secondary routes' : 'Primary routes'}</p>
-        </div>
-      </div>
-
-      <div className="flex flex-col items-center">
+    <div className="h-full rounded-[24px] border border-[#E5E7EB] bg-[#FBFCFD] p-5">
+      <div className="flex h-full flex-col items-center">
         <FlowNodeBadge node={source} />
-        <div className="mt-3 h-6 w-px bg-[#D7DCE3]" />
-        <div className="h-px w-[82%] bg-[#D7DCE3]" />
-        <div className="mt-4 grid w-full gap-4" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
+        <div className="mt-4 h-7 w-px bg-[#D7DCE3]" />
+        <div className="h-px w-[88%] bg-[#D7DCE3]" />
+        <div className="mt-5 grid w-full gap-5" style={{ gridTemplateColumns: `repeat(${routes.length}, minmax(0, 1fr))` }}>
           {routes.map((route) => (
             <FlowVerticalRoute
               key={`${source}-${route.target}-${route.routeKey ?? route.staticLabel}`}
@@ -637,12 +625,10 @@ function FlowRouteDiagram({
   const toggle = (key: FlowPermissionKey) => onToggle(key, !permissions[key])
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div className="grid gap-4 xl:grid-cols-3">
         <FlowSourceColumn
           source="pv"
-          title="PV"
-          tone="primary"
           routes={[
             { target: 'home', routeKey: 'pvToLoad' },
             { target: 'battery', routeKey: 'pvToBattery' },
@@ -654,8 +640,6 @@ function FlowRouteDiagram({
 
         <FlowSourceColumn
           source="battery"
-          title="Battery"
-          tone="primary"
           routes={[
             { target: 'home', routeKey: 'batteryToLoad' },
             { target: 'grid', routeKey: 'batteryToGrid' },
@@ -666,8 +650,6 @@ function FlowRouteDiagram({
 
         <FlowSourceColumn
           source="grid"
-          title="Grid"
-          tone="secondary"
           routes={[
             { target: 'home', staticLabel: 'Always' },
             { target: 'battery', routeKey: 'gridToBattery' },
@@ -676,9 +658,6 @@ function FlowRouteDiagram({
           onToggle={toggle}
         />
       </div>
-      <p className="text-[12px] leading-5 text-gray-500">
-        Grid -&gt; load is always available, so household demand remains served even when storage and export paths are disabled.
-      </p>
     </div>
   )
 }
@@ -726,7 +705,7 @@ function SectionHeading({
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p>
           {help ? <HelpTooltip label={`${title} help`}>{help}</HelpTooltip> : null}
         </div>
-        <p className="mt-1 text-sm font-medium text-gray-900">{title}</p>
+        <p className="mt-1 text-[18px] font-semibold tracking-tight text-gray-900">{title}</p>
       </div>
       {icon}
     </div>
@@ -772,7 +751,7 @@ function RangeControl({
         step={step}
         value={sliderValue}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-gray-200 accent-gray-900"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#E7E5E0] accent-[#171717]"
       />
       {minLabel || maxLabel ? (
         <div className="flex justify-between text-[11px] text-gray-400">
@@ -810,7 +789,7 @@ function AnnualHero({
   units: ReturnType<typeof getPriceUnits>
 }) {
   return (
-    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-[#FBFBF8] shadow-sm">
+    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-white shadow-sm">
       <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="border-b border-gray-200 bg-white p-6 xl:border-b-0 xl:border-r">
           <div className="flex items-center gap-2">
@@ -847,7 +826,7 @@ function AnnualHero({
           </div>
         </div>
 
-        <div className="bg-[#FBFBF8] p-6">
+        <div className="bg-[#F8F8F5] p-6">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Value stack</p>
           <div className="mt-5 space-y-4 text-sm text-gray-600">
             <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-4">
@@ -924,7 +903,7 @@ function MonthlyBars({
   const maxValue = Math.max(...annual.months.map((month) => Math.max(month.savingsEur, month.exportRevenueEur, 1)), 1)
 
   return (
-    <Card className="rounded-[24px] border-gray-200 shadow-sm">
+    <Card className="rounded-[24px] border-gray-200 bg-white shadow-sm">
       <CardContent className="p-6">
         <SectionHeading
           eyebrow="Monthly breakdown"
@@ -937,7 +916,7 @@ function MonthlyBars({
           {annual.months.map((month) => (
             <div key={month.month} className="grid grid-cols-[48px_minmax(0,1fr)_92px] items-center gap-3">
               <span className="text-sm font-medium text-gray-500">{formatMonthLabel(month.month)}</span>
-              <div className="relative h-3 overflow-hidden rounded-full bg-gray-100">
+              <div className="relative h-3 overflow-hidden rounded-full bg-[#ECEBE6]">
                 <div
                   className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80"
                   style={{ width: `${Math.max((month.savingsEur / maxValue) * 100, 4)}%` }}
@@ -980,6 +959,14 @@ function StatusCard({
   )
 }
 
+function MutedNote({ children }: { children: ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-[12px] leading-6 text-gray-600">
+      {children}
+    </div>
+  )
+}
+
 function PvBatteryCalculatorInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -1016,6 +1003,10 @@ function PvBatteryCalculatorInner() {
 
   const loadProfiles = useMemo(() => getSupportedLoadProfiles(CALCULATOR_COUNTRY), [])
   const tariffs = useMemo(() => getTariffsFor(CALCULATOR_COUNTRY), [])
+  const selectedLoadProfile = useMemo(
+    () => loadProfiles.find((profile) => profile.id === state.loadProfileId) ?? loadProfiles[0],
+    [loadProfiles, state.loadProfileId],
+  )
   const { loadProfile, pvProfile, loading: profilesLoading, error: profilesError } = useBatteryProfiles(
     CALCULATOR_COUNTRY,
     state.loadProfileId,
@@ -1124,55 +1115,85 @@ function PvBatteryCalculatorInner() {
     .filter(({ key }) => state.flowPermissions[key])
     .map(({ key }) => key)
   const activeFlowSummary = formatFlowPermissionList(activeFlowKeys)
-  const requestedConstraintSummary = disabledFlowKeys.length > 0
-    ? `Blocked routes: ${formatFlowPermissionList(disabledFlowKeys)}.`
-    : 'All optional PV and battery routes are currently allowed.'
   const disabledFlowConsequences = getDisabledFlowConsequences(state.flowPermissions)
   const annualPvToBatteryKwh = annualResult ? sumAnnualSlotMetric(annualResult, 'chargeToBatteryKwh') : 0
   const hasCustomFlowPermissions = pendingFlowPermissionKeys.length > 0
+  const dayFlowHighlights = useMemo(() => {
+    if (!dayResult) return null
+
+    const highlights = [
+      { label: 'PV to home', value: sumAnnualSlotMetric(dayResult, 'pvToLoadKwh'), color: '#F4C542' },
+      { label: 'PV to battery', value: sumAnnualSlotMetric(dayResult, 'pvToBatteryKwh'), color: '#E4A200' },
+      { label: 'PV to grid', value: sumAnnualSlotMetric(dayResult, 'pvToGridKwh'), color: '#5B9BDA' },
+      { label: 'Battery to home', value: sumAnnualSlotMetric(dayResult, 'batteryToLoadKwh'), color: '#E07A1F' },
+      { label: 'Battery to grid', value: sumAnnualSlotMetric(dayResult, 'batteryExportKwh'), color: '#4A5565' },
+      { label: 'Grid to home', value: sumAnnualSlotMetric(dayResult, 'gridToLoadKwh'), color: '#A1A8B3' },
+    ].filter((item) => item.value > 0.001)
+
+    return (
+      <div className="mt-5 border-t border-gray-200 pt-4">
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {highlights.map((item) => (
+            <div key={item.label} className="rounded-2xl border border-[#E5E7EB] bg-[#FBFCFD] px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} />
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#64748B]">{item.label}</span>
+              </div>
+              <p className="mt-1 text-sm font-semibold text-[#171717]">{formatExactKwh(item.value)}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }, [dayResult])
 
   return (
     <TooltipProvider delayDuration={120}>
       <div className="min-h-screen bg-[#F5F5F2]">
         <header className="border-b border-gray-200 bg-white">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between px-8 py-2">
+          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6 lg:px-8">
             <h1 className="text-sm font-semibold text-gray-400">PV + Battery Dynamic Tariff Calculator</h1>
-            <nav className="flex items-center gap-2">
+            <nav className="flex flex-wrap items-center gap-2">
               <Link
                 href="/battery"
-                className="rounded-full px-2.5 py-1 text-[11px] font-semibold text-gray-400 transition-colors hover:text-gray-600"
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
               >
                 Battery business case
               </Link>
               <Link
                 href="/v2"
-                className="rounded-full px-2.5 py-1 text-[11px] font-semibold text-gray-400 transition-colors hover:text-gray-600"
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
               >
                 EV charging
               </Link>
-              <span className="rounded-full bg-[#313131] px-2.5 py-1 text-[11px] font-semibold text-white">
+              <span className="rounded-lg border border-[#313131] bg-[#313131] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm">
                 PV + battery calculator
               </span>
             </nav>
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1440px] px-8 py-6">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className="space-y-5 lg:sticky lg:top-20 lg:self-start">
+        <main className="mx-auto max-w-[1440px] px-4 py-5 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:gap-5">
+            <aside className="order-2 space-y-4 lg:order-1 lg:sticky lg:top-20 lg:self-start">
               <ControlBlock
                 label="Market and year"
                 value={availableYears.length > 0 ? `DE · ${effectiveYear}` : 'DE'}
+                icon={<Gauge className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-4">
                   <div className="grid gap-2">
                     <OptionCard
                       active
                       title="Germany"
-                      detail="SMARD replay with tariff-adjusted import pricing, market-priced export, and permission-aware battery dispatch."
                       onClick={() => {}}
                     />
                   </div>
+
+                  <MutedNote>
+                    SMARD replay with tariff-adjusted import pricing, market-priced export, and permission-aware battery dispatch.
+                  </MutedNote>
 
                   {availableYears.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
@@ -1183,7 +1204,7 @@ function PvBatteryCalculatorInner() {
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-2xl bg-[#F5F5F2] px-4 py-3 text-[12px] leading-6 text-gray-600">
+                    <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-[12px] leading-6 text-gray-600">
                       {loading ? 'Loading annual price history…' : 'No complete annual price history is available for the selected market yet.'}
                     </div>
                   )}
@@ -1200,7 +1221,7 @@ function PvBatteryCalculatorInner() {
                     <select
                       value={state.tariffId}
                       onChange={(event) => setDraftState((current) => ({ ...current, tariffId: event.target.value }))}
-                      className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+                      className="w-full rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
                     >
                       {tariffs.map((tariff) => (
                         <option key={tariff.id} value={tariff.id}>
@@ -1215,6 +1236,7 @@ function PvBatteryCalculatorInner() {
               <ControlBlock
                 label="Household"
                 value={`${Math.round(state.annualLoadKwh).toLocaleString()} kWh`}
+                icon={<Home className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-5">
                   <RangeControl
@@ -1245,11 +1267,11 @@ function PvBatteryCalculatorInner() {
                           key={profile.id}
                           active={state.loadProfileId === profile.id}
                           title={profile.label}
-                          detail={profile.detail}
                           onClick={() => setDraftState((current) => ({ ...current, loadProfileId: profile.id }))}
                         />
                       ))}
                     </div>
+                    <MutedNote>{selectedLoadProfile?.detail}</MutedNote>
                   </div>
                 </div>
               </ControlBlock>
@@ -1257,6 +1279,7 @@ function PvBatteryCalculatorInner() {
               <ControlBlock
                 label="PV and battery"
                 value={`${(state.pvCapacityWp / 1000).toFixed(1)} kWp · ${state.usableKwh.toFixed(1)} kWh`}
+                icon={<Battery className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-5">
                   <RangeControl
@@ -1327,9 +1350,10 @@ function PvBatteryCalculatorInner() {
               <ControlBlock
                 label="Export logic"
                 value={getAutomaticExportLabel(CALCULATOR_COUNTRY)}
+                icon={<Zap className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-5">
-                  <div className="rounded-2xl bg-[#F5F5F2] px-4 py-3">
+                  <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Export value</p>
@@ -1354,7 +1378,7 @@ function PvBatteryCalculatorInner() {
                     maxLabel="20 kW"
                   />
 
-                  <div className="rounded-2xl bg-[#F5F5F2] px-4 py-3">
+                  <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Charging logic</p>
@@ -1371,7 +1395,7 @@ function PvBatteryCalculatorInner() {
 
             </aside>
 
-            <section className="space-y-5">
+            <section className="order-1 space-y-5 lg:order-2">
               {loading ? (
                 <StatusCard title="Loading calculator inputs" body="Fetching German price history and bundled household profiles." />
               ) : prices.error ? (
@@ -1389,79 +1413,41 @@ function PvBatteryCalculatorInner() {
                   <PvBatteryDayChart
                     annualResult={dayResult}
                     dayLabel={formatDayLabel(prices.selectedDate)}
-                    flowPermissions={state.flowPermissions}
                     units={units}
                     loading={prices.loading}
                     controls={(
-                      <div className="-mx-6 -mb-4 overflow-hidden border-t border-gray-200">
-                        <div className="px-6 py-5">
-                          <SectionHeading
-                            eyebrow="Selected day"
-                            title="Flow map and price replay"
-                            help="Choose a day from the active year to inspect quarter-hour PV, battery, household, and grid flows with a separate price panel for adjusted household price, spot export value, and action windows."
-                          />
-                          <p className="text-sm leading-6 text-gray-500">{resolutionMessage}</p>
-                        </div>
-                        <div className="border-t border-gray-200 px-4 py-3">
-                          <DateStrip
-                            daily={yearDates}
-                            selectedDate={prices.selectedDate}
-                            onSelect={prices.setSelectedDate}
-                            latestDate={yearDates[yearDates.length - 1]?.date}
-                            requireNextDay={false}
-                            forecastAfter={prices.lastRealDate || undefined}
-                            country={CALCULATOR_COUNTRY}
-                          />
-                        </div>
-                        <div className="space-y-4 border-t border-gray-200 px-6 py-4">
-                          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                            <div className="space-y-2">
-                              <p className="text-[12px] leading-5 text-gray-500">Choose the replay resolution, then edit dispatch rules in the dedicated routing card below.</p>
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              <PillButton active={state.resolution === 'hour'} onClick={() => setDraftState((current) => ({ ...current, resolution: 'hour' }))}>
-                                60 min
-                              </PillButton>
-                              <PillButton
-                                active={state.resolution === 'quarterhour'}
-                                disabled={prices.hourlyQH.length === 0}
-                                onClick={() => prices.hourlyQH.length > 0 && setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))}
-                              >
-                                15 min
-                              </PillButton>
-                            </div>
+                      <div className="space-y-5">
+                        <div className="overflow-hidden rounded-[24px] border border-gray-200 bg-white">
+                          <div className="px-4 py-3">
+                            <DateStrip
+                              daily={yearDates}
+                              selectedDate={prices.selectedDate}
+                              onSelect={prices.setSelectedDate}
+                              latestDate={yearDates[yearDates.length - 1]?.date}
+                              requireNextDay={false}
+                              forecastAfter={prices.lastRealDate || undefined}
+                              country={CALCULATOR_COUNTRY}
+                            />
                           </div>
                         </div>
 
-                        <div className="border-t border-gray-200 px-6 py-5">
-                          <div className="rounded-[20px] border border-gray-200 bg-[#FBFBF8] p-4">
-                            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                              <div className="space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Dispatch routes</p>
-                                  <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-700">
-                                    {activeFlowKeys.length}/6 open
+                        <div className="rounded-[24px] border border-gray-200 bg-white p-5">
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Dispatch routes</p>
+                                <span className="rounded-full bg-[#F5F5F2] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-700">
+                                  {activeFlowKeys.length}/6 open
+                                </span>
+                                {hasCustomFlowPermissions ? (
+                                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                    Custom
                                   </span>
-                                  {hasCustomFlowPermissions ? (
-                                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">
-                                      Custom
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <p className="text-[12px] leading-5 text-gray-500">Use the quick policies or the live diagram to open and close each allowed path.</p>
-                                {disabledFlowKeys.length > 0 ? (
-                                  <p className="text-[12px] leading-5 text-amber-800">
-                                    Blocked: {formatFlowPermissionList(disabledFlowKeys)}
-                                  </p>
-                                ) : (
-                                  <p className="text-[12px] leading-5 text-gray-500">{requestedConstraintSummary}</p>
-                                )}
+                                ) : null}
                               </div>
 
-                              <div className="flex flex-wrap items-center gap-4">
+                              <div className="flex flex-wrap items-center gap-3">
                                 <SegmentedPillGroup
-                                  label="Solar"
                                   options={[
                                     {
                                       label: 'PV',
@@ -1493,7 +1479,6 @@ function PvBatteryCalculatorInner() {
                                 />
 
                                 <SegmentedPillGroup
-                                  label="Battery"
                                   options={[
                                     {
                                       label: 'Uni-Directional',
@@ -1526,20 +1511,38 @@ function PvBatteryCalculatorInner() {
                               </div>
                             </div>
 
-                            <div className="mt-4 border-t border-gray-200 pt-4">
-                              <FlowRouteDiagram
-                                permissions={state.flowPermissions}
-                                onToggle={(key, checked) => setDraftState((current) => ({
-                                  ...current,
-                                  flowPermissions: {
-                                    ...current.flowPermissions,
-                                    [key]: checked,
-                                  },
-                                }))}
-                              />
                             </div>
+                          <div className="mt-4 border-t border-gray-200 pt-4">
+                            <FlowRouteDiagram
+                              permissions={state.flowPermissions}
+                              onToggle={(key, checked) => setDraftState((current) => ({
+                                ...current,
+                                flowPermissions: {
+                                  ...current.flowPermissions,
+                                  [key]: checked,
+                                },
+                              }))}
+                            />
                           </div>
+
+                          {dayFlowHighlights}
                         </div>
+                      </div>
+                    )}
+                    flowHighlights={dayFlowHighlights ?? <></>}
+                    priceNote={resolutionMessage}
+                    priceControls={(
+                      <div className="flex flex-wrap gap-2">
+                        <PillButton active={state.resolution === 'hour'} onClick={() => setDraftState((current) => ({ ...current, resolution: 'hour' }))}>
+                          60 min
+                        </PillButton>
+                        <PillButton
+                          active={state.resolution === 'quarterhour'}
+                          disabled={prices.hourlyQH.length === 0}
+                          onClick={() => prices.hourlyQH.length > 0 && setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))}
+                        >
+                          15 min
+                        </PillButton>
                       </div>
                     )}
                   />

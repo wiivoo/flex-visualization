@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { ArrowRight, BatteryCharging, Home, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 import {
   CartesianGrid,
@@ -14,17 +14,20 @@ import {
   YAxis,
 } from 'recharts'
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { PvBatteryAnnualResult, PvBatteryFlowPermissions, PvBatterySlotResult } from '@/lib/pv-battery-calculator'
+import { Card, CardContent } from '@/components/ui/card'
+import type { PvBatteryAnnualResult, PvBatterySlotResult } from '@/lib/pv-battery-calculator'
+import { cn } from '@/lib/utils'
 import type { PriceUnits } from '@/lib/v2-config'
 
 interface Props {
   annualResult: PvBatteryAnnualResult | null
   dayLabel: string
-  flowPermissions: PvBatteryFlowPermissions
   units: PriceUnits
   loading?: boolean
   controls?: ReactNode
+  flowHighlights?: ReactNode
+  priceNote?: string
+  priceControls?: ReactNode
 }
 
 interface FlowSegment {
@@ -177,7 +180,7 @@ function SummaryTile({
 }) {
   return (
     <div
-      className="rounded-[24px] border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
+      className="rounded-[24px] border px-4 py-4"
       style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
     >
       <div className="flex items-start justify-between gap-4">
@@ -188,7 +191,7 @@ function SummaryTile({
           <p className="mt-2 text-lg font-semibold tracking-[-0.02em] text-[#171717]">{value}</p>
           <p className="mt-1 text-xs text-[#5F5D55]">{detail}</p>
         </div>
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/80 shadow-[0_10px_24px_rgba(15,23,42,0.06)]" style={{ color: palette.text }}>
+        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/80" style={{ color: palette.text }}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
@@ -206,7 +209,7 @@ function LegendPill({
   icon: LucideIcon
 }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-[#4B4A45] shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
+    <span className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-[#4B4A45]">
       <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ backgroundColor: `${color}1F`, color }}>
         <Icon className="h-3.5 w-3.5" />
       </span>
@@ -227,8 +230,8 @@ function FlowScale({
   const positiveTicks = ticks.filter((tick) => tick > 0)
 
   return (
-    <div className="pointer-events-none absolute inset-y-0 left-0 w-[56px] border-r border-[#E5E7EB] text-[10px] text-[#94A3B8]">
-      <span className="absolute left-0 top-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">kWh</span>
+    <div className="pointer-events-none absolute inset-y-0 left-0 w-[68px] border-r border-[#E5E7EB] text-[11px] text-[#64748B]">
+      <span className="absolute left-0 top-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#64748B]">kWh</span>
 
       {mode === 'positive' ? (
         ticks.map((tick) => {
@@ -376,32 +379,32 @@ function FlowLaneRow({
   const laneScaleMax = lane.mode === 'center'
     ? Math.max(maxPositive, maxNegative, 0.1)
     : Math.max(maxPositive, 0.1)
-  const flowTicks = useMemo(() => buildPositiveTicks(laneScaleMax), [laneScaleMax])
+  const flowTicks = useMemo(() => buildPositiveTicks(laneScaleMax, 3), [laneScaleMax])
   const Icon = lane.icon
   const guideTicks = flowTicks.filter((tick) => tick > 0)
-  const chartHeight = lane.mode === 'center' ? 'h-[160px]' : 'h-[88px]'
+  const chartHeight = lane.mode === 'center' ? 'h-[228px]' : 'h-[156px]'
 
   return (
-    <div className={`grid grid-cols-[14px_minmax(0,1fr)] gap-3 ${chartHeight}`}>
+    <div className={`grid grid-cols-[84px_minmax(0,1fr)] gap-4 ${chartHeight}`}>
       <div
-        className="flex items-start justify-center pt-3"
+        className="flex flex-col gap-2 pt-3"
         style={{ color: lane.accent, backgroundColor: 'transparent' }}
-        aria-hidden="true"
       >
-        <span className="text-current">
+        <span className="flex h-9 w-9 items-center justify-center rounded-2xl border border-[#E5E7EB] bg-white text-current">
           <Icon className="h-4 w-4" />
         </span>
+        <div>
+          <p className="text-[13px] font-semibold uppercase tracking-[0.08em] text-[#111827]">{lane.label}</p>
+          <p className="mt-1 text-[11px] leading-5 text-[#64748B]">{lane.detail}</p>
+        </div>
       </div>
 
       <div
-        className={`relative overflow-hidden rounded-[14px] border pl-[60px] pr-1.5 py-2 ${chartHeight}`}
+        className={`relative overflow-hidden rounded-[18px] border pl-[72px] pr-2 py-3 ${chartHeight}`}
         style={{ borderColor: COLORS.border, backgroundColor: COLORS.plot }}
         aria-label={lane.label}
       >
         <FlowScale mode={lane.mode} ticks={flowTicks} maxValue={laneScaleMax} />
-        <div className="pointer-events-none absolute left-[60px] top-3 text-[11px] font-semibold text-[#334155]">
-          {lane.label}
-        </div>
 
         <div className="pointer-events-none absolute inset-0">
           {lane.mode === 'positive' ? (
@@ -443,17 +446,24 @@ function FlowLaneRow({
         </div>
 
         <div
-          className="pointer-events-none absolute inset-0 grid gap-[2px] px-1.5 py-2"
+          className="pointer-events-none absolute inset-0 grid gap-[2px] px-2 py-3"
           style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}
         >
           {slots.map((slot, index) => {
-            const isHourTick = index % slotsPerHour === 0
             const isMajorTick = index % (slotsPerHour * 4) === 0
+            const isMidTick = index % (slotsPerHour * 2) === 0
 
             return (
               <div
                 key={`${lane.key}-vertical-${slot.timestamp}`}
-                className={`border-l ${isHourTick ? 'opacity-100' : 'opacity-0'} ${isMajorTick ? 'border-l-[#D1D5DB]' : 'border-l-[#E5E7EB]'}`}
+                className={cn(
+                  'border-l',
+                  isMajorTick
+                    ? 'border-l-[#D1D5DB]'
+                    : isMidTick
+                      ? 'border-l-[#E5E7EB]/80'
+                      : 'border-l-transparent',
+                )}
               />
             )
           })}
@@ -476,40 +486,6 @@ function FlowLaneRow({
   )
 }
 
-function SliceMetric({
-  label,
-  value,
-  detail,
-  icon: Icon,
-  palette,
-}: {
-  label: string
-  value: string
-  detail?: string
-  icon: LucideIcon
-  palette: SummaryTone
-}) {
-  return (
-    <div
-      className="rounded-[22px] border px-4 py-3"
-      style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.15em]" style={{ color: palette.text }}>
-            {label}
-          </p>
-          <p className="mt-2 text-sm font-semibold text-[#171717]">{value}</p>
-          {detail ? <p className="mt-1 text-xs text-[#5F5D55]">{detail}</p> : null}
-        </div>
-        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/80" style={{ color: palette.text }}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-    </div>
-  )
-}
-
 function DayFlowPill({
   label,
   value,
@@ -520,7 +496,7 @@ function DayFlowPill({
   color: string
 }) {
   return (
-    <div className="rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+    <div className="rounded-2xl border border-[#E5E7EB] bg-white px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
       <div className="flex items-center gap-2">
         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#64748B]">{label}</span>
@@ -533,31 +509,17 @@ function DayFlowPill({
 export function PvBatteryDayChart({
   annualResult,
   dayLabel,
-  flowPermissions,
   units,
   loading = false,
   controls,
+  flowHighlights,
+  priceNote,
+  priceControls,
 }: Props) {
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
   const [selectedIndex, setSelectedIndex] = useState(0)
-
-  useEffect(() => {
-    if (slots.length === 0) return
-    setSelectedIndex((current) => Math.min(current, slots.length - 1))
-  }, [slots.length])
-
-  const selectedSlot = slots[Math.min(selectedIndex, Math.max(slots.length - 1, 0))]
-
-  const disabledFlowSummary = useMemo(() => {
-    const disabled: string[] = []
-    if (!flowPermissions.pvToLoad) disabled.push('PV -> load')
-    if (!flowPermissions.pvToBattery) disabled.push('PV -> battery')
-    if (!flowPermissions.gridToBattery) disabled.push('Grid -> battery')
-    if (!flowPermissions.batteryToLoad) disabled.push('Battery -> load')
-    if (!flowPermissions.pvToGrid) disabled.push('PV -> grid')
-    if (!flowPermissions.batteryToGrid) disabled.push('Battery -> grid')
-    return disabled.length > 0 ? disabled.join(', ') : 'None'
-  }, [flowPermissions])
+  const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(slots.length - 1, 0))
+  const selectedSlot = slots[effectiveSelectedIndex]
 
   const totals = useMemo(() => slots.reduce((acc, slot) => ({
     pvToLoad: acc.pvToLoad + slot.pvToLoadKwh,
@@ -700,42 +662,6 @@ export function PvBatteryDayChart({
     },
   ], [totals, units.currencySym])
 
-  const selectedMetrics = useMemo(() => {
-    if (!selectedSlot) return []
-
-    return [
-      {
-        label: 'PV to home',
-        value: formatKwh(selectedSlot.pvToLoadKwh),
-        icon: SunMedium,
-        palette: tone('#FFF7DA', '#7A5B00'),
-      },
-      {
-        label: 'PV to battery',
-        value: formatKwh(selectedSlot.pvToBatteryKwh),
-        icon: BatteryCharging,
-        palette: tone('#FFEAD7', '#9A4E00'),
-      },
-      {
-        label: 'Battery to home',
-        value: formatKwh(selectedSlot.batteryPvToLoadKwh + selectedSlot.batteryGridToLoadKwh),
-        detail: selectedSlot.batteryGridToLoadKwh > 0
-          ? `Stored PV ${formatKwh(selectedSlot.batteryPvToLoadKwh)} · Stored grid ${formatKwh(selectedSlot.batteryGridToLoadKwh)}`
-          : undefined,
-        icon: Home,
-        palette: tone('#FFF0E3', '#9A4E00'),
-      },
-      {
-        label: 'Grid imported',
-        value: formatKwh(selectedSlot.gridToLoadKwh + selectedSlot.gridToBatteryKwh),
-        detail: selectedSlot.gridToBatteryKwh > 0
-          ? `Home ${formatKwh(selectedSlot.gridToLoadKwh)} · Battery ${formatKwh(selectedSlot.gridToBatteryKwh)}`
-          : undefined,
-        icon: Zap,
-        palette: tone('#EEF1F5', '#435061'),
-      },
-    ].filter((item) => item.value !== formatKwh(0))
-  }, [selectedSlot])
   const dayFlowSummary = useMemo(() => ([
     { label: 'PV to home', value: totals.pvToLoad, color: COLORS.pvDirect },
     { label: 'PV to battery', value: totals.pvToBattery, color: COLORS.pvCharge },
@@ -748,8 +674,8 @@ export function PvBatteryDayChart({
 
   if (loading || slots.length === 0 || !selectedSlot) {
     return (
-      <Card className="rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="flex h-[420px] items-center justify-center">
+      <Card className="rounded-[28px] border-[#E5E7EB] bg-white shadow-sm">
+        <CardContent className="flex h-[420px] items-center justify-center p-8">
           <p className="text-sm text-gray-400">{loading ? 'Computing day profile…' : 'No complete day selected yet.'}</p>
         </CardContent>
       </Card>
@@ -758,52 +684,47 @@ export function PvBatteryDayChart({
 
   return (
     <div className="space-y-5">
-      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardHeader className="border-b border-[#E5E7EB] bg-white pb-5">
-        <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
-                Selected day
-              </span>
-              <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
-                {slots.length} slices
-              </span>
-            </div>
+      <div className="space-y-4">
+        {controls ? controls : null}
 
-            <div className="flex flex-col gap-1">
-              <CardTitle className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{dayLabel}</CardTitle>
-              <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
-                A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
-              </p>
-            </div>
-
-            <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {heroStats.map((stat) => (
-              <SummaryTile
-                key={stat.label}
-                label={stat.label}
-                value={stat.value}
-                detail={stat.detail}
-                icon={stat.icon}
-                palette={stat.palette}
-              />
-            ))}
-          </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {heroStats.map((stat) => (
+            <SummaryTile
+              key={stat.label}
+              label={stat.label}
+              value={stat.value}
+              detail={stat.detail}
+              icon={stat.icon}
+              palette={stat.palette}
+            />
+          ))}
         </div>
 
-        {controls ? <div className="mt-5">{controls}</div> : null}
-        </CardHeader>
+        {flowHighlights ?? (
+          <div>
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              {dayFlowSummary.map((flow) => (
+                <DayFlowPill
+                  key={flow.label}
+                  label={flow.label}
+                  value={formatKwh(flow.value)}
+                  color={flow.color}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
-        <CardContent className="p-6">
+      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
+        <CardContent className="p-6 sm:p-7">
           <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[30px] font-semibold tracking-tight text-[#171717]">Flow Map</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Primary replay</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Intraday routing shape</p>
               <p className="mt-2 text-sm leading-6 text-[#6B7280]">
-                PV, battery, and home over the selected 24 hours. Each lane uses its own kWh scale so the shapes stay readable.
+                {dayLabel}. PV, battery, and home over the selected 24 hours with larger scales so the routing stays readable.
               </p>
             </div>
 
@@ -817,34 +738,20 @@ export function PvBatteryDayChart({
           </div>
 
           <div className="space-y-4">
-            <div>
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#94A3B8]">Day flows</p>
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                {dayFlowSummary.map((flow) => (
-                  <DayFlowPill
-                    key={flow.label}
-                    label={flow.label}
-                    value={formatKwh(flow.value)}
-                    color={flow.color}
-                  />
-                ))}
-              </div>
-            </div>
-
             {lanes.map((lane) => (
               <FlowLaneRow
                 key={lane.key}
                 lane={lane}
                 slots={slots}
-                selectedIndex={selectedIndex}
+                selectedIndex={effectiveSelectedIndex}
                 setSelectedIndex={setSelectedIndex}
                 slotsPerHour={slotsPerHour}
               />
             ))}
 
-            <div className="grid grid-cols-[14px_minmax(0,1fr)] gap-3">
+            <div className="grid grid-cols-[84px_minmax(0,1fr)] gap-4">
               <div />
-              <div className="grid gap-[2px] pl-[60px] pr-2" style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}>
+              <div className="grid gap-[2px] pl-[72px] pr-2" style={{ gridTemplateColumns: `repeat(${slots.length}, minmax(0, 1fr))` }}>
                 {slots.map((slot, index) => {
                   const isHourTick = index % slotsPerHour === 0
                   const isMajorTick = index % (slotsPerHour * majorHourStep) === 0
@@ -856,11 +763,11 @@ export function PvBatteryDayChart({
                       type="button"
                       onClick={() => setSelectedIndex(index)}
                       className={`flex flex-col items-center gap-1 px-0.5 py-1 text-center transition-colors ${
-                        selectedIndex === index ? 'text-[#2563EB]' : 'text-[#94A3B8] hover:text-[#475569]'
+                        effectiveSelectedIndex === index ? 'text-[#2563EB]' : 'text-[#94A3B8] hover:text-[#475569]'
                       }`}
                     >
                       <span className={`w-px ${isHourTick ? 'bg-[#CBD5E1]' : 'bg-[#E5E7EB]'} ${isMajorTick ? 'h-4' : 'h-2.5'}`} />
-                      <span className={`text-[10px] ${showLabel ? 'font-medium' : 'opacity-0'}`}>
+                      <span className={`text-[11px] ${showLabel ? 'font-medium' : 'opacity-0'}`}>
                         {showLabel ? formatHourTick(slot.label) : '.'}
                       </span>
                     </button>
@@ -873,87 +780,24 @@ export function PvBatteryDayChart({
       </Card>
 
       <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="grid gap-5 p-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <div>
-            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-              <div>
-                <p className="text-[24px] font-semibold tracking-tight text-[#171717]">Selected Slice</p>
-                <p className="mt-1 text-sm text-[#6B7280]">{selectedSlot.label}</p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 text-xs text-[#6B6A64]">
-                <span className="rounded-full bg-[#F5F2EA] px-3 py-1.5">{formatCurrency(selectedSlot.netCostEur, units.currencySym)} net</span>
-                <span className="rounded-full bg-[#F5F2EA] px-3 py-1.5">{formatKwh(selectedSlot.loadKwh)} home demand</span>
-                <span className="rounded-full bg-[#F5F2EA] px-3 py-1.5">{formatKwh(selectedSlot.pvKwh)} PV available</span>
-              </div>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              {selectedMetrics.map((metric) => (
-                <SliceMetric
-                  key={metric.label}
-                  label={metric.label}
-                  value={metric.value}
-                  detail={metric.detail}
-                  icon={metric.icon}
-                  palette={metric.palette}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="border-t border-[#E5E7EB] pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
-            <div className="mb-4">
-              <p className="text-[24px] font-semibold tracking-tight text-[#171717]">Grid Ledger</p>
-              <p className="mt-1 text-sm text-[#6B7280]">Secondary accounting for imports, exports, and curtailment.</p>
-            </div>
-
-            <div className="space-y-3 text-sm text-[#5F5D55]">
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
-                <span>Import to home</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.gridToLoadKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
-                <span>Import to battery</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.gridToBatteryKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
-                <span>Direct PV export</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.pvToGridKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
-                <span>Battery export</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.batteryPvExportKwh + selectedSlot.batteryGridExportKwh)}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
-                <span>Curtailed PV</span>
-                <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.curtailedKwh)}</span>
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-4 text-[12px] leading-6 text-[#5F5D55]">
-              Day totals: grid imported {formatKwh(totals.gridToLoad + totals.gridToBattery)} and grid exported {formatKwh(totals.pvToGrid + totals.batteryPvExport + totals.batteryGridExport)}.
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="p-6">
+        <CardContent className="p-6 sm:p-7">
           <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-[30px] font-semibold tracking-tight text-[#171717]">Price Replay</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Market context</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Price Replay</p>
               <p className="mt-2 text-sm text-[#6B7280]">Spot, household import, and export value with the same chart language as `/v2`.</p>
+              {priceNote ? <p className="mt-2 text-[12px] leading-5 text-[#6B7280]">{priceNote}</p> : null}
             </div>
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {priceControls}
               <LegendPill label="Spot" color={COLORS.lineSpot} icon={Zap} />
               <LegendPill label="Household" color={COLORS.lineHousehold} icon={Home} />
               <LegendPill label="Export" color={COLORS.lineExport} icon={ArrowRight} />
             </div>
           </div>
 
-          <div className="h-[344px] rounded-[16px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
+          <div className="h-[392px] rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={priceData} margin={{ top: 8, right: 18, bottom: 18, left: 18 }}>
                 <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" vertical={false} />
@@ -971,7 +815,7 @@ export function PvBatteryDayChart({
                       ? formatHourTick(slot.label)
                       : ''
                   }}
-                  tick={{ fontSize: 10, fill: '#6B7280' }}
+                  tick={{ fontSize: 11, fill: '#475569' }}
                   tickLine={false}
                   axisLine={false}
                   allowDecimals={false}
@@ -981,8 +825,8 @@ export function PvBatteryDayChart({
                 <YAxis
                   domain={priceAxis.domain}
                   ticks={priceAxis.ticks}
-                  width={72}
-                  tick={{ fontSize: 10, fill: '#9CA3AF' }}
+                  width={84}
+                  tick={{ fontSize: 11, fill: '#64748B' }}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={(value) => `${value.toFixed(0)} ${units.priceSym}`}
@@ -998,7 +842,7 @@ export function PvBatteryDayChart({
                   <ReferenceArea key={`pv-${index}`} x1={range.x1} x2={range.x2} fill={COLORS.bandPv} fillOpacity={0.22} ifOverflow="hidden" />
                 ))}
 
-                <ReferenceLine x={selectedIndex} stroke="#111827" strokeOpacity={0.26} strokeDasharray="3 4" />
+                <ReferenceLine x={effectiveSelectedIndex} stroke="#111827" strokeOpacity={0.26} strokeDasharray="3 4" />
 
                 <Tooltip
                   contentStyle={{ borderRadius: 18, borderColor: '#E5E0D5', boxShadow: '0 18px 40px rgba(15,23,42,0.12)' }}
@@ -1052,15 +896,15 @@ export function PvBatteryDayChart({
           </div>
 
           <div className="mt-3 grid gap-2 text-[12px] text-[#5F5D55] sm:grid-cols-3">
-            <div className="rounded-[22px] bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Gray bands</p>
               <p className="mt-1 leading-6">Grid-charging windows.</p>
             </div>
-            <div className="rounded-[22px] bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Amber bands</p>
               <p className="mt-1 leading-6">Battery discharge or export windows.</p>
             </div>
-            <div className="rounded-[22px] bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Blue bands</p>
               <p className="mt-1 leading-6">Direct PV export windows.</p>
             </div>
