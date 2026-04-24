@@ -665,9 +665,9 @@ function GridToBatteryUpControl({
             enabled && !disabled ? 'border-gray-200 bg-white text-gray-900' : 'border-gray-100 bg-gray-50 text-gray-400',
           )}>
             <span className={cn('flex h-5 w-5 items-center justify-center rounded-full', enabled && !disabled ? 'bg-gray-100' : 'bg-gray-200')}>
-              <GridIcon className={cn('h-2.5 w-2.5', enabled && !disabled ? 'text-gray-700' : 'text-gray-400')} />
+              <BatteryIcon className={cn('h-2.5 w-2.5', enabled && !disabled ? 'text-gray-700' : 'text-gray-400')} />
             </span>
-            <span className="text-[8px] font-bold uppercase tracking-wider">Grid</span>
+            <span className="text-[8px] font-bold uppercase tracking-wider">Battery</span>
           </div>
 
           <div className="relative flex w-6 flex-col items-center">
@@ -689,9 +689,9 @@ function GridToBatteryUpControl({
             enabled && !disabled ? 'border-gray-200 bg-white text-gray-900' : 'border-gray-100 bg-gray-50 text-gray-400',
           )}>
             <span className={cn('flex h-5 w-5 items-center justify-center rounded-full', enabled && !disabled ? 'bg-gray-100' : 'bg-gray-200')}>
-              <BatteryIcon className={cn('h-2.5 w-2.5', enabled && !disabled ? 'text-gray-700' : 'text-gray-400')} />
+              <GridIcon className={cn('h-2.5 w-2.5', enabled && !disabled ? 'text-gray-700' : 'text-gray-400')} />
             </span>
-            <span className="text-[8px] font-bold uppercase tracking-wider">Battery</span>
+            <span className="text-[8px] font-bold uppercase tracking-wider">Grid</span>
             <button
               type="button"
               onClick={onToggle}
@@ -1572,30 +1572,29 @@ function PvBatteryCalculatorInner() {
 
                     <div className="space-y-2 pt-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Battery flow routing</p>
-                      <div className="grid gap-2 md:grid-cols-3">
-                        <div className="md:col-span-2">
-                          <FlowRouteCard
-                            source="battery"
-                            routes={[
-                              { target: 'home', routeKey: 'batteryToLoad' },
-                              { target: 'grid', routeKey: 'batteryToGrid' },
-                            ]}
-                            permissions={state.flowPermissions}
-                            flowValues={dayFlowValues}
-                            onToggle={(key) => setDraftState((current) => ({
-                              ...current,
-                              flowPermissions: {
-                                ...current.flowPermissions,
-                                [key]: !current.flowPermissions[key],
-                              },
-                            }))}
-                            pvCapacityWp={0}
-                            usableKwh={state.usableKwh}
-                            isSystemSelected={isBatterySelected}
-                            unboxed
-                            spread
-                          />
-                        </div>
+                      <FlowRouteCard
+                        source="battery"
+                        routes={[
+                          { target: 'home', routeKey: 'batteryToLoad' },
+                          { target: 'grid', routeKey: 'batteryToGrid' },
+                        ]}
+                        permissions={state.flowPermissions}
+                        flowValues={dayFlowValues}
+                        onToggle={(key) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: {
+                            ...current.flowPermissions,
+                            [key]: !current.flowPermissions[key],
+                          },
+                        }))}
+                        pvCapacityWp={0}
+                        usableKwh={state.usableKwh}
+                        isSystemSelected={isBatterySelected}
+                        unboxed
+                        spread
+                      />
+                      <div className="flex justify-end">
+                        <div className="w-full md:max-w-[32%]">
                         <GridToBatteryUpControl
                           enabled={state.flowPermissions.gridToBattery}
                           flowValue={dayFlowValues.gridToBattery}
@@ -1609,6 +1608,7 @@ function PvBatteryCalculatorInner() {
                             },
                           }))}
                         />
+                        </div>
                       </div>
                     </div>
                   </div>
