@@ -630,117 +630,6 @@ function FlowRouteCard({
   )
 }
 
-function FlowRouteDiagram({
-  permissions,
-  onToggle,
-  flowValues,
-  pvCapacityWp,
-  usableKwh,
-  isPvSelected,
-  isBatterySelected,
-  readOnly = false,
-}: {
-  permissions: FlowPermissions
-  onToggle: (key: FlowPermissionKey, checked: boolean) => void
-  flowValues: DayFlowByRoute
-  pvCapacityWp: number
-  usableKwh: number
-  isPvSelected: boolean
-  isBatterySelected: boolean
-  readOnly?: boolean
-}) {
-  const toggle = (key: FlowPermissionKey) => onToggle(key, !permissions[key])
-  const isNoSystemSelected = !isPvSelected && !isBatterySelected
-
-  return (
-    <div className="grid gap-3 lg:grid-cols-3">
-      {/* Grid Card: Import (always), Battery (toggle) - LEFT */}
-      <FlowRouteCard
-        source="grid"
-        routes={[
-          { target: 'home', isStatic: true },
-          { target: 'battery', routeKey: 'gridToBattery' },
-        ]}
-        permissions={permissions}
-        flowValues={flowValues}
-        onToggle={toggle}
-        pvCapacityWp={0}
-        usableKwh={0}
-        isNoSystemSelected={isNoSystemSelected}
-        readOnly={readOnly}
-      />
-
-      {/* PV Card: routes to Home, Battery, Grid - CENTER */}
-      <FlowRouteCard
-        source="pv"
-        routes={[
-          { target: 'home', routeKey: 'pvToLoad' },
-          { target: 'battery', routeKey: 'pvToBattery' },
-          { target: 'grid', routeKey: 'pvToGrid' },
-        ]}
-        permissions={permissions}
-        flowValues={flowValues}
-        onToggle={toggle}
-        pvCapacityWp={pvCapacityWp}
-        usableKwh={0}
-        isSystemSelected={isPvSelected}
-        isNoSystemSelected={isNoSystemSelected}
-        readOnly={readOnly}
-      />
-
-      {/* Battery Card: routes to Home, Grid - RIGHT */}
-      <FlowRouteCard
-        source="battery"
-        routes={[
-          { target: 'home', routeKey: 'batteryToLoad' },
-          { target: 'grid', routeKey: 'batteryToGrid' },
-        ]}
-        permissions={permissions}
-        flowValues={flowValues}
-        onToggle={toggle}
-        pvCapacityWp={0}
-        usableKwh={usableKwh}
-        isSystemSelected={isBatterySelected}
-        isNoSystemSelected={isNoSystemSelected}
-        readOnly={readOnly}
-      />
-    </div>
-  )
-}
-
-function FlowPermissionControl({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string
-  checked: boolean
-  onChange: (value: boolean) => void
-}) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
-      <span className="text-[11px] font-semibold text-gray-700">{label}</span>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        onClick={() => onChange(!checked)}
-        className={cn(
-          'relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
-          checked ? 'bg-gray-900' : 'bg-gray-300',
-        )}
-      >
-        <span
-          className={cn(
-            'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
-            checked ? 'translate-x-4' : 'translate-x-1',
-          )}
-        />
-      </button>
-    </div>
-  )
-}
-
 function HelpTooltip({
   label,
   children,
@@ -1486,30 +1375,26 @@ function PvBatteryCalculatorInner() {
                     </div>
 
                     <div className="space-y-2 border-t border-gray-200 pt-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">PV flows</p>
-                      <FlowPermissionControl
-                        label="PV -> load"
-                        checked={state.flowPermissions.pvToLoad}
-                        onChange={(value) => setDraftState((current) => ({
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">PV flow routing</p>
+                      <FlowRouteCard
+                        source="pv"
+                        routes={[
+                          { target: 'home', routeKey: 'pvToLoad' },
+                          { target: 'battery', routeKey: 'pvToBattery' },
+                          { target: 'grid', routeKey: 'pvToGrid' },
+                        ]}
+                        permissions={state.flowPermissions}
+                        flowValues={dayFlowValues}
+                        onToggle={(key) => setDraftState((current) => ({
                           ...current,
-                          flowPermissions: { ...current.flowPermissions, pvToLoad: value },
+                          flowPermissions: {
+                            ...current.flowPermissions,
+                            [key]: !current.flowPermissions[key],
+                          },
                         }))}
-                      />
-                      <FlowPermissionControl
-                        label="PV -> battery"
-                        checked={state.flowPermissions.pvToBattery}
-                        onChange={(value) => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: { ...current.flowPermissions, pvToBattery: value },
-                        }))}
-                      />
-                      <FlowPermissionControl
-                        label="PV -> grid"
-                        checked={state.flowPermissions.pvToGrid}
-                        onChange={(value) => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: { ...current.flowPermissions, pvToGrid: value },
-                        }))}
+                        pvCapacityWp={state.pvCapacityWp}
+                        usableKwh={0}
+                        isSystemSelected={isPvSelected}
                       />
                     </div>
                   </div>
@@ -1597,31 +1482,46 @@ function PvBatteryCalculatorInner() {
                     </div>
 
                     <div className="space-y-2 border-t border-gray-200 pt-4">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Battery flows</p>
-                      <FlowPermissionControl
-                        label="Grid -> battery"
-                        checked={state.flowPermissions.gridToBattery}
-                        onChange={(value) => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: { ...current.flowPermissions, gridToBattery: value },
-                        }))}
-                      />
-                      <FlowPermissionControl
-                        label="Battery -> load"
-                        checked={state.flowPermissions.batteryToLoad}
-                        onChange={(value) => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: { ...current.flowPermissions, batteryToLoad: value },
-                        }))}
-                      />
-                      <FlowPermissionControl
-                        label="Battery -> grid (bi-directional)"
-                        checked={state.flowPermissions.batteryToGrid}
-                        onChange={(value) => setDraftState((current) => ({
-                          ...current,
-                          flowPermissions: { ...current.flowPermissions, batteryToGrid: value },
-                        }))}
-                      />
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Battery flow routing</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <FlowRouteCard
+                          source="battery"
+                          routes={[
+                            { target: 'home', routeKey: 'batteryToLoad' },
+                            { target: 'grid', routeKey: 'batteryToGrid' },
+                          ]}
+                          permissions={state.flowPermissions}
+                          flowValues={dayFlowValues}
+                          onToggle={(key) => setDraftState((current) => ({
+                            ...current,
+                            flowPermissions: {
+                              ...current.flowPermissions,
+                              [key]: !current.flowPermissions[key],
+                            },
+                          }))}
+                          pvCapacityWp={0}
+                          usableKwh={state.usableKwh}
+                          isSystemSelected={isBatterySelected}
+                        />
+                        <FlowRouteCard
+                          source="grid"
+                          routes={[
+                            { target: 'battery', routeKey: 'gridToBattery' },
+                          ]}
+                          permissions={state.flowPermissions}
+                          flowValues={dayFlowValues}
+                          onToggle={(key) => setDraftState((current) => ({
+                            ...current,
+                            flowPermissions: {
+                              ...current.flowPermissions,
+                              [key]: !current.flowPermissions[key],
+                            },
+                          }))}
+                          pvCapacityWp={0}
+                          usableKwh={0}
+                          isSystemSelected={isBatterySelected}
+                        />
+                      </div>
                     </div>
                   </div>
                 </ControlBlock>
@@ -1668,28 +1568,6 @@ function PvBatteryCalculatorInner() {
                           </div>
                         </div>
 
-                        <Card className="border-gray-200/80 bg-white shadow-sm">
-                          <CardContent className="p-4">
-                            <div className="mb-3">
-                              <div>
-                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy flows</p>
-                                <p className="mt-1 text-[18px] font-bold tracking-tight text-[#313131]">Energy Flow Map</p>
-                                <p className="mt-1 text-[11px] text-gray-500">Flow controls are managed in PV and Battery settings.</p>
-                              </div>
-                            </div>
-
-                            <FlowRouteDiagram
-                              permissions={state.flowPermissions}
-                              flowValues={dayFlowValues}
-                              onToggle={() => {}}
-                              pvCapacityWp={state.pvCapacityWp}
-                              usableKwh={state.usableKwh}
-                              isPvSelected={isPvSelected}
-                              isBatterySelected={isBatterySelected}
-                              readOnly
-                            />
-                          </CardContent>
-                        </Card>
                       </div>
                     )}
                     householdControls={replayResolutionControls}
