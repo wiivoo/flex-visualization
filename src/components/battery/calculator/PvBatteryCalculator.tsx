@@ -433,7 +433,7 @@ function OptionCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-[18px] border px-4 py-3 text-left transition-all',
+        'rounded-2xl border px-4 py-3 text-left transition-all',
         active
           ? 'border-[#313131] bg-[#F8F8F5] text-gray-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)]'
           : 'border-gray-200 bg-white text-gray-900 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-[#FBFBF8] hover:shadow-[0_10px_24px_rgba(15,23,42,0.04)]',
@@ -454,7 +454,7 @@ function MetricTile({
   hint?: string
 }) {
   return (
-    <div className="rounded-[20px] border border-gray-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
       {hint ? <p className="mt-1 text-[12px] leading-5 text-gray-500">{hint}</p> : null}
@@ -476,7 +476,7 @@ function ControlBlock({
   const compactValue = value && value.length > 16
 
   return (
-    <Card className="overflow-hidden rounded-[20px] border-gray-200 bg-white shadow-sm">
+    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-white shadow-sm">
       <CardContent className="p-0">
         <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-[#FBFBF8] px-5 py-4">
           <div className="min-w-0">
@@ -601,7 +601,7 @@ function FlowSourceColumn({
   const isSecondary = tone === 'secondary'
 
   return (
-    <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFCFD] p-4">
+    <div className="rounded-[24px] border border-[#E5E7EB] bg-[#FBFCFD] p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{title}</p>
@@ -985,7 +985,7 @@ function StatusCard({
 
 function MutedNote({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-[16px] border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-[12px] leading-6 text-gray-600">
+    <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-[12px] leading-6 text-gray-600">
       {children}
     </div>
   )
@@ -1449,7 +1449,7 @@ function PvBatteryCalculatorInner() {
                     loading={prices.loading}
                     controls={(
                       <div className="space-y-5">
-                        <div className="overflow-hidden rounded-[20px] border border-gray-200 bg-white">
+                        <div className="overflow-hidden rounded-[24px] border border-gray-200 bg-white">
                           <div className="px-4 py-3">
                             <DateStrip
                               daily={yearDates}
@@ -1463,7 +1463,7 @@ function PvBatteryCalculatorInner() {
                           </div>
                         </div>
 
-                        <div className="rounded-[20px] border border-gray-200 bg-white p-5">
+                        <div className="rounded-[24px] border border-gray-200 bg-white p-5">
                           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                             <div className="space-y-2">
                               <div className="flex flex-wrap items-center gap-2">

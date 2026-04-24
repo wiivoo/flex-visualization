@@ -179,7 +179,7 @@ function SummaryTile({
 }) {
   return (
     <div
-      className="rounded-[20px] border px-4 py-4"
+      className="rounded-[24px] border px-4 py-4"
       style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
     >
       <div className="flex items-start justify-between gap-4">
@@ -488,7 +488,7 @@ function DayFlowPill({
   color: string
 }) {
   return (
-    <div className="rounded-[14px] border border-[#E5E7EB] bg-white px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
+    <div className="rounded-2xl border border-[#E5E7EB] bg-white px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
       <div className="flex items-center gap-2">
         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#64748B]">{label}</span>
@@ -687,50 +687,46 @@ export function PvBatteryDayChart({
 
   return (
     <div className="space-y-5">
-      <Card className="overflow-hidden rounded-[28px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="p-6 sm:p-7 xl:p-8">
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
-                  Selected day
-                </span>
-                <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
-                  {slots.length} slices
-                </span>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <h3 className="text-[30px] font-semibold tracking-[-0.03em] text-[#171717] sm:text-[34px]">{dayLabel}</h3>
-                <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
-                  A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
-                </p>
-              </div>
-
-              <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              {heroStats.map((stat) => (
-                <SummaryTile
-                  key={stat.label}
-                  label={stat.label}
-                  value={stat.value}
-                  detail={stat.detail}
-                  icon={stat.icon}
-                  palette={stat.palette}
-                />
-              ))}
-            </div>
-
-            {controls ? controls : (
-              <p className="text-sm leading-6 text-[#6B7280]">
-                Choose a day to inspect the same routing logic at finer detail.
-              </p>
-            )}
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 px-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
+              Selected day
+            </span>
+            <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
+              {slots.length} slices
+            </span>
           </div>
-        </CardContent>
-      </Card>
+
+          <div className="flex flex-col gap-1">
+            <h3 className="text-[30px] font-semibold tracking-[-0.03em] text-[#171717] sm:text-[34px]">{dayLabel}</h3>
+            <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
+              A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
+            </p>
+          </div>
+
+          <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {heroStats.map((stat) => (
+            <SummaryTile
+              key={stat.label}
+              label={stat.label}
+              value={stat.value}
+              detail={stat.detail}
+              icon={stat.icon}
+              palette={stat.palette}
+            />
+          ))}
+        </div>
+
+        {controls ? controls : (
+          <p className="text-sm leading-6 text-[#6B7280]">
+            Choose a day to inspect the same routing logic at finer detail.
+          </p>
+        )}
+      </div>
 
       <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
         <CardContent className="p-6 sm:p-7">
@@ -826,7 +822,7 @@ export function PvBatteryDayChart({
             </div>
           </div>
 
-          <div className="h-[344px] rounded-[16px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
+          <div className="h-[344px] rounded-[24px] border border-[#E5E7EB] bg-[#F8FAFC] px-2 pb-2 pt-4">
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={priceData} margin={{ top: 8, right: 18, bottom: 18, left: 18 }}>
                 <CartesianGrid stroke="#E5E7EB" strokeDasharray="3 3" vertical={false} />
@@ -925,15 +921,15 @@ export function PvBatteryDayChart({
           </div>
 
           <div className="mt-3 grid gap-2 text-[12px] text-[#5F5D55] sm:grid-cols-3">
-            <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Gray bands</p>
               <p className="mt-1 leading-6">Grid-charging windows.</p>
             </div>
-            <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Amber bands</p>
               <p className="mt-1 leading-6">Battery discharge or export windows.</p>
             </div>
-            <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
+            <div className="rounded-2xl border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Blue bands</p>
               <p className="mt-1 leading-6">Direct PV export windows.</p>
             </div>
