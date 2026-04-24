@@ -3,10 +3,11 @@
 import Link from 'next/link'
 import { Suspense, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, SunMedium, Zap, type LucideIcon } from 'lucide-react'
+import { ArrowRight, Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 
 import { PvBatteryDayChart } from '@/components/battery/calculator/PvBatteryDayChart'
 import { DateStrip } from '@/components/v2/DateStrip'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -377,8 +378,10 @@ function PillButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        'rounded-full border px-3 py-1.5 text-[12px] font-semibold transition-colors',
-        active ? 'border-gray-900 bg-gray-900 text-white' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+        'rounded-lg border px-3 py-1.5 text-[12px] font-semibold transition-colors',
+        active
+          ? 'border-[#313131] bg-[#313131] text-white shadow-sm'
+          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-[#F8F8F5] hover:text-gray-900',
         disabled && 'cursor-not-allowed opacity-40 hover:border-gray-200',
       )}
     >
@@ -397,15 +400,15 @@ function SegmentedPillGroup({
   return (
     <div className="flex items-center gap-3">
       <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</span>
-      <div className="inline-flex rounded-full border border-gray-200 bg-[#F5F5F2] p-1">
+      <div className="inline-flex rounded-xl border border-gray-200 bg-[#F8F8F5] p-1">
         {options.map((option) => (
           <button
             key={option.label}
             type="button"
             onClick={option.onClick}
             className={cn(
-              'rounded-full px-3 py-1 text-[12px] font-semibold transition-colors',
-              option.active ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700',
+              'rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-colors',
+              option.active ? 'bg-[#313131] text-white shadow-sm' : 'text-gray-500 hover:bg-white hover:text-gray-700',
             )}
           >
             {option.label}
@@ -432,14 +435,14 @@ function OptionCard({
       type="button"
       onClick={onClick}
       className={cn(
-        'rounded-2xl border p-4 text-left transition-all',
+        'rounded-[20px] border p-4 text-left transition-all',
         active
-          ? 'border-gray-900 bg-gray-900 text-white shadow-[0_10px_24px_rgba(0,0,0,0.10)]'
-          : 'border-gray-200 bg-white text-gray-900 hover:-translate-y-0.5 hover:border-gray-300 hover:shadow-[0_10px_24px_rgba(0,0,0,0.05)]',
+          ? 'border-[#313131] bg-[#F8F8F5] text-gray-900 shadow-[0_10px_24px_rgba(15,23,42,0.06)] ring-1 ring-black/5'
+          : 'border-gray-200 bg-white text-gray-900 hover:-translate-y-0.5 hover:border-gray-300 hover:bg-[#FBFBF8] hover:shadow-[0_10px_24px_rgba(15,23,42,0.04)]',
       )}
     >
       <p className="text-[14px] font-semibold">{title}</p>
-      <p className={cn('mt-1 text-[12px] leading-5', active ? 'text-gray-200' : 'text-gray-500')}>{detail}</p>
+      <p className={cn('mt-1 text-[12px] leading-5', active ? 'text-gray-600' : 'text-gray-500')}>{detail}</p>
     </button>
   )
 }
@@ -454,7 +457,7 @@ function MetricTile({
   hint?: string
 }) {
   return (
-    <div className="rounded-2xl bg-[#F5F5F2] p-4">
+    <div className="rounded-[20px] border border-gray-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">{label}</p>
       <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
       {hint ? <p className="mt-1 text-[12px] leading-5 text-gray-500">{hint}</p> : null}
@@ -465,32 +468,35 @@ function MetricTile({
 function ControlBlock({
   label,
   value,
+  icon,
   children,
 }: {
   label: string
   value?: string
+  icon?: ReactNode
   children: ReactNode
 }) {
   const compactValue = value && value.length > 16
 
   return (
-    <Card className="overflow-hidden rounded-[20px] border-gray-200 bg-white shadow-sm">
-      <CardContent className="p-0">
-        <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-5 py-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
-          {value ? (
-            <p className={cn(
-              'font-semibold tracking-tight text-gray-900',
-              compactValue ? 'text-lg' : 'text-2xl',
-            )}
-            >
-              {value}
-            </p>
-          ) : null}
+    <Card className="rounded-[24px] border-gray-200 bg-white shadow-sm">
+      <CardContent className="p-5 sm:p-6">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{label}</p>
+            {value ? (
+              <p className={cn(
+                'mt-1 font-semibold tracking-tight text-gray-900',
+                compactValue ? 'text-lg' : 'text-2xl',
+              )}
+              >
+                {value}
+              </p>
+            ) : null}
+          </div>
+          {icon}
         </div>
-        <div className="px-5 py-5">
-          {children}
-        </div>
+        <div>{children}</div>
       </CardContent>
     </Card>
   )
@@ -726,7 +732,7 @@ function SectionHeading({
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p>
           {help ? <HelpTooltip label={`${title} help`}>{help}</HelpTooltip> : null}
         </div>
-        <p className="mt-1 text-sm font-medium text-gray-900">{title}</p>
+        <p className="mt-1 text-[18px] font-semibold tracking-tight text-gray-900">{title}</p>
       </div>
       {icon}
     </div>
@@ -772,7 +778,7 @@ function RangeControl({
         step={step}
         value={sliderValue}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-gray-200 accent-gray-900"
+        className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#E7E5E0] accent-[#171717]"
       />
       {minLabel || maxLabel ? (
         <div className="flex justify-between text-[11px] text-gray-400">
@@ -810,7 +816,7 @@ function AnnualHero({
   units: ReturnType<typeof getPriceUnits>
 }) {
   return (
-    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-[#FBFBF8] shadow-sm">
+    <Card className="overflow-hidden rounded-[24px] border-gray-200 bg-white shadow-sm">
       <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="border-b border-gray-200 bg-white p-6 xl:border-b-0 xl:border-r">
           <div className="flex items-center gap-2">
@@ -847,7 +853,7 @@ function AnnualHero({
           </div>
         </div>
 
-        <div className="bg-[#FBFBF8] p-6">
+        <div className="bg-[#F8F8F5] p-6">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Value stack</p>
           <div className="mt-5 space-y-4 text-sm text-gray-600">
             <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-4">
@@ -924,7 +930,7 @@ function MonthlyBars({
   const maxValue = Math.max(...annual.months.map((month) => Math.max(month.savingsEur, month.exportRevenueEur, 1)), 1)
 
   return (
-    <Card className="rounded-[24px] border-gray-200 shadow-sm">
+    <Card className="rounded-[24px] border-gray-200 bg-white shadow-sm">
       <CardContent className="p-6">
         <SectionHeading
           eyebrow="Monthly breakdown"
@@ -937,7 +943,7 @@ function MonthlyBars({
           {annual.months.map((month) => (
             <div key={month.month} className="grid grid-cols-[48px_minmax(0,1fr)_92px] items-center gap-3">
               <span className="text-sm font-medium text-gray-500">{formatMonthLabel(month.month)}</span>
-              <div className="relative h-3 overflow-hidden rounded-full bg-gray-100">
+              <div className="relative h-3 overflow-hidden rounded-full bg-[#ECEBE6]">
                 <div
                   className="absolute inset-y-0 left-0 rounded-full bg-emerald-500/80"
                   style={{ width: `${Math.max((month.savingsEur / maxValue) * 100, 4)}%` }}
@@ -1135,34 +1141,68 @@ function PvBatteryCalculatorInner() {
     <TooltipProvider delayDuration={120}>
       <div className="min-h-screen bg-[#F5F5F2]">
         <header className="border-b border-gray-200 bg-white">
-          <div className="mx-auto flex max-w-[1440px] items-center justify-between px-8 py-2">
+          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6 lg:px-8">
             <h1 className="text-sm font-semibold text-gray-400">PV + Battery Dynamic Tariff Calculator</h1>
-            <nav className="flex items-center gap-2">
+            <nav className="flex flex-wrap items-center gap-2">
               <Link
                 href="/battery"
-                className="rounded-full px-2.5 py-1 text-[11px] font-semibold text-gray-400 transition-colors hover:text-gray-600"
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
               >
                 Battery business case
               </Link>
               <Link
                 href="/v2"
-                className="rounded-full px-2.5 py-1 text-[11px] font-semibold text-gray-400 transition-colors hover:text-gray-600"
+                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
               >
                 EV charging
               </Link>
-              <span className="rounded-full bg-[#313131] px-2.5 py-1 text-[11px] font-semibold text-white">
+              <span className="rounded-lg border border-[#313131] bg-[#313131] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm">
                 PV + battery calculator
               </span>
             </nav>
           </div>
         </header>
 
-        <main className="mx-auto max-w-[1440px] px-8 py-6">
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className="space-y-5 lg:sticky lg:top-20 lg:self-start">
+        <main className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-[860px]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Home battery optimization</p>
+              <h2 className="mt-2 text-[34px] font-semibold tracking-tight text-gray-900 sm:text-4xl">
+                Interactive PV + battery calculator
+              </h2>
+              <p className="mt-3 text-[15px] leading-7 text-gray-500">
+                Same visual language as{' '}
+                <Link href="/v2" className="font-semibold text-gray-700 transition-colors hover:text-gray-900">
+                  /v2
+                </Link>
+                , adapted for household load, PV generation, and battery routing. Configure the system on the left, inspect the day replay first,
+                then sanity-check the annual rollup below.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <Button asChild className="w-fit rounded-full bg-[#313131] hover:bg-[#1f1f1f]">
+                <Link href="/battery">
+                  Open battery business case
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+              <Button
+                asChild
+                variant="outline"
+                className="w-fit rounded-full border-gray-200 bg-white text-gray-700 hover:bg-[#F8F8F5] hover:text-gray-900"
+              >
+                <Link href="/v2">See EV calculator</Link>
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[360px_minmax(0,1fr)] lg:gap-5">
+            <aside className="order-2 space-y-4 lg:order-1 lg:sticky lg:top-20 lg:self-start">
               <ControlBlock
                 label="Market and year"
                 value={availableYears.length > 0 ? `DE · ${effectiveYear}` : 'DE'}
+                icon={<Gauge className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-4">
                   <div className="grid gap-2">
@@ -1183,7 +1223,7 @@ function PvBatteryCalculatorInner() {
                       ))}
                     </div>
                   ) : (
-                    <div className="rounded-2xl bg-[#F5F5F2] px-4 py-3 text-[12px] leading-6 text-gray-600">
+                    <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-[12px] leading-6 text-gray-600">
                       {loading ? 'Loading annual price history…' : 'No complete annual price history is available for the selected market yet.'}
                     </div>
                   )}
@@ -1200,7 +1240,7 @@ function PvBatteryCalculatorInner() {
                     <select
                       value={state.tariffId}
                       onChange={(event) => setDraftState((current) => ({ ...current, tariffId: event.target.value }))}
-                      className="w-full rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+                      className="w-full rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
                     >
                       {tariffs.map((tariff) => (
                         <option key={tariff.id} value={tariff.id}>
@@ -1215,6 +1255,7 @@ function PvBatteryCalculatorInner() {
               <ControlBlock
                 label="Household"
                 value={`${Math.round(state.annualLoadKwh).toLocaleString()} kWh`}
+                icon={<Home className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-5">
                   <RangeControl
@@ -1257,6 +1298,7 @@ function PvBatteryCalculatorInner() {
               <ControlBlock
                 label="PV and battery"
                 value={`${(state.pvCapacityWp / 1000).toFixed(1)} kWp · ${state.usableKwh.toFixed(1)} kWh`}
+                icon={<Battery className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-5">
                   <RangeControl
@@ -1327,9 +1369,10 @@ function PvBatteryCalculatorInner() {
               <ControlBlock
                 label="Export logic"
                 value={getAutomaticExportLabel(CALCULATOR_COUNTRY)}
+                icon={<Zap className="h-5 w-5 text-gray-400" />}
               >
                 <div className="space-y-5">
-                  <div className="rounded-2xl bg-[#F5F5F2] px-4 py-3">
+                  <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Export value</p>
@@ -1354,7 +1397,7 @@ function PvBatteryCalculatorInner() {
                     maxLabel="20 kW"
                   />
 
-                  <div className="rounded-2xl bg-[#F5F5F2] px-4 py-3">
+                  <div className="rounded-2xl border border-gray-200 bg-[#F8F8F5] px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Charging logic</p>
@@ -1371,7 +1414,7 @@ function PvBatteryCalculatorInner() {
 
             </aside>
 
-            <section className="space-y-5">
+            <section className="order-1 space-y-5 lg:order-2">
               {loading ? (
                 <StatusCard title="Loading calculator inputs" body="Fetching German price history and bundled household profiles." />
               ) : prices.error ? (
@@ -1393,8 +1436,8 @@ function PvBatteryCalculatorInner() {
                     units={units}
                     loading={prices.loading}
                     controls={(
-                      <div className="-mx-6 -mb-4 overflow-hidden border-t border-gray-200">
-                        <div className="px-6 py-5">
+                      <div className="space-y-5">
+                        <div>
                           <SectionHeading
                             eyebrow="Selected day"
                             title="Flow map and price replay"
@@ -1402,142 +1445,142 @@ function PvBatteryCalculatorInner() {
                           />
                           <p className="text-sm leading-6 text-gray-500">{resolutionMessage}</p>
                         </div>
-                        <div className="border-t border-gray-200 px-4 py-3">
-                          <DateStrip
-                            daily={yearDates}
-                            selectedDate={prices.selectedDate}
-                            onSelect={prices.setSelectedDate}
-                            latestDate={yearDates[yearDates.length - 1]?.date}
-                            requireNextDay={false}
-                            forecastAfter={prices.lastRealDate || undefined}
-                            country={CALCULATOR_COUNTRY}
-                          />
-                        </div>
-                        <div className="space-y-4 border-t border-gray-200 px-6 py-4">
-                          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                            <div className="space-y-2">
-                              <p className="text-[12px] leading-5 text-gray-500">Choose the replay resolution, then edit dispatch rules in the dedicated routing card below.</p>
-                            </div>
+                        <div className="overflow-hidden rounded-[20px] border border-gray-200 bg-white">
+                          <div className="px-4 py-3">
+                            <DateStrip
+                              daily={yearDates}
+                              selectedDate={prices.selectedDate}
+                              onSelect={prices.setSelectedDate}
+                              latestDate={yearDates[yearDates.length - 1]?.date}
+                              requireNextDay={false}
+                              forecastAfter={prices.lastRealDate || undefined}
+                              country={CALCULATOR_COUNTRY}
+                            />
+                          </div>
+                          <div className="border-t border-gray-200 px-5 py-4">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                              <p className="text-[12px] leading-5 text-gray-500">
+                                Choose the replay resolution, then edit dispatch rules in the routing card below.
+                              </p>
 
-                            <div className="flex flex-wrap gap-2">
-                              <PillButton active={state.resolution === 'hour'} onClick={() => setDraftState((current) => ({ ...current, resolution: 'hour' }))}>
-                                60 min
-                              </PillButton>
-                              <PillButton
-                                active={state.resolution === 'quarterhour'}
-                                disabled={prices.hourlyQH.length === 0}
-                                onClick={() => prices.hourlyQH.length > 0 && setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))}
-                              >
-                                15 min
-                              </PillButton>
+                              <div className="flex flex-wrap gap-2">
+                                <PillButton active={state.resolution === 'hour'} onClick={() => setDraftState((current) => ({ ...current, resolution: 'hour' }))}>
+                                  60 min
+                                </PillButton>
+                                <PillButton
+                                  active={state.resolution === 'quarterhour'}
+                                  disabled={prices.hourlyQH.length === 0}
+                                  onClick={() => prices.hourlyQH.length > 0 && setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))}
+                                >
+                                  15 min
+                                </PillButton>
+                              </div>
                             </div>
                           </div>
                         </div>
 
-                        <div className="border-t border-gray-200 px-6 py-5">
-                          <div className="rounded-[20px] border border-gray-200 bg-[#FBFBF8] p-4">
-                            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                              <div className="space-y-2">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Dispatch routes</p>
-                                  <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-700">
-                                    {activeFlowKeys.length}/6 open
+                        <div className="rounded-[20px] border border-gray-200 bg-white p-5">
+                          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Dispatch routes</p>
+                                <span className="rounded-full bg-[#F5F5F2] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-700">
+                                  {activeFlowKeys.length}/6 open
+                                </span>
+                                {hasCustomFlowPermissions ? (
+                                  <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">
+                                    Custom
                                   </span>
-                                  {hasCustomFlowPermissions ? (
-                                    <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">
-                                      Custom
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <p className="text-[12px] leading-5 text-gray-500">Use the quick policies or the live diagram to open and close each allowed path.</p>
-                                {disabledFlowKeys.length > 0 ? (
-                                  <p className="text-[12px] leading-5 text-amber-800">
-                                    Blocked: {formatFlowPermissionList(disabledFlowKeys)}
-                                  </p>
-                                ) : (
-                                  <p className="text-[12px] leading-5 text-gray-500">{requestedConstraintSummary}</p>
-                                )}
+                                ) : null}
                               </div>
-
-                              <div className="flex flex-wrap items-center gap-4">
-                                <SegmentedPillGroup
-                                  label="Solar"
-                                  options={[
-                                    {
-                                      label: 'PV',
-                                      active: state.flowPermissions.pvToLoad && !state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          pvToLoad: true,
-                                          pvToBattery: false,
-                                          pvToGrid: true,
-                                        },
-                                      })),
-                                    },
-                                    {
-                                      label: 'PV+B',
-                                      active: state.flowPermissions.pvToLoad && state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          pvToLoad: true,
-                                          pvToBattery: true,
-                                          pvToGrid: true,
-                                        },
-                                      })),
-                                    },
-                                  ]}
-                                />
-
-                                <SegmentedPillGroup
-                                  label="Battery"
-                                  options={[
-                                    {
-                                      label: 'Uni-Directional',
-                                      active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && !state.flowPermissions.batteryToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          batteryToLoad: true,
-                                          gridToBattery: true,
-                                          batteryToGrid: false,
-                                        },
-                                      })),
-                                    },
-                                    {
-                                      label: 'Bi-Directional',
-                                      active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && state.flowPermissions.batteryToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          batteryToLoad: true,
-                                          gridToBattery: true,
-                                          batteryToGrid: true,
-                                        },
-                                      })),
-                                    },
-                                  ]}
-                                />
-                              </div>
+                              <p className="text-[12px] leading-5 text-gray-500">Use the quick policies or the live diagram to open and close each allowed path.</p>
+                              {disabledFlowKeys.length > 0 ? (
+                                <p className="text-[12px] leading-5 text-amber-800">
+                                  Blocked: {formatFlowPermissionList(disabledFlowKeys)}
+                                </p>
+                              ) : (
+                                <p className="text-[12px] leading-5 text-gray-500">{requestedConstraintSummary}</p>
+                              )}
                             </div>
 
-                            <div className="mt-4 border-t border-gray-200 pt-4">
-                              <FlowRouteDiagram
-                                permissions={state.flowPermissions}
-                                onToggle={(key, checked) => setDraftState((current) => ({
-                                  ...current,
-                                  flowPermissions: {
-                                    ...current.flowPermissions,
-                                    [key]: checked,
+                            <div className="flex flex-wrap items-center gap-4">
+                              <SegmentedPillGroup
+                                label="Solar"
+                                options={[
+                                  {
+                                    label: 'PV',
+                                    active: state.flowPermissions.pvToLoad && !state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
+                                    onClick: () => setDraftState((current) => ({
+                                      ...current,
+                                      flowPermissions: {
+                                        ...current.flowPermissions,
+                                        pvToLoad: true,
+                                        pvToBattery: false,
+                                        pvToGrid: true,
+                                      },
+                                    })),
                                   },
-                                }))}
+                                  {
+                                    label: 'PV+B',
+                                    active: state.flowPermissions.pvToLoad && state.flowPermissions.pvToBattery && state.flowPermissions.pvToGrid,
+                                    onClick: () => setDraftState((current) => ({
+                                      ...current,
+                                      flowPermissions: {
+                                        ...current.flowPermissions,
+                                        pvToLoad: true,
+                                        pvToBattery: true,
+                                        pvToGrid: true,
+                                      },
+                                    })),
+                                  },
+                                ]}
+                              />
+
+                              <SegmentedPillGroup
+                                label="Battery"
+                                options={[
+                                  {
+                                    label: 'Uni-Directional',
+                                    active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && !state.flowPermissions.batteryToGrid,
+                                    onClick: () => setDraftState((current) => ({
+                                      ...current,
+                                      flowPermissions: {
+                                        ...current.flowPermissions,
+                                        batteryToLoad: true,
+                                        gridToBattery: true,
+                                        batteryToGrid: false,
+                                      },
+                                    })),
+                                  },
+                                  {
+                                    label: 'Bi-Directional',
+                                    active: state.flowPermissions.batteryToLoad && state.flowPermissions.gridToBattery && state.flowPermissions.batteryToGrid,
+                                    onClick: () => setDraftState((current) => ({
+                                      ...current,
+                                      flowPermissions: {
+                                        ...current.flowPermissions,
+                                        batteryToLoad: true,
+                                        gridToBattery: true,
+                                        batteryToGrid: true,
+                                      },
+                                    })),
+                                  },
+                                ]}
                               />
                             </div>
+                          </div>
+
+                          <div className="mt-4 border-t border-gray-200 pt-4">
+                            <FlowRouteDiagram
+                              permissions={state.flowPermissions}
+                              onToggle={(key, checked) => setDraftState((current) => ({
+                                ...current,
+                                flowPermissions: {
+                                  ...current.flowPermissions,
+                                  [key]: checked,
+                                },
+                              }))}
+                            />
                           </div>
                         </div>
                       </div>

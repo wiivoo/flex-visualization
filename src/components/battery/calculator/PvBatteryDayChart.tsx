@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { ArrowRight, BatteryCharging, Home, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 import {
   CartesianGrid,
@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts'
 
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import type { PvBatteryAnnualResult, PvBatteryFlowPermissions, PvBatterySlotResult } from '@/lib/pv-battery-calculator'
 import type { PriceUnits } from '@/lib/v2-config'
 
@@ -177,7 +177,7 @@ function SummaryTile({
 }) {
   return (
     <div
-      className="rounded-[24px] border px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
+      className="rounded-[20px] border px-4 py-4"
       style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
     >
       <div className="flex items-start justify-between gap-4">
@@ -188,7 +188,7 @@ function SummaryTile({
           <p className="mt-2 text-lg font-semibold tracking-[-0.02em] text-[#171717]">{value}</p>
           <p className="mt-1 text-xs text-[#5F5D55]">{detail}</p>
         </div>
-        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/80 shadow-[0_10px_24px_rgba(15,23,42,0.06)]" style={{ color: palette.text }}>
+        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/80" style={{ color: palette.text }}>
           <Icon className="h-4 w-4" />
         </span>
       </div>
@@ -206,7 +206,7 @@ function LegendPill({
   icon: LucideIcon
 }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-[#4B4A45] shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
+    <span className="inline-flex items-center gap-2 rounded-full border border-black/5 bg-white/90 px-3 py-1.5 text-[11px] font-medium text-[#4B4A45]">
       <span className="flex h-5 w-5 items-center justify-center rounded-full" style={{ backgroundColor: `${color}1F`, color }}>
         <Icon className="h-3.5 w-3.5" />
       </span>
@@ -491,7 +491,7 @@ function SliceMetric({
 }) {
   return (
     <div
-      className="rounded-[22px] border px-4 py-3"
+      className="rounded-[20px] border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]"
       style={{ backgroundColor: palette.background, borderColor: 'rgba(17,24,39,0.05)' }}
     >
       <div className="flex items-start justify-between gap-3">
@@ -520,7 +520,7 @@ function DayFlowPill({
   color: string
 }) {
   return (
-    <div className="rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+    <div className="rounded-[14px] border border-[#E5E7EB] bg-white px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.72)]">
       <div className="flex items-center gap-2">
         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#64748B]">{label}</span>
@@ -540,13 +540,8 @@ export function PvBatteryDayChart({
 }: Props) {
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
   const [selectedIndex, setSelectedIndex] = useState(0)
-
-  useEffect(() => {
-    if (slots.length === 0) return
-    setSelectedIndex((current) => Math.min(current, slots.length - 1))
-  }, [slots.length])
-
-  const selectedSlot = slots[Math.min(selectedIndex, Math.max(slots.length - 1, 0))]
+  const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(slots.length - 1, 0))
+  const selectedSlot = slots[effectiveSelectedIndex]
 
   const disabledFlowSummary = useMemo(() => {
     const disabled: string[] = []
@@ -748,8 +743,8 @@ export function PvBatteryDayChart({
 
   if (loading || slots.length === 0 || !selectedSlot) {
     return (
-      <Card className="rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="flex h-[420px] items-center justify-center">
+      <Card className="rounded-[28px] border-[#E5E7EB] bg-white shadow-sm">
+        <CardContent className="flex h-[420px] items-center justify-center p-8">
           <p className="text-sm text-gray-400">{loading ? 'Computing day profile…' : 'No complete day selected yet.'}</p>
         </CardContent>
       </Card>
@@ -758,50 +753,61 @@ export function PvBatteryDayChart({
 
   return (
     <div className="space-y-5">
-      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardHeader className="border-b border-[#E5E7EB] bg-white pb-5">
-        <div className="flex flex-col gap-5">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
-                Selected day
-              </span>
-              <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
-                {slots.length} slices
-              </span>
-            </div>
+      <Card className="overflow-hidden rounded-[28px] border-[#E5E7EB] bg-white shadow-sm">
+        <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.08fr_0.92fr]">
+          <div className="border-b border-[#E5E7EB] bg-white p-6 sm:p-7 xl:border-b-0 xl:border-r xl:p-8">
+            <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-black/5 bg-white/90 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#6B6A64]">
+                    Selected day
+                  </span>
+                  <span className="rounded-full border border-black/5 bg-white/70 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[#6B6A64]">
+                    {slots.length} slices
+                  </span>
+                </div>
 
-            <div className="flex flex-col gap-1">
-              <CardTitle className="text-[28px] font-semibold tracking-[-0.03em] text-[#171717]">{dayLabel}</CardTitle>
-              <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
-                A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-[30px] font-semibold tracking-[-0.03em] text-[#171717] sm:text-[34px]">{dayLabel}</h3>
+                  <p className="max-w-3xl text-sm leading-6 text-[#6B6A64]">
+                    A 24-hour replay of PV generation, storage movement, household demand, and market interaction.
+                  </p>
+                </div>
+
+                <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                {heroStats.map((stat) => (
+                  <SummaryTile
+                    key={stat.label}
+                    label={stat.label}
+                    value={stat.value}
+                    detail={stat.detail}
+                    icon={stat.icon}
+                    palette={stat.palette}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-[#FBFBF8] p-6 sm:p-7 xl:p-8">
+            {controls ? controls : (
+              <p className="text-sm leading-6 text-[#6B7280]">
+                Choose a day to inspect the same routing logic at finer detail.
               </p>
-            </div>
-
-            <p className="text-xs text-[#94A3B8]">Blocked routes: {disabledFlowSummary}.</p>
+            )}
           </div>
+        </CardContent>
+      </Card>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {heroStats.map((stat) => (
-              <SummaryTile
-                key={stat.label}
-                label={stat.label}
-                value={stat.value}
-                detail={stat.detail}
-                icon={stat.icon}
-                palette={stat.palette}
-              />
-            ))}
-          </div>
-        </div>
-
-        {controls ? <div className="mt-5">{controls}</div> : null}
-        </CardHeader>
-
-        <CardContent className="p-6">
+      <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
+        <CardContent className="p-6 sm:p-7">
           <div className="mb-5 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
             <div>
-              <p className="text-[30px] font-semibold tracking-tight text-[#171717]">Flow Map</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Primary replay</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Intraday routing shape</p>
               <p className="mt-2 text-sm leading-6 text-[#6B7280]">
                 PV, battery, and home over the selected 24 hours. Each lane uses its own kWh scale so the shapes stay readable.
               </p>
@@ -836,7 +842,7 @@ export function PvBatteryDayChart({
                 key={lane.key}
                 lane={lane}
                 slots={slots}
-                selectedIndex={selectedIndex}
+                selectedIndex={effectiveSelectedIndex}
                 setSelectedIndex={setSelectedIndex}
                 slotsPerHour={slotsPerHour}
               />
@@ -856,7 +862,7 @@ export function PvBatteryDayChart({
                       type="button"
                       onClick={() => setSelectedIndex(index)}
                       className={`flex flex-col items-center gap-1 px-0.5 py-1 text-center transition-colors ${
-                        selectedIndex === index ? 'text-[#2563EB]' : 'text-[#94A3B8] hover:text-[#475569]'
+                        effectiveSelectedIndex === index ? 'text-[#2563EB]' : 'text-[#94A3B8] hover:text-[#475569]'
                       }`}
                     >
                       <span className={`w-px ${isHourTick ? 'bg-[#CBD5E1]' : 'bg-[#E5E7EB]'} ${isMajorTick ? 'h-4' : 'h-2.5'}`} />
@@ -873,18 +879,19 @@ export function PvBatteryDayChart({
       </Card>
 
       <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="grid gap-5 p-6 xl:grid-cols-[1.2fr_0.8fr]">
-          <div>
+        <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.15fr_0.85fr]">
+          <div className="border-b border-[#E5E7EB] bg-white p-6 sm:p-7 xl:border-b-0 xl:border-r">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <p className="text-[24px] font-semibold tracking-tight text-[#171717]">Selected Slice</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Selected interval</p>
+                <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Selected Slice</p>
                 <p className="mt-1 text-sm text-[#6B7280]">{selectedSlot.label}</p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 text-xs text-[#6B6A64]">
-                <span className="rounded-full bg-[#F5F2EA] px-3 py-1.5">{formatCurrency(selectedSlot.netCostEur, units.currencySym)} net</span>
-                <span className="rounded-full bg-[#F5F2EA] px-3 py-1.5">{formatKwh(selectedSlot.loadKwh)} home demand</span>
-                <span className="rounded-full bg-[#F5F2EA] px-3 py-1.5">{formatKwh(selectedSlot.pvKwh)} PV available</span>
+                <span className="rounded-full border border-[#E5E7EB] bg-[#F8F8F5] px-3 py-1.5">{formatCurrency(selectedSlot.netCostEur, units.currencySym)} net</span>
+                <span className="rounded-full border border-[#E5E7EB] bg-[#F8F8F5] px-3 py-1.5">{formatKwh(selectedSlot.loadKwh)} home demand</span>
+                <span className="rounded-full border border-[#E5E7EB] bg-[#F8F8F5] px-3 py-1.5">{formatKwh(selectedSlot.pvKwh)} PV available</span>
               </div>
             </div>
 
@@ -902,36 +909,37 @@ export function PvBatteryDayChart({
             </div>
           </div>
 
-          <div className="border-t border-[#E5E7EB] pt-5 xl:border-l xl:border-t-0 xl:pl-5 xl:pt-0">
+          <div className="bg-[#F8F8F5] p-6 sm:p-7">
             <div className="mb-4">
-              <p className="text-[24px] font-semibold tracking-tight text-[#171717]">Grid Ledger</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Secondary view</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Grid Ledger</p>
               <p className="mt-1 text-sm text-[#6B7280]">Secondary accounting for imports, exports, and curtailment.</p>
             </div>
 
             <div className="space-y-3 text-sm text-[#5F5D55]">
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
                 <span>Import to home</span>
                 <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.gridToLoadKwh)}</span>
               </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
                 <span>Import to battery</span>
                 <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.gridToBatteryKwh)}</span>
               </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
                 <span>Direct PV export</span>
                 <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.pvToGridKwh)}</span>
               </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
                 <span>Battery export</span>
                 <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.batteryPvExportKwh + selectedSlot.batteryGridExportKwh)}</span>
               </div>
-              <div className="flex items-center justify-between rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-3">
+              <div className="flex items-center justify-between rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-3">
                 <span>Curtailed PV</span>
                 <span className="font-semibold text-[#171717]">{formatKwh(selectedSlot.curtailedKwh)}</span>
               </div>
             </div>
 
-            <div className="mt-4 rounded-[12px] border border-[#E5E7EB] bg-[#F8FAFC] px-4 py-4 text-[12px] leading-6 text-[#5F5D55]">
+            <div className="mt-4 rounded-[14px] border border-[#E5E7EB] bg-white px-4 py-4 text-[12px] leading-6 text-[#5F5D55]">
               Day totals: grid imported {formatKwh(totals.gridToLoad + totals.gridToBattery)} and grid exported {formatKwh(totals.pvToGrid + totals.batteryPvExport + totals.batteryGridExport)}.
             </div>
           </div>
@@ -939,10 +947,11 @@ export function PvBatteryDayChart({
       </Card>
 
       <Card className="overflow-hidden rounded-[24px] border-[#E5E7EB] bg-white shadow-sm">
-        <CardContent className="p-6">
+        <CardContent className="p-6 sm:p-7">
           <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-[30px] font-semibold tracking-tight text-[#171717]">Price Replay</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#94A3B8]">Market context</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-[#171717]">Price Replay</p>
               <p className="mt-2 text-sm text-[#6B7280]">Spot, household import, and export value with the same chart language as `/v2`.</p>
             </div>
 
@@ -998,7 +1007,7 @@ export function PvBatteryDayChart({
                   <ReferenceArea key={`pv-${index}`} x1={range.x1} x2={range.x2} fill={COLORS.bandPv} fillOpacity={0.22} ifOverflow="hidden" />
                 ))}
 
-                <ReferenceLine x={selectedIndex} stroke="#111827" strokeOpacity={0.26} strokeDasharray="3 4" />
+                <ReferenceLine x={effectiveSelectedIndex} stroke="#111827" strokeOpacity={0.26} strokeDasharray="3 4" />
 
                 <Tooltip
                   contentStyle={{ borderRadius: 18, borderColor: '#E5E0D5', boxShadow: '0 18px 40px rgba(15,23,42,0.12)' }}
@@ -1052,15 +1061,15 @@ export function PvBatteryDayChart({
           </div>
 
           <div className="mt-3 grid gap-2 text-[12px] text-[#5F5D55] sm:grid-cols-3">
-            <div className="rounded-[22px] bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Gray bands</p>
               <p className="mt-1 leading-6">Grid-charging windows.</p>
             </div>
-            <div className="rounded-[22px] bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Amber bands</p>
               <p className="mt-1 leading-6">Battery discharge or export windows.</p>
             </div>
-            <div className="rounded-[22px] bg-white px-4 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+            <div className="rounded-[20px] border border-[#E5E7EB] bg-[#FBFBF8] px-4 py-3">
               <p className="font-semibold text-[#171717]">Blue bands</p>
               <p className="mt-1 leading-6">Direct PV export windows.</p>
             </div>
