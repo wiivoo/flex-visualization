@@ -462,6 +462,7 @@ function FlowDestinationSlot({
   flowValue,
   onToggle,
   isStatic,
+  readOnly,
 }: {
   target: FlowNodeKey
   routeKey?: FlowPermissionKey
@@ -469,6 +470,7 @@ function FlowDestinationSlot({
   flowValue: number
   onToggle?: () => void
   isStatic?: boolean
+  readOnly?: boolean
 }) {
   const Icon = FLOW_NODE_META[target].icon
 
@@ -504,9 +506,9 @@ function FlowDestinationSlot({
         <span className="text-[8px] font-bold uppercase tracking-wider">{FLOW_NODE_META[target].label}</span>
 
         {/* Toggle inside the badge */}
-        {isStatic ? (
+        {isStatic || readOnly ? (
           <div className="mt-0.5 flex h-4 w-8 items-center justify-center rounded-full border border-gray-200 bg-gray-100 text-[7px] font-bold uppercase tracking-wider text-gray-400">
-            On
+            {enabled ? 'On' : 'Off'}
           </div>
         ) : (
           <button
@@ -545,6 +547,7 @@ function FlowRouteCard({
   usableKwh,
   isSystemSelected = true,
   isNoSystemSelected = false,
+  readOnly = false,
 }: {
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
@@ -555,6 +558,7 @@ function FlowRouteCard({
   usableKwh: number
   isSystemSelected?: boolean
   isNoSystemSelected?: boolean
+  readOnly?: boolean
 }) {
   const meta = FLOW_NODE_META[source]
   const Icon = meta.icon
@@ -615,8 +619,9 @@ function FlowRouteCard({
               routeKey={routeKey}
               enabled={!isCardDisabled && isEnabled}
               flowValue={flowValue}
-              onToggle={!isCardDisabled && routeKey ? () => onToggle(routeKey) : undefined}
+              onToggle={!readOnly && !isCardDisabled && routeKey ? () => onToggle(routeKey) : undefined}
               isStatic={route.isStatic}
+              readOnly={readOnly}
             />
           )
         })}
@@ -633,6 +638,7 @@ function FlowRouteDiagram({
   usableKwh,
   isPvSelected,
   isBatterySelected,
+  readOnly = false,
 }: {
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey, checked: boolean) => void
@@ -641,6 +647,7 @@ function FlowRouteDiagram({
   usableKwh: number
   isPvSelected: boolean
   isBatterySelected: boolean
+  readOnly?: boolean
 }) {
   const toggle = (key: FlowPermissionKey) => onToggle(key, !permissions[key])
   const isNoSystemSelected = !isPvSelected && !isBatterySelected
@@ -660,6 +667,7 @@ function FlowRouteDiagram({
         pvCapacityWp={0}
         usableKwh={0}
         isNoSystemSelected={isNoSystemSelected}
+        readOnly={readOnly}
       />
 
       {/* PV Card: routes to Home, Battery, Grid - CENTER */}
@@ -677,6 +685,7 @@ function FlowRouteDiagram({
         usableKwh={0}
         isSystemSelected={isPvSelected}
         isNoSystemSelected={isNoSystemSelected}
+        readOnly={readOnly}
       />
 
       {/* Battery Card: routes to Home, Grid - RIGHT */}
@@ -693,7 +702,41 @@ function FlowRouteDiagram({
         usableKwh={usableKwh}
         isSystemSelected={isBatterySelected}
         isNoSystemSelected={isNoSystemSelected}
+        readOnly={readOnly}
       />
+    </div>
+  )
+}
+
+function FlowPermissionControl({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: (value: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+      <span className="text-[11px] font-semibold text-gray-700">{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={cn(
+          'relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
+          checked ? 'bg-gray-900' : 'bg-gray-300',
+        )}
+      >
+        <span
+          className={cn(
+            'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+            checked ? 'translate-x-4' : 'translate-x-1',
+          )}
+        />
+      </button>
     </div>
   )
 }
@@ -1441,6 +1484,34 @@ function PvBatteryCalculatorInner() {
                         </p>
                       )}
                     </div>
+
+                    <div className="space-y-2 border-t border-gray-200 pt-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">PV flows</p>
+                      <FlowPermissionControl
+                        label="PV -> load"
+                        checked={state.flowPermissions.pvToLoad}
+                        onChange={(value) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: { ...current.flowPermissions, pvToLoad: value },
+                        }))}
+                      />
+                      <FlowPermissionControl
+                        label="PV -> battery"
+                        checked={state.flowPermissions.pvToBattery}
+                        onChange={(value) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: { ...current.flowPermissions, pvToBattery: value },
+                        }))}
+                      />
+                      <FlowPermissionControl
+                        label="PV -> grid"
+                        checked={state.flowPermissions.pvToGrid}
+                        onChange={(value) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: { ...current.flowPermissions, pvToGrid: value },
+                        }))}
+                      />
+                    </div>
                   </div>
                 </ControlBlock>
               )}
@@ -1524,6 +1595,34 @@ function PvBatteryCalculatorInner() {
                         />
                       </button>
                     </div>
+
+                    <div className="space-y-2 border-t border-gray-200 pt-4">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Battery flows</p>
+                      <FlowPermissionControl
+                        label="Grid -> battery"
+                        checked={state.flowPermissions.gridToBattery}
+                        onChange={(value) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: { ...current.flowPermissions, gridToBattery: value },
+                        }))}
+                      />
+                      <FlowPermissionControl
+                        label="Battery -> load"
+                        checked={state.flowPermissions.batteryToLoad}
+                        onChange={(value) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: { ...current.flowPermissions, batteryToLoad: value },
+                        }))}
+                      />
+                      <FlowPermissionControl
+                        label="Battery -> grid (bi-directional)"
+                        checked={state.flowPermissions.batteryToGrid}
+                        onChange={(value) => setDraftState((current) => ({
+                          ...current,
+                          flowPermissions: { ...current.flowPermissions, batteryToGrid: value },
+                        }))}
+                      />
+                    </div>
                   </div>
                 </ControlBlock>
               )}
@@ -1571,116 +1670,23 @@ function PvBatteryCalculatorInner() {
 
                         <Card className="border-gray-200/80 bg-white shadow-sm">
                           <CardContent className="p-4">
-                            <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <div className="mb-3">
                               <div>
                                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy flows</p>
-                                <p className="mt-1 text-[18px] font-bold tracking-tight text-[#313131]">Energy Flows</p>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <SegmentedPillGroup
-                                  options={[
-                                    {
-                                      label: 'PV',
-                                      active:
-                                        state.flowPermissions.pvToLoad &&
-                                        !state.flowPermissions.pvToBattery &&
-                                        !state.flowPermissions.gridToBattery &&
-                                        state.flowPermissions.pvToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          pvToLoad: true,
-                                          pvToBattery: false,
-                                          gridToBattery: false,
-                                          pvToGrid: true,
-                                        },
-                                      })),
-                                    },
-                                    {
-                                      label: 'B',
-                                      active:
-                                        !state.flowPermissions.pvToLoad &&
-                                        !state.flowPermissions.pvToBattery &&
-                                        state.flowPermissions.gridToBattery &&
-                                        !state.flowPermissions.pvToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          pvToLoad: false,
-                                          pvToBattery: false,
-                                          gridToBattery: true,
-                                          pvToGrid: false,
-                                        },
-                                      })),
-                                    },
-                                    {
-                                      label: 'PV+B',
-                                      active:
-                                        state.flowPermissions.pvToLoad &&
-                                        state.flowPermissions.pvToBattery &&
-                                        state.flowPermissions.gridToBattery &&
-                                        state.flowPermissions.pvToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          pvToLoad: true,
-                                          pvToBattery: true,
-                                          gridToBattery: true,
-                                          pvToGrid: true,
-                                        },
-                                      })),
-                                    },
-                                  ]}
-                                />
-
-                                <SegmentedPillGroup
-                                  options={[
-                                    {
-                                      label: 'Uni',
-                                      active: state.flowPermissions.batteryToLoad && !state.flowPermissions.batteryToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          batteryToLoad: true,
-                                          batteryToGrid: false,
-                                        },
-                                      })),
-                                    },
-                                    {
-                                      label: 'Bi',
-                                      active: state.flowPermissions.batteryToLoad && state.flowPermissions.batteryToGrid,
-                                      onClick: () => setDraftState((current) => ({
-                                        ...current,
-                                        flowPermissions: {
-                                          ...current.flowPermissions,
-                                          batteryToLoad: true,
-                                          batteryToGrid: true,
-                                        },
-                                      })),
-                                    },
-                                  ]}
-                                />
+                                <p className="mt-1 text-[18px] font-bold tracking-tight text-[#313131]">Energy Flow Map</p>
+                                <p className="mt-1 text-[11px] text-gray-500">Flow controls are managed in PV and Battery settings.</p>
                               </div>
                             </div>
 
                             <FlowRouteDiagram
                               permissions={state.flowPermissions}
                               flowValues={dayFlowValues}
-                              onToggle={(key, checked) => setDraftState((current) => ({
-                                ...current,
-                                flowPermissions: {
-                                  ...current.flowPermissions,
-                                  [key]: checked,
-                                },
-                              }))}
+                              onToggle={() => {}}
                               pvCapacityWp={state.pvCapacityWp}
                               usableKwh={state.usableKwh}
                               isPvSelected={isPvSelected}
                               isBatterySelected={isBatterySelected}
+                              readOnly
                             />
                           </CardContent>
                         </Card>
