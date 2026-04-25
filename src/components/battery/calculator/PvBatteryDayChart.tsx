@@ -182,6 +182,10 @@ function formatBlockKwh(value: number): string {
   return value.toFixed(4)
 }
 
+function formatBlockWh(value: number): string {
+  return `${Math.round(value * 1000)}`
+}
+
 interface SegmentedBarShapeProps {
   dataKey?: string
   fill?: string
@@ -661,9 +665,15 @@ export function PvBatteryDayChart({
     ),
     [slots],
   )
-  const homeAxis = useMemo(() => buildPositiveAxis(maxHomeStackKwh, 5), [maxHomeStackKwh])
-  const demandBlockKwh = useMemo(() => Math.max(0.02, homeAxis.step / 8), [homeAxis.step])
   const minutesPerSlot = useMemo(() => Math.max(1, Math.round(60 / slotsPerHour)), [slotsPerHour])
+  const homeAxis = useMemo(() => buildPositiveAxis(maxHomeStackKwh, 5), [maxHomeStackKwh])
+  const demandBlockKwh = useMemo(() => {
+    // Fixed tactile block sizing by visible resolution:
+    // 60-min -> 0.100 kWh (100 Wh), 15-min -> 0.025 kWh (25 Wh)
+    if (minutesPerSlot >= 60) return 0.1
+    if (minutesPerSlot <= 15) return 0.025
+    return Number((0.1 * (minutesPerSlot / 60)).toFixed(3))
+  }, [minutesPerSlot])
   const toggleSeries = (key: HouseholdSeriesKey) => {
     setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }))
   }
@@ -756,7 +766,7 @@ export function PvBatteryDayChart({
                   Grid direct
                 </button>
                 <span className="ml-1 inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-500">
-                  1 block = {formatBlockKwh(demandBlockKwh)} kWh ({minutesPerSlot}-min view)
+                  1 block = {formatBlockWh(demandBlockKwh)} Wh ({formatBlockKwh(demandBlockKwh)} kWh, {minutesPerSlot}-min view)
                 </span>
               </div>
               {householdControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{householdControls}</div> : null}
