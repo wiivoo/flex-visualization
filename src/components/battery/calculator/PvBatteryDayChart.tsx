@@ -674,11 +674,6 @@ export function PvBatteryDayChart({
     if (minutesPerSlot <= 15) return 0.025
     return Number((0.1 * (minutesPerSlot / 60)).toFixed(3))
   }, [minutesPerSlot])
-  const flowBlockKwh = useMemo(() => {
-    if (minutesPerSlot >= 60) return 0.1
-    if (minutesPerSlot <= 15) return 0.025
-    return Number((0.1 * (minutesPerSlot / 60)).toFixed(3))
-  }, [minutesPerSlot])
   const toggleSeries = (key: HouseholdSeriesKey) => {
     setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }))
   }
@@ -981,9 +976,6 @@ export function PvBatteryDayChart({
                   <span className="h-3 w-4 border-b-2" style={{ borderColor: COLORS.lineSpot }} />
                   {flowPriceLegendLabel}
                 </span>
-                <span className="ml-1 inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-500">
-                  1 block = {formatBlockWh(flowBlockKwh)} Wh ({formatBlockKwh(flowBlockKwh)} kWh, {minutesPerSlot}-min view)
-                </span>
               </div>
               {priceControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{priceControls}</div> : null}
             </div>
@@ -1176,19 +1168,19 @@ export function PvBatteryDayChart({
                   ))}
 
                   {visibleFlowLayers.charge ? (
-                    <Bar yAxisId="flow" name="Charge from price (grid)" dataKey="chargeFromPriceKwh" fill={COLORS.gridStored} isAnimationActive={false} stackId="flow" shape={(props) => <SegmentedBarShape {...props} blockKwh={flowBlockKwh} />} />
+                    <Bar yAxisId="flow" name="Charge from price (grid)" dataKey="chargeFromPriceKwh" fill={COLORS.gridStored} isAnimationActive={false} stackId="flow" />
                   ) : null}
                   {visibleFlowLayers.charge ? (
-                    <Bar yAxisId="flow" name="Charge from excess PV" dataKey="chargeFromExcessPvKwh" fill={COLORS.pvCharge} isAnimationActive={false} stackId="flow" shape={(props) => <SegmentedBarShape {...props} blockKwh={flowBlockKwh} />} />
+                    <Bar yAxisId="flow" name="Charge from excess PV" dataKey="chargeFromExcessPvKwh" fill={COLORS.pvCharge} isAnimationActive={false} stackId="flow" />
                   ) : null}
                   {visibleFlowLayers.discharge ? (
-                    <Bar yAxisId="flow" name="Discharge to household" dataKey="dischargeToHouseholdKwh" fill={COLORS.pvStored} isAnimationActive={false} stackId="flow" shape={(props) => <SegmentedBarShape {...props} blockKwh={flowBlockKwh} />} />
+                    <Bar yAxisId="flow" name="Discharge to household" dataKey="dischargeToHouseholdKwh" fill={COLORS.pvStored} isAnimationActive={false} stackId="flow" />
                   ) : null}
                   {visibleFlowLayers.discharge ? (
-                    <Bar yAxisId="flow" name="Discharge to price (export)" dataKey="dischargeToPriceKwh" fill={COLORS.export} isAnimationActive={false} stackId="flow" shape={(props) => <SegmentedBarShape {...props} blockKwh={flowBlockKwh} />} />
+                    <Bar yAxisId="flow" name="Discharge to price (export)" dataKey="dischargeToPriceKwh" fill={COLORS.export} isAnimationActive={false} stackId="flow" />
                   ) : null}
                   {visibleFlowLayers.pvExport ? (
-                    <Bar yAxisId="flow" name="Sell excess PV (direct)" dataKey="sellExcessPvKwh" fill={COLORS.curtailed} isAnimationActive={false} stackId="flow" shape={(props) => <SegmentedBarShape {...props} blockKwh={flowBlockKwh} />} />
+                    <Bar yAxisId="flow" name="Sell excess PV (direct)" dataKey="sellExcessPvKwh" fill={COLORS.curtailed} isAnimationActive={false} stackId="flow" />
                   ) : null}
 
                   <Line

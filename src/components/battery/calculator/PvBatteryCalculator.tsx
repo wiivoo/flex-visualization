@@ -1105,17 +1105,18 @@ function PvBatteryCalculatorInner() {
 
   const dayResult = useMemo(() => {
     if (!annualResult || !prices.selectedDate) return null
-    const start = Date.parse(`${prices.selectedDate}T00:00:00Z`)
-    if (!Number.isFinite(start)) return null
-    const end = start + state.viewHours * 3_600_000
-    const slots = annualResult.slots.filter((slot) => slot.timestamp >= start && slot.timestamp < end)
+    const firstIndex = annualResult.slots.findIndex((slot) => slot.date === prices.selectedDate)
+    if (firstIndex < 0) return null
+    const slotsPerHour = state.resolution === 'quarterhour' ? 4 : 1
+    const targetCount = state.viewHours * slotsPerHour
+    const slots = annualResult.slots.slice(firstIndex, firstIndex + targetCount)
     if (slots.length === 0) return null
     return {
       ...annualResult,
       months: [],
       slots,
     }
-  }, [annualResult, prices.selectedDate, state.viewHours])
+  }, [annualResult, prices.selectedDate, state.resolution, state.viewHours])
 
   const loading = prices.loading || profilesLoading
   const noYearData = !loading && !prices.error && availableYears.length === 0
