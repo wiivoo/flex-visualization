@@ -176,6 +176,12 @@ function formatDayKwh(value: number): string {
   return `${value.toFixed(2)} kWh`
 }
 
+function formatBlockKwh(value: number): string {
+  if (value >= 1) return value.toFixed(2)
+  if (value >= 0.1) return value.toFixed(3)
+  return value.toFixed(4)
+}
+
 interface SegmentedBarShapeProps {
   dataKey?: string
   fill?: string
@@ -657,6 +663,7 @@ export function PvBatteryDayChart({
   )
   const homeAxis = useMemo(() => buildPositiveAxis(maxHomeStackKwh, 5), [maxHomeStackKwh])
   const demandBlockKwh = useMemo(() => Math.max(0.02, homeAxis.step / 8), [homeAxis.step])
+  const minutesPerSlot = useMemo(() => Math.max(1, Math.round(60 / slotsPerHour)), [slotsPerHour])
   const toggleSeries = (key: HouseholdSeriesKey) => {
     setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }))
   }
@@ -748,6 +755,9 @@ export function PvBatteryDayChart({
                   <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.gridDirect, opacity: visibleSeries.gridDirect ? 1 : 0.35 }} />
                   Grid direct
                 </button>
+                <span className="ml-1 inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-500">
+                  1 block = {formatBlockKwh(demandBlockKwh)} kWh ({minutesPerSlot}-min view)
+                </span>
               </div>
               {householdControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{householdControls}</div> : null}
             </div>
