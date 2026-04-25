@@ -164,6 +164,7 @@ interface CalculatorState {
   country: PvBatteryCountry
   tariffId: string
   year: number
+  viewHours: 24 | 48 | 72
   resolution: PvBatteryResolution
   flowPriceMode: 'spot' | 'end'
   loadProfileId: BatteryLoadProfileId
@@ -182,6 +183,7 @@ function sameState(a: CalculatorState, b: CalculatorState): boolean {
   return a.country === b.country
     && a.tariffId === b.tariffId
     && a.year === b.year
+    && a.viewHours === b.viewHours
     && a.resolution === b.resolution
     && a.flowPriceMode === b.flowPriceMode
     && a.loadProfileId === b.loadProfileId
@@ -200,6 +202,7 @@ const DEFAULT_STATE: CalculatorState = {
   country: CALCULATOR_COUNTRY,
   tariffId: 'enviam-vision',
   year: 0,
+  viewHours: 24,
   resolution: 'quarterhour',
   flowPriceMode: 'spot',
   loadProfileId: 'H25',
@@ -321,6 +324,8 @@ function parseState(params: URLSearchParams): CalculatorState {
     ? (params.get('tariff') as string)
     : getDefaultTariffForCountry(country)
   const resolution = params.get('resolution') === 'hour' ? 'hour' : 'quarterhour'
+  const rawViewHours = Number(params.get('hours'))
+  const viewHours: 24 | 48 | 72 = rawViewHours === 48 || rawViewHours === 72 ? rawViewHours : 24
   const flowPriceMode = params.get('price') === 'end' ? 'end' : 'spot'
 
   const getNum = (key: string, fallback: number, min: number, max: number) => {
@@ -338,6 +343,7 @@ function parseState(params: URLSearchParams): CalculatorState {
     country,
     tariffId,
     year: Number.isFinite(parsedYear) ? parsedYear : 0,
+    viewHours,
     resolution,
     flowPriceMode,
     loadProfileId,
@@ -1031,6 +1037,7 @@ function PvBatteryCalculatorInner() {
     params.set('tariff', state.tariffId)
     if (state.year) params.set('year', String(state.year))
     params.set('resolution', state.resolution)
+    params.set('hours', String(state.viewHours))
     params.set('price', state.flowPriceMode)
     params.set('profile', state.loadProfileId)
     params.set('load', String(Math.round(state.annualLoadKwh)))
@@ -1067,11 +1074,16 @@ function PvBatteryCalculatorInner() {
     [deferredState],
   )
 
+  const annualSource = useMemo(() => {
+    if (state.resolution !== 'quarterhour') return prices.hourly
+    return prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
+  }, [prices.hourly, prices.hourlyQH, state.resolution])
+
   const annualPrices = useMemo(() => {
-    return prices.hourly
+    return annualSource
       .filter((point) => point.date.slice(0, 4) === String(effectiveYear))
       .filter((point) => !prices.lastRealDate || point.date <= prices.lastRealDate)
-  }, [effectiveYear, prices.hourly, prices.lastRealDate])
+  }, [annualSource, effectiveYear, prices.lastRealDate])
 
   const radiationAdjustment = useMemo(() => {
     if (!radiationData) return null
@@ -1093,14 +1105,17 @@ function PvBatteryCalculatorInner() {
 
   const dayResult = useMemo(() => {
     if (!annualResult || !prices.selectedDate) return null
-    const slots = annualResult.slots.filter((slot) => slot.date === prices.selectedDate)
+    const start = Date.parse(`${prices.selectedDate}T00:00:00Z`)
+    if (!Number.isFinite(start)) return null
+    const end = start + state.viewHours * 3_600_000
+    const slots = annualResult.slots.filter((slot) => slot.timestamp >= start && slot.timestamp < end)
     if (slots.length === 0) return null
     return {
       ...annualResult,
       months: [],
       slots,
     }
-  }, [annualResult, prices.selectedDate])
+  }, [annualResult, prices.selectedDate, state.viewHours])
 
   const loading = prices.loading || profilesLoading
   const noYearData = !loading && !prices.error && availableYears.length === 0
@@ -1111,6 +1126,23 @@ function PvBatteryCalculatorInner() {
     .filter(({ key }) => !state.flowPermissions[key])
     .map(({ key }) => key)
   const hasQuarterHourReplay = prices.hourlyQH.length > 0
+  const viewWindowOptions = [
+    {
+      label: '24h',
+      active: state.viewHours === 24,
+      onClick: () => setDraftState((current) => ({ ...current, viewHours: 24 })),
+    },
+    {
+      label: '48h',
+      active: state.viewHours === 48,
+      onClick: () => setDraftState((current) => ({ ...current, viewHours: 48 })),
+    },
+    {
+      label: '72h',
+      active: state.viewHours === 72,
+      onClick: () => setDraftState((current) => ({ ...current, viewHours: 72 })),
+    },
+  ]
   const replayResolutionOptions = [
     {
       label: '60 min',
@@ -1124,6 +1156,7 @@ function PvBatteryCalculatorInner() {
       onClick: () => hasQuarterHourReplay && setDraftState((current) => ({ ...current, resolution: 'quarterhour' })),
     },
   ]
+  const replayWindowControls = <SegmentedPillGroup options={viewWindowOptions} />
   const replayResolutionControls = <SegmentedPillGroup options={replayResolutionOptions} />
   const activeFlowKeys = FLOW_PERMISSION_OPTIONS
     .filter(({ key }) => state.flowPermissions[key])
@@ -1571,7 +1604,12 @@ function PvBatteryCalculatorInner() {
 
                       </div>
                     )}
-                    householdControls={replayResolutionControls}
+                    householdControls={(
+                      <div className="flex flex-wrap gap-2">
+                        {replayWindowControls}
+                        {replayResolutionControls}
+                      </div>
+                    )}
                     priceControls={(
                       <div className="flex flex-wrap gap-2">
                         <SegmentedPillGroup
@@ -1588,11 +1626,8 @@ function PvBatteryCalculatorInner() {
                             },
                           ]}
                         />
-                        <SegmentedPillGroup
-                          options={[
-                            ...replayResolutionOptions,
-                          ]}
-                        />
+                        {replayWindowControls}
+                        {replayResolutionControls}
                       </div>
                     )}
                   />
