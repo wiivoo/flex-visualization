@@ -369,6 +369,13 @@ export function PvBatteryDayChart({
     [hourTicks, householdData],
   )
   const homeMajorHourStep = 2
+  const homeMajorTickInterval = Math.max(1, slotsPerHour * homeMajorHourStep)
+  const majorTickTimes = useMemo(
+    () => householdData
+      .filter((point, index) => index % homeMajorTickInterval === 0)
+      .map((point) => point.time),
+    [homeMajorTickInterval, householdData],
+  )
 
   const flowPriceAxis = useMemo(() => {
     let minValue = Number.POSITIVE_INFINITY
@@ -773,24 +780,27 @@ export function PvBatteryDayChart({
             <div className="relative h-[420px]">
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={householdData} margin={{ top: 8, right: 26, bottom: 20, left: 10 }} barCategoryGap={1} barGap={0}>
-                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={true} />
+                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={false} />
 
                   <XAxis
                     dataKey="time"
                     type="category"
-                    ticks={householdTickTimes}
-                    tickFormatter={(value) => {
-                      const index = householdIndexByTime.get(String(value))
-                      if (index === undefined) return ''
-                      return index === 0 || index === householdData.length - 1 || index % (slotsPerHour * homeMajorHourStep) === 0
-                        ? formatHourTick(String(value))
-                        : ''
-                    }}
+                    ticks={majorTickTimes}
+                    tickFormatter={(value) => formatHourTick(String(value))}
                     tick={{ fontSize: 11, fill: COLORS.axisStrong }}
                     tickLine={{ stroke: COLORS.textSoft }}
                     axisLine={{ stroke: COLORS.textSoft }}
                     height={40}
                   />
+                  {majorTickTimes.map((time) => (
+                    <ReferenceLine
+                      key={`home-grid-${time}`}
+                      x={time}
+                      stroke={COLORS.border}
+                      strokeDasharray="3 3"
+                      strokeOpacity={1}
+                    />
+                  ))}
 
                   <YAxis
                     width={56}
@@ -1083,24 +1093,27 @@ export function PvBatteryDayChart({
                   barCategoryGap={1}
                   barGap={0}
                 >
-                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={true} />
+                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={false} />
 
                   <XAxis
                     dataKey="time"
                     type="category"
-                    ticks={householdTickTimes}
-                    tickFormatter={(value) => {
-                      const index = householdIndexByTime.get(String(value))
-                      if (index === undefined) return ''
-                      return index === 0 || index === householdData.length - 1 || index % (slotsPerHour * homeMajorHourStep) === 0
-                        ? formatHourTick(String(value))
-                        : ''
-                    }}
+                    ticks={majorTickTimes}
+                    tickFormatter={(value) => formatHourTick(String(value))}
                     tick={{ fontSize: 11, fill: COLORS.axisStrong }}
                     tickLine={{ stroke: COLORS.textSoft }}
                     axisLine={{ stroke: COLORS.textSoft }}
                     height={40}
                   />
+                  {majorTickTimes.map((time) => (
+                    <ReferenceLine
+                      key={`flow-grid-${time}`}
+                      x={time}
+                      stroke={COLORS.border}
+                      strokeDasharray="3 3"
+                      strokeOpacity={1}
+                    />
+                  ))}
 
                   <YAxis
                     yAxisId="flow"
