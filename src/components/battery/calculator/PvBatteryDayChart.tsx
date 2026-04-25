@@ -217,15 +217,16 @@ function SegmentedBarShape({
 
   const pxPerKwh = height / numericValue
   const blockX = x
-  const blockWidth = Math.max(0.75, width - 0.5)
+  const blockWidth = Math.max(0.75, width - 1.2)
   let cumulativeHeight = 0
 
   return (
     <g>
       {blockKwhParts.map((partKwh, index) => {
-        const blockPixelHeight = partKwh * pxPerKwh
+        const blockPixelHeight = Math.max(1.2, partKwh * pxPerKwh - 0.45)
         const blockY = y + height - cumulativeHeight - blockPixelHeight
-        cumulativeHeight += blockPixelHeight
+        cumulativeHeight += partKwh * pxPerKwh
+        const corner = Math.min(1.6, Math.max(0.6, blockPixelHeight * 0.25))
         return (
           <rect
             key={index}
@@ -233,13 +234,13 @@ function SegmentedBarShape({
             y={blockY}
             width={blockWidth}
             height={blockPixelHeight}
-            rx={0}
-            ry={0}
+            rx={corner}
+            ry={corner}
             fill={fill}
             fillOpacity={1}
             stroke="#FFFFFF"
-            strokeOpacity={0.95}
-            strokeWidth={0.8}
+            strokeOpacity={0.9}
+            strokeWidth={0.9}
             shapeRendering="geometricPrecision"
           />
         )
@@ -655,7 +656,7 @@ export function PvBatteryDayChart({
     [slots],
   )
   const homeAxis = useMemo(() => buildPositiveAxis(maxHomeStackKwh, 5), [maxHomeStackKwh])
-  const demandBlockKwh = useMemo(() => Math.max(0.05, homeAxis.step / 4), [homeAxis.step])
+  const demandBlockKwh = useMemo(() => Math.max(0.02, homeAxis.step / 8), [homeAxis.step])
   const toggleSeries = (key: HouseholdSeriesKey) => {
     setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }))
   }
