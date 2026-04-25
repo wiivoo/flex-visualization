@@ -563,7 +563,7 @@ function FlowRouteCard({
   permissions: FlowPermissions
   onToggle: (key: FlowPermissionKey) => void
   source: FlowNodeKey
-  routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; isStatic?: boolean }>
+  routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; isStatic?: boolean; arrowDirection?: 'down' | 'up' }>
   flowValues: DayFlowByRoute
   pvCapacityWp: number
   usableKwh: number
