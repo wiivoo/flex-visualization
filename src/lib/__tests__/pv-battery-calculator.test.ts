@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildPvBatteryInputs,
+  getAvailablePvBatteryYears,
   optimizePvBattery,
   type OptimizerSlotInput,
   type PvBatteryCalculatorScenario,
@@ -25,6 +26,17 @@ function mkPrice(hour: number, importPriceCtKwh: number, exportPriceCtKwh: numbe
     exportPriceCtKwh,
     loadKwh: 0,
     pvKwh: 0,
+  }
+}
+
+function mkDailyPrice(date: string, priceCtKwh: number): HourlyPrice {
+  return {
+    timestamp: new Date(`${date}T00:00:00Z`).getTime(),
+    date,
+    hour: 0,
+    minute: 0,
+    priceCtKwh,
+    priceEurMwh: priceCtKwh * 10,
   }
 }
 
@@ -154,6 +166,24 @@ describe('optimizePvBattery', () => {
     expect(result.gridImportCostEur).toBeCloseTo(0.6, 3)
   })
 
+  it('settles baseline and import costs on the household tariff instead of the raw spot price', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(18, 10, 0), importPriceCtKwh: 30, loadKwh: 2 },
+    ]
+
+    const result = optimizePvBattery(slots, {
+      ...BASE_SCENARIO,
+      usableKwh: 0,
+      maxChargeKw: 0,
+      maxDischargeKw: 0,
+    })
+
+    expect(result.baselineCostEur).toBeCloseTo(0.6, 3)
+    expect(result.gridImportCostEur).toBeCloseTo(0.6, 3)
+    expect(result.netCostEur).toBeCloseTo(0.6, 3)
+    expect(result.savingsEur).toBeCloseTo(0, 3)
+  })
+
   it('respects disabled PV-to-load routing', () => {
     const slots: OptimizerSlotInput[] = [
       { ...mkPrice(12, 20, 20), loadKwh: 1, pvKwh: 1 },
@@ -214,6 +244,26 @@ describe('optimizePvBattery', () => {
     for (const slot of result.slots) {
       expectSlotConservation(slot)
     }
+  })
+
+  it('tracks grid-charged battery input cost on the household tariff basis', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(1, 5, 0), importPriceCtKwh: 25 },
+      { ...mkPrice(20, 30, 0), importPriceCtKwh: 40, loadKwh: 2 },
+    ]
+
+    const result = optimizePvBattery(slots, {
+      ...BASE_SCENARIO,
+      flowPermissions: {
+        ...BASE_SCENARIO.flowPermissions,
+        gridToBattery: true,
+      },
+    })
+
+    expect(result.gridToBatteryKwh).toBeCloseTo(2, 3)
+    expect(result.gridImportCostEur).toBeCloseTo(0.5, 3)
+    expect(result.slots[1].batteryGridLoadInputCostEur).toBeCloseTo(0.5, 3)
+    expect(result.slots[1].batteryLoadSavingsEur).toBeCloseTo(0.3, 3)
   })
 
   it('uses the lower-value stored bucket first instead of a proportional split for household discharge', () => {
@@ -389,5 +439,19 @@ describe('optimizePvBattery', () => {
     for (const slot of result.slots) {
       expectSlotConservation(slot)
     }
+  })
+
+  it('only returns replay years with a complete, non-projected year of data', () => {
+    const prices: HourlyPrice[] = []
+    for (let day = 1; day <= 365; day += 1) {
+      const date = new Date(Date.UTC(2025, 0, day)).toISOString().slice(0, 10)
+      prices.push(mkDailyPrice(date, 20))
+    }
+    for (let day = 1; day <= 31; day += 1) {
+      const date = new Date(Date.UTC(2026, 0, day)).toISOString().slice(0, 10)
+      prices.push(mkDailyPrice(date, 25))
+    }
+
+    expect(getAvailablePvBatteryYears(prices, '2026-01-31')).toEqual([2025])
   })
 })

@@ -187,6 +187,10 @@ function pad2(value: number): string {
   return String(value).padStart(2, '0')
 }
 
+function getDaysInYear(year: number): number {
+  return ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) ? 366 : 365
+}
+
 function normalizeSeries(values: number[]): number[] {
   const total = values.reduce((sum, value) => sum + value, 0)
   if (!Number.isFinite(total) || total <= 0) return values.map(() => 0)
@@ -412,8 +416,8 @@ function storePvChargeLots(
 
   insertStoredLot(pvLots, curtailedChargeKwh, 0)
   insertStoredLot(pvLots, exportChargeKwh, slot.exportPriceCtKwh)
-  // Savings valuation uses spot price as reference for displaced direct load.
-  insertStoredLot(pvLots, directUseChargeKwh, slot.price.priceCtKwh)
+  // Charging from PV instead of serving load immediately gives up avoided import cost.
+  insertStoredLot(pvLots, directUseChargeKwh, slot.importPriceCtKwh)
 
   if (remainingChargeKwh > EPSILON) {
     insertStoredLot(pvLots, remainingChargeKwh, slot.exportPriceCtKwh)
@@ -860,12 +864,23 @@ export function getAvailablePvBatteryYears(
   prices: HourlyPrice[],
   lastRealDate: string,
 ): number[] {
-  const years = new Set<number>()
+  const datesByYear = new Map<number, Set<string>>()
   for (const point of prices) {
     if (lastRealDate && point.date > lastRealDate) continue
-    years.add(Number(point.date.slice(0, 4)))
+    const year = Number(point.date.slice(0, 4))
+    if (!Number.isFinite(year)) continue
+    const yearDates = datesByYear.get(year) ?? new Set<string>()
+    yearDates.add(point.date)
+    datesByYear.set(year, yearDates)
   }
-  return [...years].filter(Number.isFinite).sort((a, b) => b - a)
+
+  return [...datesByYear.entries()]
+    .filter(([year, yearDates]) => {
+      if (yearDates.size !== getDaysInYear(year)) return false
+      return yearDates.has(`${year}-01-01`) && yearDates.has(`${year}-12-31`)
+    })
+    .map(([year]) => year)
+    .sort((a, b) => b - a)
 }
 
 export function buildDeYearLoadProfile(
@@ -1065,9 +1080,8 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       throw new Error(`optimizePvBattery: infeasible dispatch reconstruction at slot ${slotIndex}`)
     }
 
-    const spotReferenceCtKwh = slot.price.priceCtKwh
-    const slotBaselineCostEur = (slot.loadKwh * spotReferenceCtKwh) / 100
-    const slotImportCostEur = ((dispatch.gridImportKwh + dispatch.gridToBatteryKwh) * spotReferenceCtKwh) / 100
+    const slotBaselineCostEur = (slot.loadKwh * slot.importPriceCtKwh) / 100
+    const slotImportCostEur = ((dispatch.gridImportKwh + dispatch.gridToBatteryKwh) * slot.importPriceCtKwh) / 100
     const slotExportRevenueEur = ((dispatch.directExportKwh + dispatch.batteryExportKwh) * slot.exportPriceCtKwh) / 100
     const slotNetCostEur = slotImportCostEur - slotExportRevenueEur
     const slotSavingsEur = slotBaselineCostEur - slotNetCostEur
@@ -1076,7 +1090,7 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       storePvChargeLots(pvLots, slot, permissions, dispatch, feedInCapKwh)
     }
     if (dispatch.gridToBatteryKwh > EPSILON) {
-      insertStoredLot(gridLots, dispatch.gridToBatteryKwh, spotReferenceCtKwh)
+      insertStoredLot(gridLots, dispatch.gridToBatteryKwh, slot.importPriceCtKwh)
     }
 
     const exactDischargeSplit = consumeLowerValueStoredEnergy(
@@ -1086,7 +1100,7 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       dispatch.batteryToLoadKwh,
       dispatch.batteryExportKwh,
       roundTripEff,
-      spotReferenceCtKwh,
+      slot.importPriceCtKwh,
       slot.exportPriceCtKwh,
     )
     pvBatteryToLoadKwh += exactDischargeSplit.batteryPvToLoadKwh

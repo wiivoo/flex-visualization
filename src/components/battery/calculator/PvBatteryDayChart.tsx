@@ -534,21 +534,19 @@ export function PvBatteryDayChart({
     let chargeWeightedCt = 0
     let dischargeKwh = 0
     let dischargeWeightedCt = 0
-    let dischargeSavingsEur = 0
     let pvExportKwh = 0
     let pvExportWeightedCt = 0
 
     for (const slot of slots) {
       if (slot.chargeToBatteryKwh > 0) {
         chargeKwh += slot.chargeToBatteryKwh
-        chargeWeightedCt += slot.chargeToBatteryKwh * slot.spotPriceCtKwh
+        chargeWeightedCt += slot.chargeToBatteryKwh * slot[flowPriceDataKey]
       }
 
       const slotDischargeKwh = slot.batteryToLoadKwh + slot.batteryExportKwh
       if (slotDischargeKwh > 0) {
         dischargeKwh += slotDischargeKwh
-        dischargeWeightedCt += slotDischargeKwh * slot.spotPriceCtKwh
-        dischargeSavingsEur += slot.batteryDischargeSavingsEur
+        dischargeWeightedCt += slotDischargeKwh * slot[flowPriceDataKey]
       }
 
       if (slot.pvToGridKwh > 0) {
@@ -573,7 +571,7 @@ export function PvBatteryDayChart({
         ? null
         : {
             avgCtKwh: dischargeAvgCtKwh,
-            totalEur: dischargeSavingsEur,
+            totalEur: dischargeWeightedCt / 100,
           },
       pvExport: pvExportAvgCtKwh === null
         ? null
@@ -582,7 +580,7 @@ export function PvBatteryDayChart({
             totalEur: pvExportWeightedCt / 100,
           },
     }
-  }, [slots])
+  }, [flowPriceDataKey, slots])
   const flowTopStats = useMemo(() => {
     let pvExportKwh = 0
     let pvExportWeightedCt = 0

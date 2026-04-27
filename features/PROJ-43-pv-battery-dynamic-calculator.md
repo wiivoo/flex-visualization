@@ -6,6 +6,10 @@
 ## Dependencies
 - None
 
+## Audit Note
+
+- Implementation and chart-audit note: `docs/battery/pv-battery-calculator-audit-and-model-notes.md`
+
 ## Goal
 
 Add a dedicated calculator at `/battery/calculator` that estimates annual household electricity outcome for a PV + battery system under a German dynamic tariff, using a `/v2`-style settings rail and a selected-day replay view.
