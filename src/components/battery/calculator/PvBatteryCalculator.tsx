@@ -858,6 +858,821 @@ function AnnualHero({
   )
 }
 
+type AllocationBucketKey = 'gridDirect' | 'pvDirect' | 'pvStored' | 'gridStored'
+type AllocationMoneyMode = 'ct' | 'eur'
+type AllocationDisplayMode = 'volume' | 'cost' | 'impact'
+type AllocationVolumeMode = 'abs' | 'share'
+type AllocationMetricKind = 'kwh' | 'share' | 'ct' | 'eur'
+type AllocationVisualMode = 'bars' | 'bubbles'
+
+interface AllocationBucket {
+  key: AllocationBucketKey
+  label: string
+  shortLabel: string
+  detail: string
+  kwh: number
+  sharePct: number
+  unitCostCtKwh: number
+  totalCostEur: number
+  costContributionCtKwh: number
+  baselineCostShareEur: number
+  impactDeltaCtKwh: number
+  impactDeltaEur: number
+  color: string
+}
+
+interface WaterfallChartColumn {
+  key: string
+  shortLabel: string
+  label: string
+  type: 'delta' | 'total'
+  color: string
+  priceCtKwh: number
+  fillSegments?: Array<{ color: string; ratio: number }>
+  startValue?: number
+  endValue?: number
+  deltaValue?: number
+  totalValue?: number
+}
+
+function formatSignedCt(value: number, priceUnit: string): string {
+  const sign = value > 0 ? '+' : value < 0 ? '-' : ''
+  return `${sign}${Math.abs(value).toFixed(2)} ${priceUnit}`
+}
+
+function formatSignedCurrency(value: number, currencySym: string): string {
+  const sign = value > 0 ? '+' : value < 0 ? '-' : ''
+  return `${sign}${currencySym}${Math.abs(value).toFixed(0)}`
+}
+
+function formatMetricValue(
+  value: number,
+  kind: AllocationMetricKind,
+  units: ReturnType<typeof getPriceUnits>,
+): string {
+  if (kind === 'share') return `${value.toFixed(1)}%`
+  if (kind === 'kwh') return `${Math.round(value).toLocaleString()} kWh`
+  if (kind === 'ct') return `${value.toFixed(2)} ${units.priceUnit}`
+  return `${units.currencySym}${value.toFixed(0)}`
+}
+
+function formatMetricDelta(
+  value: number,
+  kind: AllocationMetricKind,
+  units: ReturnType<typeof getPriceUnits>,
+): string {
+  if (kind === 'share') return `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(1)}%`
+  if (kind === 'kwh') return `${value >= 0 ? '+' : '-'}${Math.abs(Math.round(value)).toLocaleString()} kWh`
+  if (kind === 'ct') return formatSignedCt(value, units.priceUnit)
+  return formatSignedCurrency(value, units.currencySym)
+}
+
+function getMetricAxisLabel(kind: AllocationMetricKind, units: ReturnType<typeof getPriceUnits>): string {
+  if (kind === 'share') return '% of household'
+  if (kind === 'kwh') return 'Delivered kWh'
+  if (kind === 'ct') return units.priceUnit
+  return `${units.currencySym} / year`
+}
+
+function DeliveredAllocationCard({
+  annual,
+  units,
+}: {
+  annual: PvBatteryAnnualResult
+  units: ReturnType<typeof getPriceUnits>
+}) {
+  const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>('volume')
+  const [volumeMode, setVolumeMode] = useState<AllocationVolumeMode>('abs')
+  const [costMode, setCostMode] = useState<AllocationMoneyMode>('ct')
+  const [impactMode, setImpactMode] = useState<AllocationMoneyMode>('ct')
+  const [visualMode, setVisualMode] = useState<AllocationVisualMode>('bars')
+
+  const asFinite = (value: number, fallback = 0) => (Number.isFinite(value) ? value : fallback)
+  const stats = useMemo(() => {
+    const totals = annual.slots.reduce((acc, slot) => {
+      acc.gridDirectKwh += slot.gridToLoadKwh
+      acc.pvDirectKwh += slot.pvToLoadKwh
+      acc.pvStoredKwh += slot.batteryPvToLoadKwh
+      acc.gridStoredKwh += slot.batteryGridToLoadKwh
+      acc.baselineCostEur += slot.baselineCostEur
+      acc.exportRevenueEur += slot.exportRevenueEur
+      acc.gridDirectCostEur += (slot.gridToLoadKwh * slot.spotPriceCtKwh) / 100
+      acc.gridStoredInputCostEur += asFinite(slot.batteryGridLoadInputCostEur, 0)
+      return acc
+    }, {
+      gridDirectKwh: 0,
+      pvDirectKwh: 0,
+      pvStoredKwh: 0,
+      gridStoredKwh: 0,
+      baselineCostEur: 0,
+      exportRevenueEur: 0,
+      gridDirectCostEur: 0,
+      gridStoredInputCostEur: 0,
+    })
+
+    const deliveredLoadKwh =
+      totals.gridDirectKwh +
+      totals.pvDirectKwh +
+      totals.pvStoredKwh +
+      totals.gridStoredKwh
+    const safeLoadKwh = Math.max(deliveredLoadKwh, 1e-6)
+    const gridDirectCt = totals.gridDirectKwh > 0 ? (totals.gridDirectCostEur * 100) / totals.gridDirectKwh : 0
+    const gridStoredCt = totals.gridStoredKwh > 0 ? (totals.gridStoredInputCostEur * 100) / totals.gridStoredKwh : 0
+    const baselineAvgCt = (totals.baselineCostEur * 100) / safeLoadKwh
+    const grossDeliveredCostEur = totals.gridDirectCostEur + totals.gridStoredInputCostEur
+    const grossDeliveredCt = (grossDeliveredCostEur * 100) / safeLoadKwh
+    const exportKwh = annual.directExportKwh + annual.batteryExportKwh
+    const exportAvgCt = exportKwh > 0 ? (totals.exportRevenueEur * 100) / exportKwh : 0
+
+    const buckets: AllocationBucket[] = [
+      {
+        key: 'gridDirect',
+        label: 'Grid -> Load',
+        shortLabel: 'Grid',
+        detail: 'Residual household demand served directly from the grid.',
+        kwh: totals.gridDirectKwh,
+        sharePct: (totals.gridDirectKwh / safeLoadKwh) * 100,
+        unitCostCtKwh: gridDirectCt,
+        totalCostEur: totals.gridDirectCostEur,
+        costContributionCtKwh: (totals.gridDirectCostEur * 100) / safeLoadKwh,
+        baselineCostShareEur: (totals.gridDirectKwh * baselineAvgCt) / 100,
+        impactDeltaCtKwh: 0,
+        impactDeltaEur: 0,
+        color: '#7D8797',
+      },
+      {
+        key: 'pvDirect',
+        label: 'PV -> Load',
+        shortLabel: 'PV',
+        detail: 'Direct PV supply to the household, priced at 0.00 ct/kWh marginal view.',
+        kwh: totals.pvDirectKwh,
+        sharePct: (totals.pvDirectKwh / safeLoadKwh) * 100,
+        unitCostCtKwh: 0,
+        totalCostEur: 0,
+        costContributionCtKwh: 0,
+        baselineCostShareEur: (totals.pvDirectKwh * baselineAvgCt) / 100,
+        impactDeltaCtKwh: 0,
+        impactDeltaEur: 0,
+        color: '#E9B94A',
+      },
+      {
+        key: 'pvStored',
+        label: 'PV -> Battery -> Load',
+        shortLabel: 'PV via battery',
+        detail: 'Household load delivered later from stored PV energy.',
+        kwh: totals.pvStoredKwh,
+        sharePct: (totals.pvStoredKwh / safeLoadKwh) * 100,
+        unitCostCtKwh: 0,
+        totalCostEur: 0,
+        costContributionCtKwh: 0,
+        baselineCostShareEur: (totals.pvStoredKwh * baselineAvgCt) / 100,
+        impactDeltaCtKwh: 0,
+        impactDeltaEur: 0,
+        color: '#D9B24E',
+      },
+      {
+        key: 'gridStored',
+        label: 'Grid -> Battery -> Load',
+        shortLabel: 'Spot battery',
+        detail: 'Low-price grid charging shifted through the battery into household load.',
+        kwh: totals.gridStoredKwh,
+        sharePct: (totals.gridStoredKwh / safeLoadKwh) * 100,
+        unitCostCtKwh: gridStoredCt,
+        totalCostEur: totals.gridStoredInputCostEur,
+        costContributionCtKwh: (totals.gridStoredInputCostEur * 100) / safeLoadKwh,
+        baselineCostShareEur: (totals.gridStoredKwh * baselineAvgCt) / 100,
+        impactDeltaCtKwh: 0,
+        impactDeltaEur: 0,
+        color: '#2F6FB3',
+      },
+    ]
+
+    for (const bucket of buckets) {
+      bucket.impactDeltaEur = bucket.totalCostEur - bucket.baselineCostShareEur
+      bucket.impactDeltaCtKwh = (bucket.impactDeltaEur * 100) / safeLoadKwh
+    }
+
+    return {
+      deliveredLoadKwh,
+      baselineCostEur: totals.baselineCostEur,
+      baselineAvgCt,
+      buckets,
+      grossDeliveredCostEur,
+      grossDeliveredCt,
+      exportRevenueEur: totals.exportRevenueEur,
+      exportKwh,
+      exportAvgCt,
+      exportCreditCtEquivalent: totals.exportRevenueEur > 0 ? (totals.exportRevenueEur * 100) / safeLoadKwh : 0,
+      overallNetEquivalentCt: (annual.netCostEur * 100) / safeLoadKwh,
+      overallNetCostEur: annual.netCostEur,
+      maxUnitCt: Math.max(baselineAvgCt, grossDeliveredCt, exportAvgCt, ...buckets.map((bucket) => bucket.unitCostCtKwh), 1),
+    }
+  }, [annual])
+
+  const chartMetric = useMemo<AllocationMetricKind>(() => {
+    if (displayMode === 'volume') return volumeMode === 'abs' ? 'kwh' : 'share'
+    if (displayMode === 'cost') return costMode === 'ct' ? 'ct' : 'eur'
+    return impactMode === 'ct' ? 'ct' : 'eur'
+  }, [costMode, displayMode, impactMode, volumeMode])
+
+  const chartSeries = useMemo(() => {
+    let columns: WaterfallChartColumn[] = []
+    let title = ''
+    let description = ''
+    let totalLabel = ''
+    const pvDirect = stats.buckets.find((bucket) => bucket.key === 'pvDirect')
+    const pvStored = stats.buckets.find((bucket) => bucket.key === 'pvStored')
+    const gridDirect = stats.buckets.find((bucket) => bucket.key === 'gridDirect')
+    const gridStored = stats.buckets.find((bucket) => bucket.key === 'gridStored')
+    const solarBase = (pvDirect?.kwh ?? 0) + (pvStored?.kwh ?? 0)
+    const solarSegments = solarBase > 0
+      ? [
+        { color: pvDirect?.color ?? '#E9B94A', ratio: (pvDirect?.kwh ?? 0) / solarBase },
+        { color: pvStored?.color ?? '#D9B24E', ratio: (pvStored?.kwh ?? 0) / solarBase },
+      ].filter((segment) => segment.ratio > 0)
+      : [
+        { color: pvDirect?.color ?? '#E9B94A', ratio: 0.5 },
+        { color: pvStored?.color ?? '#D9B24E', ratio: 0.5 },
+      ]
+
+    if (displayMode === 'volume') {
+      title = volumeMode === 'abs' ? 'Delivered household volume build-up' : 'Delivered household volume share build-up'
+      description = volumeMode === 'abs'
+        ? 'Each bar adds its delivered household kWh until the final household total.'
+        : 'Each bar adds its share of household load until the final 100% household total.'
+      totalLabel = volumeMode === 'abs'
+        ? formatMetricValue(stats.deliveredLoadKwh, 'kwh', units)
+        : formatMetricValue(100, 'share', units)
+
+      let running = 0
+      const gridDelta = volumeMode === 'abs' ? (gridDirect?.kwh ?? 0) : (gridDirect?.sharePct ?? 0)
+      columns.push({
+        key: 'gridDirect',
+        shortLabel: 'Grid',
+        label: 'Grid -> Load',
+        type: 'delta',
+        color: gridDirect?.color ?? '#7D8797',
+        priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
+        fillSegments: [{ color: gridDirect?.color ?? '#7D8797', ratio: 1 }],
+        startValue: running,
+        endValue: running + gridDelta,
+        deltaValue: gridDelta,
+      })
+      running += gridDelta
+
+      const solarDelta = volumeMode === 'abs'
+        ? ((pvDirect?.kwh ?? 0) + (pvStored?.kwh ?? 0))
+        : ((pvDirect?.sharePct ?? 0) + (pvStored?.sharePct ?? 0))
+      columns.push({
+        key: 'solar',
+        shortLabel: 'Solar',
+        label: 'PV + PV via battery',
+        type: 'delta',
+        color: pvDirect?.color ?? '#E9B94A',
+        priceCtKwh: 0,
+        fillSegments: solarSegments,
+        startValue: running,
+        endValue: running + solarDelta,
+        deltaValue: solarDelta,
+      })
+      running += solarDelta
+
+      const spotDelta = volumeMode === 'abs' ? (gridStored?.kwh ?? 0) : (gridStored?.sharePct ?? 0)
+      columns.push({
+        key: 'gridStored',
+        shortLabel: 'Spot battery',
+        label: 'Grid -> Battery -> Load',
+        type: 'delta',
+        color: gridStored?.color ?? '#2F6FB3',
+        priceCtKwh: gridStored?.unitCostCtKwh ?? 0,
+        fillSegments: [{ color: gridStored?.color ?? '#2F6FB3', ratio: 1 }],
+        startValue: running,
+        endValue: running + spotDelta,
+        deltaValue: spotDelta,
+      })
+      running += spotDelta
+
+      const exportTotal = volumeMode === 'abs'
+        ? stats.exportKwh
+        : ((stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100)
+      columns.push({
+        key: 'export',
+        shortLabel: 'Export',
+        label: 'Export outside household total',
+        type: 'total',
+        color: '#67B7D1',
+        priceCtKwh: stats.exportAvgCt,
+        fillSegments: [{ color: '#67B7D1', ratio: 1 }],
+        totalValue: exportTotal,
+      })
+
+      columns.push({
+        key: 'total',
+        shortLabel: 'Household',
+        label: 'Household total',
+        type: 'total',
+        color: '#111827',
+        priceCtKwh: stats.grossDeliveredCt,
+        fillSegments: [{ color: '#111827', ratio: 1 }],
+        totalValue: running,
+      })
+    } else if (displayMode === 'cost') {
+      title = costMode === 'ct' ? 'Gross delivered cost build-up in ct/kWh' : 'Gross delivered cost build-up in EUR/year'
+      description = costMode === 'ct'
+        ? 'Each bucket contributes its weighted ct/kWh share to the gross delivered household average.'
+        : 'Each bucket adds its absolute delivered household cost to the gross annual total.'
+      totalLabel = costMode === 'ct'
+        ? formatMetricValue(stats.grossDeliveredCt, 'ct', units)
+        : formatMetricValue(stats.grossDeliveredCostEur, 'eur', units)
+
+      let running = 0
+      const costColumns: Array<{
+        key: string
+        shortLabel: string
+        label: string
+        deltaValue: number
+        color: string
+        priceCtKwh: number
+        fillSegments?: Array<{ color: string; ratio: number }>
+      }> = [
+        {
+          key: 'gridDirect',
+          shortLabel: 'Grid',
+          label: 'Grid -> Load',
+          deltaValue: costMode === 'ct' ? (gridDirect?.costContributionCtKwh ?? 0) : (gridDirect?.totalCostEur ?? 0),
+          color: gridDirect?.color ?? '#7D8797',
+          priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
+          fillSegments: [{ color: gridDirect?.color ?? '#7D8797', ratio: 1 }],
+        },
+        {
+          key: 'solar',
+          shortLabel: 'Solar',
+          label: 'PV + PV via battery',
+          deltaValue: 0,
+          color: pvDirect?.color ?? '#E9B94A',
+          priceCtKwh: 0,
+          fillSegments: solarSegments,
+        },
+        {
+          key: 'gridStored',
+          shortLabel: 'Spot battery',
+          label: 'Grid -> Battery -> Load',
+          deltaValue: costMode === 'ct' ? (gridStored?.costContributionCtKwh ?? 0) : (gridStored?.totalCostEur ?? 0),
+          color: gridStored?.color ?? '#2F6FB3',
+          priceCtKwh: gridStored?.unitCostCtKwh ?? 0,
+          fillSegments: [{ color: gridStored?.color ?? '#2F6FB3', ratio: 1 }],
+        },
+      ]
+
+      columns = costColumns.map((column) => {
+        const result: WaterfallChartColumn = {
+          key: column.key,
+          shortLabel: column.shortLabel,
+          label: column.label,
+          type: 'delta',
+          color: column.color,
+          priceCtKwh: column.priceCtKwh,
+          fillSegments: column.fillSegments,
+          startValue: running,
+          endValue: running + column.deltaValue,
+          deltaValue: column.deltaValue,
+        }
+        running += column.deltaValue
+        return result
+      })
+      columns.push({
+        key: 'total',
+        shortLabel: 'Household',
+        label: 'Household total',
+        type: 'total',
+        color: '#111827',
+        priceCtKwh: stats.grossDeliveredCt,
+        fillSegments: [{ color: '#111827', ratio: 1 }],
+        totalValue: running,
+      })
+    } else {
+      const baselineValue = impactMode === 'ct' ? stats.baselineAvgCt : stats.baselineCostEur
+      title = impactMode === 'ct' ? 'Baseline to delivered average in ct/kWh' : 'Baseline to delivered annual cost in EUR'
+      description = 'Starts from the artificial all-spot baseline, then replaces each bucket with its actual delivered cost.'
+      totalLabel = impactMode === 'ct'
+        ? formatMetricValue(stats.grossDeliveredCt, 'ct', units)
+        : formatMetricValue(stats.grossDeliveredCostEur, 'eur', units)
+
+      columns = [{
+        key: 'baseline',
+        shortLabel: 'Baseline',
+        label: 'All household load at average spot price',
+        type: 'total',
+        color: '#CBD5E1',
+        priceCtKwh: stats.baselineAvgCt,
+        fillSegments: [{ color: '#CBD5E1', ratio: 1 }],
+        totalValue: baselineValue,
+      }]
+
+      let running = baselineValue
+      const impactColumns: Array<{
+        key: string
+        shortLabel: string
+        label: string
+        deltaValue: number
+        color: string
+        priceCtKwh: number
+        fillSegments?: Array<{ color: string; ratio: number }>
+      }> = [
+        {
+          key: 'gridDirect',
+          shortLabel: 'Grid',
+          label: 'Grid -> Load',
+          deltaValue: impactMode === 'ct' ? (gridDirect?.impactDeltaCtKwh ?? 0) : (gridDirect?.impactDeltaEur ?? 0),
+          color: gridDirect?.color ?? '#7D8797',
+          priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
+          fillSegments: [{ color: gridDirect?.color ?? '#7D8797', ratio: 1 }],
+        },
+        {
+          key: 'solar',
+          shortLabel: 'Solar',
+          label: 'PV + PV via battery',
+          deltaValue: impactMode === 'ct'
+            ? ((pvDirect?.impactDeltaCtKwh ?? 0) + (pvStored?.impactDeltaCtKwh ?? 0))
+            : ((pvDirect?.impactDeltaEur ?? 0) + (pvStored?.impactDeltaEur ?? 0)),
+          color: pvDirect?.color ?? '#E9B94A',
+          priceCtKwh: 0,
+          fillSegments: solarSegments,
+        },
+        {
+          key: 'gridStored',
+          shortLabel: 'Spot battery',
+          label: 'Grid -> Battery -> Load',
+          deltaValue: impactMode === 'ct' ? (gridStored?.impactDeltaCtKwh ?? 0) : (gridStored?.impactDeltaEur ?? 0),
+          color: gridStored?.color ?? '#2F6FB3',
+          priceCtKwh: gridStored?.unitCostCtKwh ?? 0,
+          fillSegments: [{ color: gridStored?.color ?? '#2F6FB3', ratio: 1 }],
+        },
+      ]
+
+      for (const column of impactColumns) {
+        columns.push({
+          key: column.key,
+          shortLabel: column.shortLabel,
+          label: column.label,
+          type: 'delta',
+          color: column.color,
+          priceCtKwh: column.priceCtKwh,
+          fillSegments: column.fillSegments,
+          startValue: running,
+          endValue: running + column.deltaValue,
+          deltaValue: column.deltaValue,
+        })
+        running += column.deltaValue
+      }
+
+      columns.push({
+        key: 'gross',
+        shortLabel: 'Household',
+        label: 'Household total',
+        type: 'total',
+        color: '#111827',
+        priceCtKwh: stats.grossDeliveredCt,
+        fillSegments: [{ color: '#111827', ratio: 1 }],
+        totalValue: running,
+      })
+    }
+
+    const extrema = columns.flatMap((column) => {
+      if (column.type === 'total') return [column.totalValue ?? 0]
+      return [column.startValue ?? 0, column.endValue ?? 0]
+    })
+    const minValue = Math.min(0, ...extrema)
+    const maxValue = Math.max(1, ...extrema)
+    const range = Math.max(maxValue - minValue, 1)
+    const valueToPct = (value: number) => ((value - minValue) / range) * 100
+
+    return {
+      title,
+      description,
+      totalLabel,
+      columns,
+      minValue,
+      maxValue,
+      valueToPct,
+    }
+  }, [costMode, displayMode, impactMode, stats, units, volumeMode])
+
+  return (
+    <Card className="border-gray-200/80 bg-white shadow-sm">
+      <CardContent className="p-6">
+        <SectionHeading
+          eyebrow="Cost Allocation"
+          title="Delivered waterfall"
+          help="One chart with toggles: volume can be shown as absolute kWh or share of household load, cost can be shown as weighted ct/kWh or absolute EUR, and impact bridges from the artificial all-spot baseline to the gross delivered household cost."
+          icon={<Gauge className="h-5 w-5 text-gray-400" />}
+        />
+
+        <div className="rounded-2xl border border-gray-200 bg-[#FBFBF8] p-4">
+          <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-gray-900">{chartSeries.title}</p>
+              <p className="mt-1 text-[12px] leading-5 text-gray-500">{chartSeries.description}</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <SegmentedPillGroup
+                options={[
+                  {
+                    label: 'Volume',
+                    active: displayMode === 'volume',
+                    onClick: () => setDisplayMode('volume'),
+                  },
+                  {
+                    label: 'Cost',
+                    active: displayMode === 'cost',
+                    onClick: () => setDisplayMode('cost'),
+                  },
+                  {
+                    label: 'Impact',
+                    active: displayMode === 'impact',
+                    onClick: () => setDisplayMode('impact'),
+                  },
+                ]}
+              />
+              {displayMode === 'volume' ? (
+                <SegmentedPillGroup
+                  options={[
+                    {
+                      label: 'Abs. kWh',
+                      active: volumeMode === 'abs',
+                      onClick: () => setVolumeMode('abs'),
+                    },
+                    {
+                      label: '%',
+                      active: volumeMode === 'share',
+                      onClick: () => setVolumeMode('share'),
+                    },
+                  ]}
+                />
+              ) : null}
+              {displayMode === 'cost' ? (
+                <SegmentedPillGroup
+                  options={[
+                    {
+                      label: 'ct/kWh',
+                      active: costMode === 'ct',
+                      onClick: () => setCostMode('ct'),
+                    },
+                    {
+                      label: 'Abs. cost',
+                      active: costMode === 'eur',
+                      onClick: () => setCostMode('eur'),
+                    },
+                  ]}
+                />
+              ) : null}
+              {displayMode === 'impact' ? (
+                <SegmentedPillGroup
+                  options={[
+                    {
+                      label: 'ct/kWh',
+                      active: impactMode === 'ct',
+                      onClick: () => setImpactMode('ct'),
+                    },
+                    {
+                      label: 'EUR/year',
+                      active: impactMode === 'eur',
+                      onClick: () => setImpactMode('eur'),
+                    },
+                  ]}
+                />
+              ) : null}
+              <SegmentedPillGroup
+                options={[
+                  {
+                    label: 'Bars',
+                    active: visualMode === 'bars',
+                    onClick: () => setVisualMode('bars'),
+                  },
+                  {
+                    label: 'Bubbles',
+                    active: visualMode === 'bubbles',
+                    onClick: () => setVisualMode('bubbles'),
+                  },
+                ]}
+              />
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                  Left axis: {getMetricAxisLabel(chartMetric, units)}
+                </p>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                    Right axis: {units.priceUnit}
+                  </span>
+                  <span className="rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-[10px] font-semibold text-gray-500">
+                  {chartSeries.totalLabel}
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-[68px_minmax(0,1fr)_68px] items-start gap-3">
+                <div className="relative h-[340px]">
+                  {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                    const value = chartSeries.minValue + ((chartSeries.maxValue - chartSeries.minValue) * ratio)
+                    return (
+                      <div
+                        key={`${chartMetric}-axis-${ratio}`}
+                        className="absolute inset-x-0"
+                        style={{ bottom: `${ratio * 100}%` }}
+                      >
+                        <span className="absolute right-0 top-[-10px] text-[10px] tabular-nums text-gray-400">
+                          {formatMetricValue(value, chartMetric, units)}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="relative h-[340px]">
+                    {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+                      <div
+                        key={`${chartMetric}-grid-${ratio}`}
+                        className="absolute inset-x-0 border-t border-dashed border-gray-200"
+                        style={{ bottom: `${ratio * 100}%` }}
+                      />
+                    ))}
+
+                    <div
+                      className="absolute inset-0 grid gap-3"
+                      style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                    >
+                      {chartSeries.columns.map((column) => {
+                        const lowValue = column.type === 'total'
+                          ? Math.min(0, column.totalValue ?? 0)
+                          : Math.min(column.startValue ?? 0, column.endValue ?? 0)
+                        const highValue = column.type === 'total'
+                          ? Math.max(0, column.totalValue ?? 0)
+                          : Math.max(column.startValue ?? 0, column.endValue ?? 0)
+                        const lowPct = chartSeries.valueToPct(lowValue)
+                        const highPct = chartSeries.valueToPct(highValue)
+                        const priceBubbleCt = column.priceCtKwh
+                        const priceBubblePct = (priceBubbleCt / Math.max(stats.maxUnitCt, 1e-6)) * 100
+
+                        return (
+                          <div key={column.key} className="relative">
+                            <div
+                              className="absolute left-1/2 z-10 -translate-x-1/2"
+                              style={{ bottom: `calc(${Math.max(priceBubblePct, 0)}% + 8px)` }}
+                            >
+                              <div className={cn(
+                                'border border-blue-200 bg-blue-50 tabular-nums text-blue-900 shadow-sm',
+                                visualMode === 'bars'
+                                  ? 'rounded-full px-2 py-0.5 text-[9px] font-semibold opacity-90'
+                                  : 'rounded-2xl px-3 py-2 text-center text-[10px] font-semibold min-w-[88px]',
+                              )}>
+                                {visualMode === 'bubbles' ? (
+                                  <p className="mb-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-700">{column.shortLabel}</p>
+                                ) : null}
+                                <p>{priceBubbleCt.toFixed(2)} {units.priceUnit}</p>
+                              </div>
+                            </div>
+
+                            <div
+                              className={cn(
+                                'absolute inset-x-6 rounded-t-lg rounded-b-lg',
+                                column.type === 'total' && 'shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]',
+                              )}
+                              style={{
+                                bottom: `${lowPct}%`,
+                                height: `${Math.max(highPct - lowPct, 1.8)}%`,
+                                opacity: visualMode === 'bars' ? 0.94 : 0.28,
+                                backgroundColor: column.fillSegments && column.fillSegments.length > 1 ? 'transparent' : column.color,
+                              }}
+                            >
+                              {column.fillSegments && column.fillSegments.length > 0 ? (
+                                <div className="absolute inset-0 overflow-hidden rounded-[inherit]">
+                                  {(() => {
+                                    const fillSegments = column.fillSegments ?? []
+                                    let segmentOffset = 0
+                                    return fillSegments.map((segment, index) => {
+                                      const segmentHeight = Math.max(segment.ratio * 100, index === fillSegments.length - 1 ? 100 - segmentOffset : 0)
+                                      const style = {
+                                        bottom: `${segmentOffset}%`,
+                                        height: `${segmentHeight}%`,
+                                        backgroundColor: segment.color,
+                                        opacity: visualMode === 'bars' ? 0.98 : 0.48,
+                                      }
+                                      segmentOffset += segmentHeight
+                                      return (
+                                        <div
+                                          key={`${column.key}-fill-${index}`}
+                                          className="absolute inset-x-0"
+                                          style={style}
+                                        />
+                                      )
+                                    })
+                                  })()}
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
+                  <div
+                    className="grid gap-3"
+                    style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                  >
+                    {chartSeries.columns.map((column) => (
+                      <div key={`${column.key}-xlabel`} className="text-center">
+                        <p className="text-[11px] font-semibold text-gray-700">{column.shortLabel}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="relative h-[340px]">
+                  {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                    const value = stats.maxUnitCt * ratio
+                    return (
+                      <div
+                        key={`price-axis-${ratio}`}
+                        className="absolute inset-x-0"
+                        style={{ bottom: `${ratio * 100}%` }}
+                      >
+                        <span className="absolute left-0 top-[-10px] text-[10px] tabular-nums text-blue-500">
+                          {value.toFixed(2)} {units.priceUnit}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">Export kept separate</p>
+              <p className="mt-1 text-lg font-bold tabular-nums text-blue-900">
+                {displayMode === 'cost' && costMode === 'eur'
+                  ? formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)
+                  : formatSignedCt(-stats.exportCreditCtEquivalent, units.priceUnit)}
+              </p>
+              <p className="mt-1 text-[11px] text-blue-800">
+                {units.currencySym}{stats.exportRevenueEur.toFixed(0)} export revenue
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Overall modeled net result</p>
+              <p className="mt-1 text-lg font-bold tabular-nums text-emerald-900">{units.currencySym}{stats.overallNetCostEur.toFixed(0)}</p>
+              <p className="mt-1 text-[11px] text-emerald-800">
+                {stats.overallNetEquivalentCt.toFixed(2)} {units.priceUnit} normalized to annual load
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-2">
+            {stats.buckets.map((bucket) => (
+              <div
+                key={`${bucket.key}-legend`}
+                className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-gray-900">{bucket.shortLabel}</p>
+                    <p className="truncate text-[11px] text-gray-500">{bucket.label}</p>
+                  </div>
+                </div>
+                <p className="text-right text-[11px] tabular-nums text-gray-600">{Math.round(bucket.kwh).toLocaleString()} kWh</p>
+                <p className="text-right text-[11px] tabular-nums text-gray-600">{bucket.sharePct.toFixed(1)}%</p>
+                <p className="text-right text-[11px] tabular-nums text-gray-600">{bucket.unitCostCtKwh.toFixed(2)} {units.priceUnit}</p>
+                <p className="text-right text-[11px] tabular-nums text-gray-600">{units.currencySym}{bucket.totalCostEur.toFixed(0)}</p>
+              </div>
+            ))}
+            <div className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#67B7D1]" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-900">Export</p>
+                  <p className="truncate text-[11px] text-gray-500">Outside household total</p>
+                </div>
+              </div>
+              <p className="text-right text-[11px] tabular-nums text-gray-600">{Math.round(stats.exportKwh).toLocaleString()} kWh</p>
+              <p className="text-right text-[11px] tabular-nums text-gray-600">{((stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100).toFixed(1)}%</p>
+              <p className="text-right text-[11px] tabular-nums text-gray-600">{stats.exportAvgCt.toFixed(2)} {units.priceUnit}</p>
+              <p className="text-right text-[11px] tabular-nums text-gray-600">+{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function normalizeCalculatorState(
   state: CalculatorState,
   availableYears: number[],
@@ -1580,6 +2395,7 @@ function PvBatteryCalculatorInner() {
               ) : annualResult ? (
                 <>
                   <AnnualHero annual={annualResult} units={units} />
+                  <DeliveredAllocationCard annual={annualResult} units={units} />
                   <MonthlyBars annual={annualResult} units={units} />
                   <PvBatteryDayChart
                     annualResult={dayResult}
@@ -1656,4 +2472,3 @@ export function PvBatteryCalculator() {
     </Suspense>
   )
 }
-  routes: Array<{ target: FlowNodeKey; routeKey?: FlowPermissionKey; isStatic?: boolean; arrowDirection?: 'down' | 'up' }>

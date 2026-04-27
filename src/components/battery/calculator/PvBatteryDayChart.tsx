@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Battery, BatteryCharging, Home, SunMedium, Zap } from 'lucide-react'
 import {
   Area,
@@ -168,8 +168,26 @@ function buildHourTicks(count: number) {
   return ticks
 }
 
+function buildSlotDomain(count: number): [number, number] {
+  if (count <= 1) return [-0.5, 0.5]
+  return [-0.5, count - 0.5]
+}
+
 function formatHourTick(label: string) {
   return label.slice(0, 5)
+}
+
+function parseHourFromLabel(label: string): number {
+  const hour = Number(label.slice(0, 2))
+  return Number.isFinite(hour) ? hour : 0
+}
+
+function isFullHourLabel(label: string): boolean {
+  return label.slice(3, 5) === '00'
+}
+
+function formatDateBoundaryLabel(date: string): string {
+  return date.length >= 10 ? date.slice(5) : date
 }
 
 function formatDayKwh(value: number): string {
@@ -209,11 +227,21 @@ function SegmentedBarShape({
   blockKwh,
 }: SegmentedBarShapeProps & { blockKwh: number }) {
   if (height <= 0 || width <= 0) return null
-  const stackedValue = Array.isArray(value) ? Math.abs((value[1] ?? 0) - (value[0] ?? 0)) : null
+  const stackedDelta = Array.isArray(value)
+    ? Number(value[1] ?? 0) - Number(value[0] ?? 0)
+    : null
+  const stackedMagnitude = stackedDelta === null ? null : Math.abs(stackedDelta)
   const dataKeyValue = dataKey && payload ? Number(payload[dataKey]) : null
-  const numericValue = typeof value === 'number'
+  const rawNumericValue = dataKeyValue !== null && Number.isFinite(dataKeyValue)
+    ? dataKeyValue
+    : typeof value === 'number'
     ? value
-    : stackedValue ?? (dataKeyValue !== null && Number.isFinite(dataKeyValue) ? dataKeyValue : Number(value))
+    : (stackedDelta !== null && Number.isFinite(stackedDelta))
+      ? stackedDelta
+      : (dataKeyValue !== null && Number.isFinite(dataKeyValue) ? dataKeyValue : Number(value))
+  const numericValue = stackedMagnitude !== null && !(dataKeyValue !== null && Number.isFinite(dataKeyValue))
+    ? stackedMagnitude
+    : Math.abs(rawNumericValue)
   if (!Number.isFinite(numericValue) || numericValue <= 0) return null
 
   const safeBlockKwh = Math.max(blockKwh, 1e-6)
@@ -359,23 +387,89 @@ export function PvBatteryDayChart({
     })),
     [flowAxis.domain, flowPriceDataKey, maxSocKwh, slots],
   )
-  const hourTicks = useMemo(() => buildHourTicks(householdData.length), [householdData.length])
-  const householdIndexByTime = useMemo(
-    () => new Map(householdData.map((point) => [point.time, point.idx])),
+  const householdDataByIndex = useMemo(
+    () => new Map(householdData.map((point) => [point.idx, point])),
     [householdData],
   )
-  const householdTickTimes = useMemo(
-    () => hourTicks.map((tick) => householdData[tick]?.time).filter((tick): tick is string => Boolean(tick)),
-    [hourTicks, householdData],
+  const batteryFlowDataByIndex = useMemo(
+    () => new Map(batteryFlowData.map((point) => [point.idx, point])),
+    [batteryFlowData],
   )
-  const homeMajorHourStep = 2
-  const homeMajorTickInterval = Math.max(1, slotsPerHour * homeMajorHourStep)
-  const majorTickTimes = useMemo(
-    () => householdData
-      .filter((point, index) => index % homeMajorTickInterval === 0)
-      .map((point) => point.time),
-    [homeMajorTickInterval, householdData],
-  )
+  const xDomain = useMemo<[number, number]>(() => buildSlotDomain(householdData.length), [householdData.length])
+  const xLabelIntervalHours = useMemo(() => {
+    const totalHours = householdData.length / Math.max(slotsPerHour, 1)
+    if (totalHours <= 48) return 2
+    return 4
+  }, [householdData.length, slotsPerHour])
+  const midnightIdxSet = useMemo(() => {
+    const set = new Set<number>()
+    for (const point of householdData) {
+      if (point.idx > 0 && isFullHourLabel(point.time) && parseHourFromLabel(point.time) === 0) {
+        set.add(point.idx)
+      }
+    }
+    return set
+  }, [householdData])
+  const xTicks = useMemo(() => {
+    return householdData
+      .filter((point) => {
+        if (!isFullHourLabel(point.time)) return false
+        if (midnightIdxSet.has(point.idx)) return true
+        return parseHourFromLabel(point.time) % xLabelIntervalHours === 0
+      })
+      .map((point) => point.idx)
+  }, [householdData, midnightIdxSet, xLabelIntervalHours])
+  const renderXTick = useCallback((props: { x: number; y: number; payload: { value: number } }) => {
+    const { x, y, payload } = props
+    const point = householdData[payload.value]
+    if (!point) return <g />
+
+    const isDateBoundary = midnightIdxSet.has(point.idx)
+    let isNearBoundary = false
+    if (!isDateBoundary && parseHourFromLabel(point.time) % xLabelIntervalHours === 0) {
+      const step = Math.max(1, slotsPerHour)
+      for (const midIdx of midnightIdxSet) {
+        if (Math.abs(point.idx - midIdx) < step * xLabelIntervalHours) {
+          isNearBoundary = true
+          break
+        }
+      }
+    }
+
+    const showHourLabel =
+      parseHourFromLabel(point.time) % xLabelIntervalHours === 0 &&
+      !isDateBoundary &&
+      !isNearBoundary
+    const fontSize = xLabelIntervalHours >= 6 ? 10 : 11
+
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <line
+          x1={0}
+          y1={0}
+          x2={0}
+          y2={isDateBoundary ? 8 : 6}
+          stroke={isDateBoundary ? COLORS.axisStrong : COLORS.textSoft}
+          strokeWidth={isDateBoundary ? 1.5 : 1}
+        />
+        {showHourLabel ? (
+          <text x={0} y={0} dy={16} textAnchor="middle" fill={COLORS.axis} fontSize={fontSize} fontWeight={500}>
+            {point.time}
+          </text>
+        ) : null}
+        {isDateBoundary ? (
+          <>
+            <text x={0} y={0} dy={17} textAnchor="middle" fill={COLORS.axisStrong} fontSize={fontSize} fontWeight={700}>
+              00:00
+            </text>
+            <text x={0} y={0} dy={30} textAnchor="middle" fill={COLORS.axis} fontSize={Math.max(fontSize - 1, 9)} fontWeight={600}>
+              {formatDateBoundaryLabel(point.date)}
+            </text>
+          </>
+        ) : null}
+      </g>
+    )
+  }, [householdData, midnightIdxSet, slotsPerHour, xLabelIntervalHours])
 
   const flowPriceAxis = useMemo(() => {
     let minValue = Number.POSITIVE_INFINITY
@@ -403,6 +497,12 @@ export function PvBatteryDayChart({
   }, [flowPriceDataKey, slots])
 
   const isQuarterHour = slotsPerHour >= 4
+  const timelineMinWidthPx = useMemo(() => {
+    if (!isQuarterHour) return 0
+    // Keep quarter-hour slots readable on 48h/72h windows.
+    const pxPerSlot = householdData.length > 96 ? 6 : 4.5
+    return Math.max(760, Math.round(householdData.length * pxPerSlot))
+  }, [householdData.length, isQuarterHour])
   const socTurnAnnotations = useMemo(() => {
     if (slots.length < 3 || maxSocKwh <= 0) return [] as Array<{ key: string; time: string; y: number; label: string }>
 
@@ -777,30 +877,27 @@ export function PvBatteryDayChart({
               </div>
               {householdControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{householdControls}</div> : null}
             </div>
-            <div className="relative h-[420px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={householdData} margin={{ top: 8, right: 26, bottom: 20, left: 10 }} barCategoryGap={1} barGap={0}>
-                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={false} />
+            <div className={cn(isQuarterHour ? 'overflow-x-auto' : '')}>
+              <div
+                className="relative h-[420px]"
+                style={timelineMinWidthPx > 0 ? { minWidth: `${timelineMinWidthPx}px` } : undefined}
+              >
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={householdData} margin={{ top: 8, right: 26, bottom: 20, left: 10 }} barCategoryGap={1} barGap={0}>
+                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
 
                   <XAxis
-                    dataKey="time"
-                    type="category"
-                    ticks={majorTickTimes}
-                    tickFormatter={(value) => formatHourTick(String(value))}
-                    tick={{ fontSize: 11, fill: COLORS.axisStrong }}
-                    tickLine={{ stroke: COLORS.textSoft }}
+                    dataKey="idx"
+                    type="number"
+                    domain={xDomain}
+                    ticks={xTicks}
+                    tick={renderXTick as never}
+                    tickLine={false}
                     axisLine={{ stroke: COLORS.textSoft }}
-                    height={40}
+                    height={midnightIdxSet.size > 0 ? 46 : 30}
+                    interval={0}
+                    allowDecimals={false}
                   />
-                  {majorTickTimes.map((time) => (
-                    <ReferenceLine
-                      key={`home-grid-${time}`}
-                      x={time}
-                      stroke={COLORS.border}
-                      strokeDasharray="3 3"
-                      strokeOpacity={1}
-                    />
-                  ))}
 
                   <YAxis
                     width={56}
@@ -813,7 +910,7 @@ export function PvBatteryDayChart({
                     label={{ value: 'kWh', angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 11 }}
                   />
                   {!selectedSlot.label.endsWith('00:00') ? (
-                    <ReferenceLine x={selectedSlot.label} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
+                    <ReferenceLine x={effectiveSelectedIndex} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
                   ) : null}
 
                   <Tooltip
@@ -824,8 +921,8 @@ export function PvBatteryDayChart({
                       return [`${value.toFixed(3)} kWh`, name ?? 'Value']
                     }}
                     labelFormatter={(value) => {
-                      const index = householdIndexByTime.get(String(value))
-                      const slot = index === undefined ? null : householdData[index]
+                      const index = typeof value === 'number' ? value : Number(value)
+                      const slot = Number.isFinite(index) ? householdDataByIndex.get(index) : null
                       if (!slot) return dayLabel
                       const actions = [
                         slot.isGridChargingBattery ? 'Grid charge' : null,
@@ -896,8 +993,9 @@ export function PvBatteryDayChart({
                     />
                   ) : null}
 
-                </ComposedChart>
-              </ResponsiveContainer>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -989,131 +1087,128 @@ export function PvBatteryDayChart({
               </div>
               {priceControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{priceControls}</div> : null}
             </div>
-            <div className="relative h-[420px]">
-              {anchoredFlowPills.map((pill) => {
-                if (pill.id === 'charge' && flowPills.charge) {
-                  return (
-                    <button
-                      type="button"
-                      key={pill.id}
-                      onClick={() => toggleFlowLayer('charge')}
-                      className="absolute z-20 -translate-x-1/2"
-                      aria-pressed={visibleFlowLayers.charge}
-                      title={`${visibleFlowLayers.charge ? 'Hide' : 'Show'} charge layers`}
-                      style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
-                    >
-                      <div className={cn(
-                        'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
-                        visibleFlowLayers.charge
-                          ? 'bg-blue-50/80 border-blue-300/50 text-blue-800'
-                          : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
-                      )}>
-                        <BatteryCharging className="h-3 w-3 text-blue-700" />
-                        <span className="font-semibold">Charge</span>
-                        <span className="font-bold tabular-nums">
-                          Avg {flowPills.charge.avgCtKwh.toFixed(2)} {units.priceUnit}
-                        </span>
-                        <span>·</span>
-                        <span className="tabular-nums font-semibold">
-                          Total {units.currencySym}{flowPills.charge.totalEur.toFixed(2)}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                }
+            <div className={cn(isQuarterHour ? 'overflow-x-auto' : '')}>
+              <div
+                className="relative h-[420px]"
+                style={timelineMinWidthPx > 0 ? { minWidth: `${timelineMinWidthPx}px` } : undefined}
+              >
+                {anchoredFlowPills.map((pill) => {
+                  if (pill.id === 'charge' && flowPills.charge) {
+                    return (
+                      <button
+                        type="button"
+                        key={pill.id}
+                        onClick={() => toggleFlowLayer('charge')}
+                        className="absolute z-20 -translate-x-1/2"
+                        aria-pressed={visibleFlowLayers.charge}
+                        title={`${visibleFlowLayers.charge ? 'Hide' : 'Show'} charge layers`}
+                        style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+                      >
+                        <div className={cn(
+                          'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
+                          visibleFlowLayers.charge
+                            ? 'bg-blue-50/80 border-blue-300/50 text-blue-800'
+                            : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
+                        )}>
+                          <BatteryCharging className="h-3 w-3 text-blue-700" />
+                          <span className="font-semibold">Charge</span>
+                          <span className="font-bold tabular-nums">
+                            Avg {flowPills.charge.avgCtKwh.toFixed(2)} {units.priceUnit}
+                          </span>
+                          <span>·</span>
+                          <span className="tabular-nums font-semibold">
+                            Total {units.currencySym}{flowPills.charge.totalEur.toFixed(2)}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  }
 
-                if (pill.id === 'discharge' && flowPills.discharge) {
-                  return (
-                    <button
-                      type="button"
-                      key={pill.id}
-                      onClick={() => toggleFlowLayer('discharge')}
-                      className="absolute z-20 -translate-x-1/2"
-                      aria-pressed={visibleFlowLayers.discharge}
-                      title={`${visibleFlowLayers.discharge ? 'Hide' : 'Show'} discharge layers`}
-                      style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
-                    >
-                      <div className={cn(
-                        'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
-                        visibleFlowLayers.discharge
-                          ? 'bg-amber-50/80 border-amber-300/50 text-amber-800'
-                          : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
-                      )}>
-                        <Battery className="h-3 w-3 text-amber-700" />
-                        <span className="font-semibold">Discharge</span>
-                        <span className="font-bold tabular-nums">
-                          Avg {flowPills.discharge.avgCtKwh.toFixed(2)} {units.priceUnit}
-                        </span>
-                        <span>·</span>
-                        <span className="tabular-nums font-semibold">
-                          Total {units.currencySym}{flowPills.discharge.totalEur.toFixed(2)}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                }
+                  if (pill.id === 'discharge' && flowPills.discharge) {
+                    return (
+                      <button
+                        type="button"
+                        key={pill.id}
+                        onClick={() => toggleFlowLayer('discharge')}
+                        className="absolute z-20 -translate-x-1/2"
+                        aria-pressed={visibleFlowLayers.discharge}
+                        title={`${visibleFlowLayers.discharge ? 'Hide' : 'Show'} discharge layers`}
+                        style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+                      >
+                        <div className={cn(
+                          'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
+                          visibleFlowLayers.discharge
+                            ? 'bg-amber-50/80 border-amber-300/50 text-amber-800'
+                            : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
+                        )}>
+                          <Battery className="h-3 w-3 text-amber-700" />
+                          <span className="font-semibold">Discharge</span>
+                          <span className="font-bold tabular-nums">
+                            Avg {flowPills.discharge.avgCtKwh.toFixed(2)} {units.priceUnit}
+                          </span>
+                          <span>·</span>
+                          <span className="tabular-nums font-semibold">
+                            Total {units.currencySym}{flowPills.discharge.totalEur.toFixed(2)}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  }
 
-                if (pill.id === 'pvExport' && flowPills.pvExport) {
-                  return (
-                    <button
-                      type="button"
-                      key={pill.id}
-                      onClick={() => toggleFlowLayer('pvExport')}
-                      className="absolute z-20 -translate-x-1/2"
-                      aria-pressed={visibleFlowLayers.pvExport}
-                      title={`${visibleFlowLayers.pvExport ? 'Hide' : 'Show'} PV export layers`}
-                      style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
-                    >
-                      <div className={cn(
-                        'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
-                        visibleFlowLayers.pvExport
-                          ? 'bg-yellow-50/85 border-yellow-300/50 text-yellow-800'
-                          : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
-                      )}>
-                        <SunMedium className="h-3 w-3 text-yellow-700" />
-                        <span className="font-semibold">PV Export</span>
-                        <span className="font-bold tabular-nums">
-                          Avg {flowPills.pvExport.avgCtKwh.toFixed(2)} {units.priceUnit}
-                        </span>
-                        <span>·</span>
-                        <span className="tabular-nums font-semibold">
-                          Total {units.currencySym}{flowPills.pvExport.totalEur.toFixed(2)}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                }
+                  if (pill.id === 'pvExport' && flowPills.pvExport) {
+                    return (
+                      <button
+                        type="button"
+                        key={pill.id}
+                        onClick={() => toggleFlowLayer('pvExport')}
+                        className="absolute z-20 -translate-x-1/2"
+                        aria-pressed={visibleFlowLayers.pvExport}
+                        title={`${visibleFlowLayers.pvExport ? 'Hide' : 'Show'} PV export layers`}
+                        style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+                      >
+                        <div className={cn(
+                          'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
+                          visibleFlowLayers.pvExport
+                            ? 'bg-yellow-50/85 border-yellow-300/50 text-yellow-800'
+                            : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
+                        )}>
+                          <SunMedium className="h-3 w-3 text-yellow-700" />
+                          <span className="font-semibold">PV Export</span>
+                          <span className="font-bold tabular-nums">
+                            Avg {flowPills.pvExport.avgCtKwh.toFixed(2)} {units.priceUnit}
+                          </span>
+                          <span>·</span>
+                          <span className="tabular-nums font-semibold">
+                            Total {units.currencySym}{flowPills.pvExport.totalEur.toFixed(2)}
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  }
 
-                return null
-              })}
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart
-                  data={batteryFlowData}
-                  margin={{ top: flowChartLayout.marginTop, right: 8, bottom: flowChartLayout.marginBottom, left: 6 }}
-                  barCategoryGap={1}
-                  barGap={0}
-                >
-                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" vertical={false} />
+                  return null
+                })}
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart
+                    data={batteryFlowData}
+                    margin={{ top: flowChartLayout.marginTop, right: 8, bottom: flowChartLayout.marginBottom, left: 6 }}
+                    barCategoryGap={1}
+                    barGap={0}
+                  >
+                  <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
 
                   <XAxis
-                    dataKey="time"
-                    type="category"
-                    ticks={majorTickTimes}
-                    tickFormatter={(value) => formatHourTick(String(value))}
-                    tick={{ fontSize: 11, fill: COLORS.axisStrong }}
-                    tickLine={{ stroke: COLORS.textSoft }}
+                    dataKey="idx"
+                    type="number"
+                    domain={xDomain}
+                    ticks={xTicks}
+                    tick={renderXTick as never}
+                    tickLine={false}
                     axisLine={{ stroke: COLORS.textSoft }}
-                    height={40}
+                    height={midnightIdxSet.size > 0 ? 46 : 30}
+                    interval={0}
+                    allowDecimals={false}
                   />
-                  {majorTickTimes.map((time) => (
-                    <ReferenceLine
-                      key={`flow-grid-${time}`}
-                      x={time}
-                      stroke={COLORS.border}
-                      strokeDasharray="3 3"
-                      strokeOpacity={1}
-                    />
-                  ))}
 
                   <YAxis
                     yAxisId="flow"
@@ -1148,7 +1243,11 @@ export function PvBatteryDayChart({
                       if (name?.toLowerCase().includes('spot price')) return [`${value.toFixed(2)} ${units.priceUnit}`, name ?? 'Value']
                       return [`${Math.abs(value).toFixed(3)} kWh`, name ?? 'Value']
                     }}
-                    labelFormatter={(value) => `${dayLabel} · ${String(value)}`}
+                    labelFormatter={(value) => {
+                      const index = typeof value === 'number' ? value : Number(value)
+                      const slot = Number.isFinite(index) ? batteryFlowDataByIndex.get(index) : null
+                      return slot ? `${dayLabel} · ${slot.label}` : dayLabel
+                    }}
                   />
 
                   <Area
@@ -1157,7 +1256,7 @@ export function PvBatteryDayChart({
                     dataKey="socBandKwh"
                     stroke="none"
                     fill={COLORS.bandSoc}
-                    fillOpacity={0.22}
+                    fillOpacity={0.32}
                     isAnimationActive={false}
                     tooltipType="none"
                   />
@@ -1181,19 +1280,54 @@ export function PvBatteryDayChart({
                   ))}
 
                   {visibleFlowLayers.charge ? (
-                    <Bar yAxisId="flow" name="Charge from price (grid)" dataKey="chargeFromPriceKwh" fill={COLORS.gridStored} isAnimationActive={false} stackId="flow" />
+                    <Bar
+                      yAxisId="flow"
+                      name="Charge from price (grid)"
+                      dataKey="chargeFromPriceKwh"
+                      fill={COLORS.gridStored}
+                      isAnimationActive={false}
+                      stackId="flow"
+                    />
                   ) : null}
                   {visibleFlowLayers.charge ? (
-                    <Bar yAxisId="flow" name="Charge from excess PV" dataKey="chargeFromExcessPvKwh" fill={COLORS.pvCharge} isAnimationActive={false} stackId="flow" />
+                    <Bar
+                      yAxisId="flow"
+                      name="Charge from excess PV"
+                      dataKey="chargeFromExcessPvKwh"
+                      fill={COLORS.pvCharge}
+                      isAnimationActive={false}
+                      stackId="flow"
+                    />
                   ) : null}
                   {visibleFlowLayers.discharge ? (
-                    <Bar yAxisId="flow" name="Discharge to household" dataKey="dischargeToHouseholdKwh" fill={COLORS.pvStored} isAnimationActive={false} stackId="flow" />
+                    <Bar
+                      yAxisId="flow"
+                      name="Discharge to household"
+                      dataKey="dischargeToHouseholdKwh"
+                      fill={COLORS.pvStored}
+                      isAnimationActive={false}
+                      stackId="flow"
+                    />
                   ) : null}
                   {visibleFlowLayers.discharge ? (
-                    <Bar yAxisId="flow" name="Discharge to price (export)" dataKey="dischargeToPriceKwh" fill={COLORS.export} isAnimationActive={false} stackId="flow" />
+                    <Bar
+                      yAxisId="flow"
+                      name="Discharge to price (export)"
+                      dataKey="dischargeToPriceKwh"
+                      fill={COLORS.export}
+                      isAnimationActive={false}
+                      stackId="flow"
+                    />
                   ) : null}
                   {visibleFlowLayers.pvExport ? (
-                    <Bar yAxisId="flow" name="Sell excess PV (direct)" dataKey="sellExcessPvKwh" fill={COLORS.curtailed} isAnimationActive={false} stackId="flow" />
+                    <Bar
+                      yAxisId="flow"
+                      name="Sell excess PV (direct)"
+                      dataKey="sellExcessPvKwh"
+                      fill={COLORS.curtailed}
+                      isAnimationActive={false}
+                      stackId="flow"
+                    />
                   ) : null}
 
                   <Line
@@ -1202,7 +1336,7 @@ export function PvBatteryDayChart({
                     type="monotone"
                     dataKey={flowPriceDataKey}
                     stroke={COLORS.lineSpot}
-                    strokeWidth={1.8}
+                    strokeWidth={2.2}
                     dot={false}
                     isAnimationActive={false}
                   />
@@ -1251,8 +1385,9 @@ export function PvBatteryDayChart({
                       isAnimationActive={false}
                     />
                   ) : null}
-                </ComposedChart>
-              </ResponsiveContainer>
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
             </div>
           </div>
         </CardContent>

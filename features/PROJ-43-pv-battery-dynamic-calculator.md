@@ -1,7 +1,7 @@
 # PROJ-43 - PV + Battery Dynamic Tariff Calculator
 
 ## Status: In Progress
-**Last Updated:** 2026-04-24
+**Last Updated:** 2026-04-27
 
 ## Dependencies
 - None
@@ -25,6 +25,10 @@ This update supersedes the earlier "self-sufficiency-first" requirement. The cal
 - Use a `/v2`-style two-column layout with sticky controls on the left and live results on the right.
 - Reuse existing German market price history and bundled load / PV profile inputs already present in the repo.
 - Show annual baseline-vs-optimized results plus a selected-day routing chart.
+- Show an annual delivered-load allocation summary with:
+  - delivered household kWh by bucket
+  - effective ct/kWh by bucket
+  - a baseline-to-delivered impact bridge with a `ct/kWh` / `EUR/year` toggle
 - Expose explicit permissions for dispatch-relevant energy flows.
 
 ## Product Rules
@@ -171,6 +175,26 @@ Rules:
 - The day view is explanatory only; changing the selected day must not alter the annual optimization result.
 - If a finer resolution is unavailable for the selected date or year, the UI must clearly fall back to the available resolution instead of implying higher-granularity data exists.
 
+### 8. Annual Delivered-Load Allocation Summary
+
+The annual results area must include a delivered-load allocation view that explains how household load was served and how that affects the blended delivered-energy cost.
+
+The view must use these delivered-load buckets:
+
+- `Grid -> load`
+- `PV -> load`
+- `PV -> battery -> load`
+- `Grid -> battery -> load` (user shorthand: battery spot optimized)
+
+Rules:
+
+- The first panel is a volume panel in `kWh`, with `Household total` as a reference row and the delivered-load buckets shown underneath.
+- The second panel is a unit-cost panel in `ct/kWh` for the same delivered-load buckets.
+- PV-delivered buckets use the confirmed `0.00 ct/kWh` marginal view in this summary.
+- The third panel is a waterfall / bridge from an artificial baseline where all household load is priced at the average spot price of the replay horizon.
+- The waterfall must support a toggle between `ct/kWh` and `EUR/year`.
+- Export revenue must stay visually separate from the delivered-load bridge so users can distinguish `cost to serve household load` from `overall modeled net energy result`.
+
 ## Out Of Scope
 
 - Changing the existing `/battery` business-case workflow outside the dedicated calculator surface
@@ -207,6 +231,9 @@ Rules:
 - [ ] The product enforces routing constraints so that energy is conserved, battery state of charge stays within bounds, power limits are respected, same-interval battery charge/discharge is not allowed, and shared export caps are not exceeded.
 - [ ] The spec and implementation handoff explicitly call out the unresolved load-profile restriction ambiguity instead of silently resolving it.
 - [ ] The selected-day chart shows price plus routed energy flows, including battery charge, battery discharge to load, direct export, battery export, grid import, and curtailment when present.
+- [ ] The annual results include a three-part delivered-load allocation summary covering `kWh`, bucket-level `ct/kWh`, and a baseline-to-delivered impact bridge.
+- [ ] The impact bridge starts from an artificial all-spot household baseline, uses the delivered-load buckets consistently, and supports a `ct/kWh` / `EUR/year` toggle.
+- [ ] Export revenue is shown separately from the delivered-load bridge rather than blended into the same waterfall.
 - [ ] The selected-day controls let the user inspect any valid replay day without changing the annual optimization result.
 - [ ] If the requested replay year or selected day lacks sufficient data, the UI states that limitation clearly instead of showing a misleading annual result or unsupported fine-grain replay.
 
@@ -226,7 +253,11 @@ Rules:
   - Input provenance hints (user-entered vs inferred)
 +-- Right Panel: `CalculatorResultsPanel`
   - `AnnualKpiStrip` (baseline vs optimized totals, savings, self-sufficiency, self-consumption)
-  - `AnnualCostBreakdownCard` (import cost, export revenue, modeled deductions)
+  - `AnnualDeliveryAllocationCard`
+    - volume panel for delivered household `kWh`
+    - unit-cost panel for delivered household `ct/kWh`
+    - impact bridge from artificial all-spot baseline to gross delivered household cost
+    - separate export-credit / net-result callouts
   - `FlowPermissionSummaryCard` (active operational mode summary)
   - `SelectedDayReplayCard`
   - `SelectedDayRoutingChart` (price + flows + SoC trace)

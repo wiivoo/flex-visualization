@@ -50,6 +50,7 @@ export interface PvBatterySlotResult {
   batteryToLoadKwh: number
   batteryPvToLoadKwh: number
   batteryGridToLoadKwh: number
+  batteryGridLoadInputCostEur: number
   batteryLoadSavingsEur: number
   directExportKwh: number
   pvToGridKwh: number
@@ -156,6 +157,7 @@ interface StoredEnergyLot {
 interface ExactBatteryDischargeSplit {
   batteryPvToLoadKwh: number
   batteryGridToLoadKwh: number
+  batteryGridLoadInputCostEur: number
   batteryPvExportKwh: number
   batteryGridExportKwh: number
   batteryPvExportSavingsEur: number
@@ -432,6 +434,7 @@ function consumeLowerValueStoredEnergy(
     return {
       batteryPvToLoadKwh: 0,
       batteryGridToLoadKwh: 0,
+      batteryGridLoadInputCostEur: 0,
       batteryPvExportKwh: 0,
       batteryGridExportKwh: 0,
       batteryPvExportSavingsEur: 0,
@@ -458,6 +461,7 @@ function consumeLowerValueStoredEnergy(
   const split: ExactBatteryDischargeSplit = {
     batteryPvToLoadKwh: 0,
     batteryGridToLoadKwh: 0,
+    batteryGridLoadInputCostEur: 0,
     batteryPvExportKwh: 0,
     batteryGridExportKwh: 0,
     batteryPvExportSavingsEur: 0,
@@ -495,6 +499,7 @@ function consumeLowerValueStoredEnergy(
       sink.remainingKwh = round6(sink.remainingKwh - allocatedKwh)
       remainingOutputKwh = Math.max(0, remainingOutputKwh - allocatedKwh)
       const storedInputEquivalentKwh = allocatedKwh / roundTripEff
+      const storedInputCostEur = (lot.valueCtKwh * storedInputEquivalentKwh) / 100
       const realizedSavingsEur = (
         (sink.valueCtKwh * allocatedKwh) -
         (lot.valueCtKwh * storedInputEquivalentKwh)
@@ -502,6 +507,7 @@ function consumeLowerValueStoredEnergy(
 
       if (origin === 'pv' && sink.key === 'load') split.batteryPvToLoadKwh += allocatedKwh
       if (origin === 'grid' && sink.key === 'load') split.batteryGridToLoadKwh += allocatedKwh
+      if (origin === 'grid' && sink.key === 'load') split.batteryGridLoadInputCostEur += storedInputCostEur
       if (origin === 'pv' && sink.key === 'export') split.batteryPvExportKwh += allocatedKwh
       if (origin === 'grid' && sink.key === 'export') split.batteryGridExportKwh += allocatedKwh
       if (sink.key === 'load') split.batteryLoadSavingsEur += realizedSavingsEur
@@ -515,6 +521,7 @@ function consumeLowerValueStoredEnergy(
   return {
     batteryPvToLoadKwh: round6(split.batteryPvToLoadKwh),
     batteryGridToLoadKwh: round6(split.batteryGridToLoadKwh),
+    batteryGridLoadInputCostEur: round6(split.batteryGridLoadInputCostEur),
     batteryPvExportKwh: round6(split.batteryPvExportKwh),
     batteryGridExportKwh: round6(split.batteryGridExportKwh),
     batteryPvExportSavingsEur: round6(split.batteryPvExportSavingsEur),
@@ -1135,6 +1142,7 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       batteryToLoadKwh: round3(dispatch.batteryToLoadKwh),
       batteryPvToLoadKwh: round3(exactDischargeSplit.batteryPvToLoadKwh),
       batteryGridToLoadKwh: round3(exactDischargeSplit.batteryGridToLoadKwh),
+      batteryGridLoadInputCostEur: round3(exactDischargeSplit.batteryGridLoadInputCostEur),
       batteryLoadSavingsEur: round3(exactDischargeSplit.batteryLoadSavingsEur),
       directExportKwh: round3(dispatch.directExportKwh),
       pvToGridKwh: round3(dispatch.directExportKwh),
