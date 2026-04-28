@@ -35,7 +35,6 @@ Those historical areas are intentionally excluded from repo-level linting so val
 The app requires a Node.js runtime because it contains:
 
 - route handlers under `src/app/api/`
-- cookie-based authentication via `src/app/api/auth/route.ts`
 - server-side fetch/caching logic for external energy datasets
 
 This matters for deployment review:
@@ -59,7 +58,6 @@ Use these paths when reviewing behavior:
 
 The main runtime endpoints are:
 
-- `src/app/api/auth/route.ts`
 - `src/app/api/prices/batch/route.ts`
 - `src/app/api/generation/route.ts`
 - `src/app/api/generation/mix/route.ts`
@@ -75,11 +73,6 @@ Reviewers should note that these endpoints mix:
 - cache-control and `revalidate` usage
 
 ## 6. Secrets And External Dependencies
-
-Required secrets:
-
-- `DASHBOARD_PASSWORD`
-- `AUTH_SECRET`
 
 Optional integrations:
 

@@ -23,15 +23,9 @@ This app is not a static SPA. It requires a Node.js server because it includes:
 
 - Next.js App Router server rendering
 - API routes under `src/app/api/`
-- shared-password auth with HTTP-only cookies
 - external data fetching and cache behavior on the server
 
 ## Required Configuration
-
-At minimum, set these App Settings:
-
-- `DASHBOARD_PASSWORD`
-- `AUTH_SECRET`
 
 Optional App Settings:
 
@@ -109,14 +103,11 @@ npm run lint
 npm run build
 docker build -t flex-visualization .
 docker run -p 3000:3000 \
-  -e DASHBOARD_PASSWORD=... \
-  -e AUTH_SECRET=... \
   flex-visualization
 ```
 
 Then test:
 
-- `/login`
 - `/v2`
 - `/battery`
 - `/battery/calculator`

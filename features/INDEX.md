@@ -16,7 +16,6 @@
 |----|---------|--------|------|-----------|
 | PROJ-1 | SMARD Data Integration | Deployed | [spec](PROJ-1-smard-data-integration.md) | `src/lib/smard.ts`, `src/lib/use-prices.ts`, `src/app/api/prices/batch/` |
 | PROJ-2 | Price Optimization Engine | Deployed | [spec](PROJ-2-price-optimization-algorithm.md) | `src/lib/optimizer.ts`, `src/lib/grid-fees.ts` |
-| PROJ-6 | Password Protection | Dormant | [spec](PROJ-6-password-protection.md) | `src/app/login/`, `src/app/api/auth/`, `src/lib/auth.ts` |
 | PROJ-12 | Interactive Price Chart | Deployed | [spec](PROJ-12-v2-charging-scenario.md) | `src/components/v2/steps/Step2ChargingScenario.tsx` |
 | PROJ-17 | Customer Profile Configurator | Deployed | [spec](PROJ-17-customer-profile.md) | `src/components/v2/steps/Step2ChargingScenario.tsx` |
 | PROJ-18 | Mini Calendar (Date Picker) | Deployed | [spec](PROJ-18-mini-calendar.md) | `src/components/v2/MiniCalendar.tsx` |
@@ -52,6 +51,7 @@
 | PROJ-3 | Dashboard UI - Price Chart (v1) | [archived](_archive/PROJ-3-dashboard-price-chart.md) |
 | PROJ-4 | Dashboard UI - Heatmap & KPIs (v1) | [archived](_archive/PROJ-4-dashboard-heatmap-kpis.md) |
 | PROJ-5 | Scenario Configurator (v1) | [archived](_archive/PROJ-5-scenario-configurator.md) |
+| PROJ-6 | Password Protection | [spec](PROJ-6-password-protection.md) |
 | PROJ-7 | Yearly Overview (v1) | [archived](_archive/PROJ-7-yearly-overview-highlights.md) |
 | PROJ-8 | Volatility Analysis (v1) | [archived](_archive/PROJ-8-volatility-analysis.md) |
 | PROJ-9 | Multi-Source Prices (v1) | [archived](_archive/PROJ-9-multi-source-prices.md) |

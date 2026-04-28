@@ -11,7 +11,7 @@ A standalone, read-optimized dashboard at `/management` for executives and manag
 
 ## Scope
 
-- New Next.js App Router page at `/management` (behind the same `DASHBOARD_PASSWORD` gate as `/v2`)
+- New Next.js App Router page at `/management`
 - Three time-period views in one page: **Month**, **Rolling 365 days**, **Full year**
 - Hero row of KPI tiles (4 tiles) with Δ vs. prior period and sparkline
 - Month-on-month change panel: grouped bar chart (YoY — 2025 vs 2026) with Δ% labels per month

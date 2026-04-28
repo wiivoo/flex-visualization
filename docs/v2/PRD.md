@@ -123,7 +123,7 @@ Wallboxes registered as steuerbare Verbrauchseinrichtung (§14a EnWG) get reduce
 - Used as fallback if aWATTar is unavailable
 
 ### Caching
-- Supabase: hourly prices table for fast queries
+- Supabase: optional hourly price cache for faster repeat queries
 - Bulk load 3 years on first deploy
 - Daily update for current prices
 
@@ -132,10 +132,10 @@ Wallboxes registered as steuerbare Verbrauchseinrichtung (§14a EnWG) get reduce
 - Next.js 16 + TypeScript (App Router)
 - Recharts for visualizations
 - shadcn/ui + Tailwind CSS
-- Supabase (price cache + auth)
+- Supabase (optional price cache)
 - E.ON design (Inter font, red/dark/blue palette)
 - Desktop-optimized (1440px)
-- Password-protected (JWT)
+- No application login requirement in the current runtime
 
 ## Success Criteria
 
@@ -150,7 +150,7 @@ Wallboxes registered as steuerbare Verbrauchseinrichtung (§14a EnWG) get reduce
 ## Non-Goals
 
 - No live trading integration
-- No individual user accounts (password-only)
+- No individual user accounts
 - No mobile optimization (desktop presentation tool)
 - No integration with real charging infrastructure
 - No multi-language (English UI)

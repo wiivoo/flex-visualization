@@ -5,7 +5,7 @@ Interactive energy-flex dashboards built in Next.js. The current product centers
 ## Runtime Summary
 
 - This is a **Next.js App Router server application**, not a static export.
-- The repo contains active API routes under `src/app/api/`, shared-password auth via `/api/auth`, and server-side data fetch/caching logic.
+- The repo contains active API routes under `src/app/api/` and server-side data fetch/caching logic.
 - The app therefore needs a real **Node.js runtime** in production.
 - A production-ready `Dockerfile` and baseline `azure-pipelines.yml` are included for Azure-based deployment and CI.
 
@@ -20,7 +20,6 @@ Interactive energy-flex dashboards built in Next.js. The current product centers
 | `/dynamic` | Dynamic tariff explainer for DE |
 | `/dynamic/nl` | Dynamic tariff explainer for NL |
 | `/dynamic/analysis` | Dynamic tariff analysis view |
-| `/login` | Shared-password login screen |
 | `/management` | Legacy route redirected to `/v2/insights` |
 
 ## What The App Does
@@ -37,7 +36,6 @@ Interactive energy-flex dashboards built in Next.js. The current product centers
 | Framework | Next.js 16 App Router, React 19, TypeScript |
 | UI | Tailwind CSS, shadcn/ui, Recharts |
 | Data | Static JSON in `public/data/` plus API-backed refresh/fallback flows |
-| Auth | Shared-password login via `POST /api/auth` and JWT cookies |
 | Optional cache | Supabase |
 | Deployment | Vercel today; Azure App Service and Docker assets are now included in-repo |
 
@@ -47,7 +45,6 @@ Interactive energy-flex dashboards built in Next.js. The current product centers
 | --- | --- |
 | Rendering | Next.js server app with route-based pages and API endpoints |
 | Runtime requirement | Node.js runtime with outbound HTTPS access |
-| Auth | Shared password, session cookie, JWT signing via `AUTH_SECRET` |
 | Data sources | SMARD, ENTSO-E, aWATTar, EPEX, PVGIS, Tibber/Kraken, PDOK, EnergyForecast |
 | Optional services | Supabase cache/storage |
 | Container support | Multi-stage Docker build using Next.js standalone output |
@@ -79,7 +76,7 @@ Use these first if an external engineer needs to understand or review the system
 | `src/components/battery/` | Home battery workflow UI |
 | `src/components/dynamic/` | Dynamic tariff UI |
 | `src/components/management/` | Insight and management cards used by `/v2/insights` |
-| `src/lib/` | Pricing, optimization, export, auth, and data-source logic |
+| `src/lib/` | Pricing, optimization, export, and data-source logic |
 | `public/data/` | Checked-in static market datasets |
 | `docs/v2/` | Product, data, and design reference docs |
 | `docs/review/` | External reviewer and audit guidance |
@@ -105,8 +102,6 @@ cp .env.local.example .env.local
 
 | Variable | Required | Notes |
 | --- | --- | --- |
-| `DASHBOARD_PASSWORD` | Yes | Shared login password |
-| `AUTH_SECRET` | Yes | JWT signing secret for the session cookie |
 | `NEXT_PUBLIC_SUPABASE_URL` | Optional | Needed only if you want Supabase-backed cache/features |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Optional | Paired with the Supabase URL |
 | `ENTSOE_API_TOKEN` | Optional | Needed for ENTSO-E-backed fetches |
@@ -153,11 +148,9 @@ The repository includes:
 - Git tags use `vX.Y.Z`.
 - Semver rules: patch for fixes and low-risk maintenance/docs releases, minor for new user-facing features, major for breaking changes or major product resets.
 
-## Auth Notes
+## Runtime Notes
 
-- The active auth flow is route/API based, not middleware based.
-- Login happens through `/login` and `POST /api/auth`.
-- Sessions are stored in an HTTP-only cookie created by `src/lib/auth.ts`.
+- Supabase is optional. Without `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, the app still runs but skips Supabase-backed caching.
 
 ## Documentation Sources Of Truth
 
