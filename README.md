@@ -138,7 +138,6 @@ The repository includes:
 - [`.dockerignore`](.dockerignore)
 - [`azure-pipelines.yml`](azure-pipelines.yml)
 - [`azure-pipelines-data-refresh.yml`](azure-pipelines-data-refresh.yml)
-- [`azure-pipelines-intraday-refresh.yml`](azure-pipelines-intraday-refresh.yml)
 - [`docs/deployment/azure-app-service.md`](docs/deployment/azure-app-service.md)
 
 ## Versioning And Releases
@@ -151,6 +150,13 @@ The repository includes:
 ## Runtime Notes
 
 - Supabase is optional. Without `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, the app still runs but skips Supabase-backed caching.
+
+## GitHub And Azure
+
+- GitHub remains the day-to-day development repo and keeps the existing GitHub Actions workflows.
+- Azure keeps `azure-pipelines.yml` for CI/container validation and `azure-pipelines-data-refresh.yml` as the Azure equivalent of `.github/workflows/update-smard-data.yml`.
+- This intentionally allows GitHub and Azure to create separate data-refresh commits under `public/data/`.
+- Reconsolidate periodically by merging or rebasing GitHub `main` into Azure `master`, then resolve any `public/data/` differences in favor of the fresher generated artifacts.
 
 ## Documentation Sources Of Truth
 

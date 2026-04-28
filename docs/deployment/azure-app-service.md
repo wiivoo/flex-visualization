@@ -39,8 +39,7 @@ Optional App Settings:
 - `Dockerfile` for production container builds
 - `.dockerignore` for lean build context
 - `azure-pipelines.yml` for CI and container validation
-- `azure-pipelines-data-refresh.yml` for scheduled day-ahead/static artifact updates
-- `azure-pipelines-intraday-refresh.yml` for scheduled intraday scraping and fallback refresh
+- `azure-pipelines-data-refresh.yml` for the Azure copy of the daily GitHub market-data refresh
 - `next.config.ts` with `output: 'standalone'`
 
 ## Baseline Pipeline Flow
@@ -50,10 +49,14 @@ The included `azure-pipelines.yml` does two things:
 1. installs dependencies, lints, and builds the app
 2. builds the Docker image to validate the production container path
 
-The two data-maintenance pipelines are direct Azure replacements for the former GitHub Actions jobs:
+The included `azure-pipelines-data-refresh.yml` mirrors the behavior of `.github/workflows/update-smard-data.yml` on Azure:
 
-- `azure-pipelines-data-refresh.yml`
-- `azure-pipelines-intraday-refresh.yml`
+- scheduled daily at `30 13 * * *`
+- manual runnable from Azure Pipelines UI
+- uses `ENTSOE_API_TOKEN`
+- updates `public/data/`, smoke-tests artifacts, precomputes management aggregates, and commits only when data changed
+
+GitHub Actions are intentionally kept in place. Azure is not the source of truth for normal development in this setup.
 
 This is a safe default because it does not assume:
 
@@ -87,6 +90,22 @@ After the host exists, extend `azure-pipelines.yml` to:
 
 - push the built image to Azure Container Registry
 - update the App Service container image reference
+
+## Reconsolidation Rule
+
+This repo currently runs in split mode:
+
+- GitHub remains the normal development surface
+- Azure keeps its own CI pipeline plus an Azure-native daily data refresh
+
+Because both platforms may generate `public/data/` commits independently, do not expect branch hashes to stay identical. Instead:
+
+1. treat GitHub `main` as the working development branch
+2. treat Azure `master` as the Azure-side deployment branch
+3. periodically merge GitHub `main` into Azure `master`
+4. if `public/data/` differs on both sides, keep the fresher generated artifacts and continue
+
+That keeps the divergence predictable and limited to generated data rather than product code.
 
 ## Runtime Notes
 
