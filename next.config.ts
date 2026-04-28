@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Enable Next.js standalone output for container builds.
+  output: 'standalone',
 
   // Security headers for production
   async headers() {

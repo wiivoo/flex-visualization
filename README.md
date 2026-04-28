@@ -2,6 +2,13 @@
 
 Interactive energy-flex dashboards built in Next.js. The current product centers on EV charging optimization, then extends that same pricing/data foundation into home-battery, dynamic-tariff, and insight views.
 
+## Runtime Summary
+
+- This is a **Next.js App Router server application**, not a static export.
+- The repo contains active API routes under `src/app/api/`, shared-password auth via `/api/auth`, and server-side data fetch/caching logic.
+- The app therefore needs a real **Node.js runtime** in production.
+- A production-ready `Dockerfile` and baseline `azure-pipelines.yml` are included for Azure-based deployment and CI.
+
 ## Product Surfaces
 
 | Route | Purpose |
@@ -32,7 +39,18 @@ Interactive energy-flex dashboards built in Next.js. The current product centers
 | Data | Static JSON in `public/data/` plus API-backed refresh/fallback flows |
 | Auth | Shared-password login via `POST /api/auth` and JWT cookies |
 | Optional cache | Supabase |
-| Deployment | Vercel |
+| Deployment | Vercel today; Azure App Service and Docker assets are now included in-repo |
+
+## Architecture At A Glance
+
+| Concern | Current Shape |
+| --- | --- |
+| Rendering | Next.js server app with route-based pages and API endpoints |
+| Runtime requirement | Node.js runtime with outbound HTTPS access |
+| Auth | Shared password, session cookie, JWT signing via `AUTH_SECRET` |
+| Data sources | SMARD, ENTSO-E, aWATTar, EPEX, PVGIS, Tibber/Kraken, PDOK, EnergyForecast |
+| Optional services | Supabase cache/storage |
+| Container support | Multi-stage Docker build using Next.js standalone output |
 
 ## Data Sources
 
@@ -42,6 +60,15 @@ Interactive energy-flex dashboards built in Next.js. The current product centers
 - Additional fallbacks and forecast overlays are implemented in `src/lib/`.
 
 Current data behavior and operational notes live in [`docs/v2/current-data-state.md`](docs/v2/current-data-state.md).
+
+## Review And Audit Guides
+
+Use these first if an external engineer needs to understand or review the system quickly:
+
+- External review guide: [`docs/review/external-review-guide.md`](docs/review/external-review-guide.md)
+- Azure deployment guide: [`docs/deployment/azure-app-service.md`](docs/deployment/azure-app-service.md)
+- Current data/runtime behavior: [`docs/v2/current-data-state.md`](docs/v2/current-data-state.md)
+- PV + battery audit note: [`docs/battery/pv-battery-calculator-audit-and-model-notes.md`](docs/battery/pv-battery-calculator-audit-and-model-notes.md)
 
 ## Repository Map
 
@@ -55,6 +82,8 @@ Current data behavior and operational notes live in [`docs/v2/current-data-state
 | `src/lib/` | Pricing, optimization, export, auth, and data-source logic |
 | `public/data/` | Checked-in static market datasets |
 | `docs/v2/` | Product, data, and design reference docs |
+| `docs/review/` | External reviewer and audit guidance |
+| `docs/deployment/` | Azure deployment and runtime runbooks |
 | `features/` | Feature registry and per-feature specs |
 | `.claude/` | Repo-local AI team roster, routing, and rules |
 
@@ -96,7 +125,24 @@ The app serves locally at `http://127.0.0.1:3000`.
 ```bash
 npm run build
 npm run lint
+docker build -t flex-visualization .
 ```
+
+## Deployment Shape
+
+For Azure, the cleanest target is **Azure App Service on Linux** with either:
+
+1. direct Node.js deployment, or
+2. a custom container built from the included `Dockerfile`.
+
+The container path is the more reproducible option because it avoids runtime drift between local, CI, and host environments.
+
+The repository includes:
+
+- [`Dockerfile`](Dockerfile)
+- [`.dockerignore`](.dockerignore)
+- [`azure-pipelines.yml`](azure-pipelines.yml)
+- [`docs/deployment/azure-app-service.md`](docs/deployment/azure-app-service.md)
 
 ## Versioning And Releases
 

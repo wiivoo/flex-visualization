@@ -1,0 +1,44 @@
+trigger:
+- main
+- master
+
+pr:
+- main
+- master
+
+variables:
+  node_version: '22.x'
+  container_image_name: 'flex-visualization'
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+- stage: Validate
+  displayName: Validate app
+  jobs:
+  - job: validate
+    displayName: Install, lint, and build
+    steps:
+    - task: UseNode@1
+      inputs:
+        version: $(node_version)
+
+    - script: npm ci
+      displayName: Install dependencies
+
+    - script: npm run lint
+      displayName: Lint live app
+
+    - script: npm run build
+      displayName: Build Next.js app
+
+- stage: Container
+  displayName: Validate container build
+  dependsOn: Validate
+  jobs:
+  - job: docker_build
+    displayName: Build Docker image
+    steps:
+    - script: docker build -t $(container_image_name):$(Build.BuildId) .
+      displayName: Build production image
