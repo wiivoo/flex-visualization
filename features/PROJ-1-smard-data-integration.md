@@ -1,8 +1,8 @@
-# PROJ-1: Electricity Price Data Integration (SMARD + CSV)
+# PROJ-1: Electricity Price Data Integration (SMARD)
 
 ## Status: Deployed
 **Created:** 2025-02-21
-**Last Updated:** 2025-02-21
+**Last Updated:** 2026-04-28
 
 ## Dependencies
 - None
@@ -10,21 +10,19 @@
 ## User Stories
 - As a dashboard user, I want to see real German electricity market prices (Day-Ahead, Intraday)
 - As an analyst, I want to analyze historical data
-- As a system, I want to have a fallback when the API is unreachable
+- As a system, I want a safe fallback when live sources are unreachable
 
 ## Acceptance Criteria
 - [x] SMARD API is integrated (Primary) for Day-Ahead prices
-- [x] CSV files as fallback (/csvs/*.csv)
 - [x] API Route `/api/prices?type=day-ahead|intraday&date=YYYY-MM-DD`
 - [x] Day-Ahead: 96 values per day (quarterhour)
-- [x] Intraday: 96 values per day (from CSV)
-- [x] Fallback: On API error → CSV → Demo data
+- [x] Intraday: 96 values per day
+- [x] Fallback: On source error → Demo data
 - [x] Format: Array of `{ timestamp: string, price_ct_kwh: number }`
 - [x] Caching: 24h in Supabase
 
 ## Edge Cases
-- **What happens when the SMARD API is unreachable?** → Fallback to CSV (/csvs/*.csv)
-- **CSV not available?** → Demo data with realistic price distribution
+- **What happens when live sources are unreachable?** → Demo data with realistic price distribution
 - **What happens with an invalid date?** → 400 Bad Request with clear error message
 - **What happens with a future date?** → Last available data + "Forecast" notice
 - **How do I handle summer/winter time?** → UTC conversion with correct offset
@@ -32,7 +30,7 @@
 
 ## Technical Requirements
 - **Performance:** API Response < 500ms (with cache)
-- **Reliability:** 99% uptime through multi-level fallback
+- **Reliability:** 99% uptime through live-source fallback plus demo fallback
 - **Data Format:** EUR/MWh → Conversion to ct/kWh (1 EUR/MWh = 0.1 ct/kWh)
 - **CORS:** API Route as proxy (both sources support CORS)
 
@@ -54,26 +52,9 @@
 - Format: JSON
 - No API key required
 
-### Fallback: CSV Files ✅
-
-**Location:** `/csvs/`
-
-| File | Type | Years |
-|------|------|-------|
-| spot_price_YYYY.csv | Day-Ahead | 2023-2030 |
-| intraday_price_YYYY.csv | Intraday | 2023-2030 |
-
-**Format:**
-```csv
-timestamp,price (€/MWh)
-2024-01-01 00:00,6.13
-2024-01-01 00:15,8.14
-2024-01-01 00:30,-4.73
-```
-
 ### Demo Fallback ⚠️
 
-Realistic price distribution when both APIs fail.
+Realistic price distribution when live sources fail.
 
 ## Demo Data Fallback
 Realistic price distribution for 24h:
@@ -113,17 +94,14 @@ Index: cached_at for cache expiration check
     1. Parse + Validate Type + Date
     2. Check Supabase Cache (type + date)
        └─ Hit + < 1h? → Return (Intraday) / < 24h? → Return (Day/Forward)
-    3. Try ENTSO-E API (Primary)
+    3. Try live market sources (aWATTar / ENTSO-E / SMARD / Energy-Charts)
        └─ Success → Cache, Return
-       └─ Error → Try Awattar (Day-Ahead only)
-         └─ Success → Cache, Return
-         └─ Error → Demo-Data Return
+       └─ Error → Demo-Data Return
 ```
 
 ### Files to Create
 - `src/app/api/prices/route.ts` - API Endpoint
 - `src/lib/smard.ts` - SMARD API Client
-- `src/lib/csv-prices.ts` - CSV Parser (Fallback)
 - `src/lib/demo-data.ts` - Demo Data Generator
 - Supabase Table: `price_cache`
 
@@ -155,18 +133,6 @@ export async function fetchSmardPrices(date: Date): Promise<PricePoint[]> {
 }
 ```
 
-### CSV Fallback
-```typescript
-// src/lib/csv-prices.ts
-export async function fetchCsvPrices(
-  type: 'day-ahead' | 'intraday',
-  date: Date
-): Promise<PricePoint[]> {
-  // Parse /csvs/spot_price_YYYY.csv or intraday_price_YYYY.csv
-  // Format: timestamp,price (€/MWh)
-}
-```
-
 ### Fallback Demo Data Pattern
 ```
 Night (00-06):    5-15 ct/kWh   (Cheap)
@@ -194,11 +160,9 @@ Evening (18-24):  30-80 ct/kWh  (Expensive, Peak)
 - [x] Fetches from SMARD when available (tested with live data)
 - [x] Falls back to demo data when SMARD fails
 
-#### AC-2: CSV files as fallback
-- [x] CSV parser implemented in `/src/lib/csv-prices.ts`
-- [x] Correctly parses timestamp and price columns
-- [x] Converts EUR/MWh to ct/kWh correctly
-- [x] Handles missing CSV files gracefully (falls back to demo data)
+#### AC-2: Demo fallback
+- [x] Demo generator provides the final fallback when live sources fail
+- [x] No local file fallback is required at runtime
 
 #### AC-3: API Route `/api/prices?type=day-ahead|intraday&date=YYYY-MM-DD`
 - [x] Query parameters work correctly
@@ -209,14 +173,13 @@ Evening (18-24):  30-80 ct/kWh  (Expensive, Peak)
 - [x] Returns hourly data (24 values per day) - actual implementation uses hourly resolution
 - [x] Data structure matches expected format
 
-#### AC-5: Intraday: 96 values per day (from CSV)
+#### AC-5: Intraday: 96 values per day
 - [x] Type parameter accepted
-- [x] Falls back to demo data when CSV unavailable
+- [x] Falls back to demo data when live sources are unavailable
 
-#### AC-6: Fallback: On API error -> CSV -> Demo data
-- [x] Multi-level fallback chain works correctly
+#### AC-6: Fallback: On source error -> Demo data
+- [x] Live-source fallback chain works correctly
 - [x] SMARD errors handled gracefully
-- [x] CSV errors handled gracefully
 - [x] Demo data generated as final fallback
 
 #### AC-7: Format: Array of `{ timestamp: string, price_ct_kwh: number }`
@@ -231,9 +194,9 @@ Evening (18-24):  30-80 ct/kWh  (Expensive, Peak)
 ### Edge Cases Status
 
 #### EC-1: SMARD API unreachable
-- [x] Handled correctly - falls back to CSV then demo data
+- [x] Handled correctly - falls back to demo data
 
-#### EC-2: CSV not available
+#### EC-2: Other live sources unavailable
 - [x] Handled correctly - falls back to demo data
 
 #### EC-3: Invalid date
@@ -273,9 +236,9 @@ Evening (18-24):  30-80 ct/kWh  (Expensive, Peak)
 
 #### BUG-3: Very Old Dates Always Return Demo Data
 - **Severity:** Low
-- **Description:** Historical dates (e.g., 2020-01-01) return demo data instead of attempting CSV lookup
+- **Description:** Historical dates (e.g., 2020-01-01) return demo data when no live source covers the request
 - **Impact:** Limited historical analysis capability
-- **Recommendation:** Ensure CSV files exist for historical data range
+- **Recommendation:** Expand live-source coverage if historical fidelity needs to improve
 - **Priority:** Nice to have
 
 ### Summary

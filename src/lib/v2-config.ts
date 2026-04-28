@@ -272,7 +272,7 @@ export interface HourlyPrice {
   hour: number       // 0-23
   minute: number     // 0 for hourly, 0/15/30/45 for quarter-hourly
   date: string       // YYYY-MM-DD
-  isProjected?: boolean  // true for CSV-based projected prices (not real SMARD data)
+  isProjected?: boolean  // true for projected prices that are not settled market data
 }
 
 /** Daily summary for calendar view */

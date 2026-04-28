@@ -16,7 +16,7 @@ import { supabase } from './supabase'
 import { format, parseISO, subHours, isBefore } from 'date-fns'
 
 type CacheType = string // 'day-ahead' | 'day-ahead-qh' | 'intraday' | 'forward'
-type CacheSource = 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'demo' | 'epex-gb-daa1' | 'epex-gb-daa2'
+type CacheSource = 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'demo' | 'epex-gb-daa1' | 'epex-gb-daa2'
 
 export interface CachedPriceData {
   date: string // YYYY-MM-DD

@@ -12,8 +12,7 @@
  * │   2. ENTSO-E     — full historical, hourly (PT60M)              │
  * │   3. SMARD       — weekly chunks, parallel fetch                │
  * │   4. Energy-Charts — Fraunhofer ISE, native range               │
- * │   5. CSV         — local files, offline fallback                │
- * │   6. Demo        — generated seasonal patterns                  │
+ * │   5. Demo        — generated seasonal patterns                  │
  * │                                                                 │
  * │ Quarter-hourly (96 pts/day):                                    │
  * │   1. SMARD QH    — native 15-min day-ahead (filter 4169)       │
@@ -72,7 +71,6 @@ import { readGbStaticRange } from '@/lib/gb-static'
 import { readStaticIntradayRange } from '@/lib/intraday-static'
 import { fetchEnergyChartsRange } from '@/lib/energy-charts'
 import { fetchEnergyForecast } from '@/lib/energy-forecast'
-import { fetchCsvPrices } from '@/lib/csv-prices'
 import { getCachedPrices, setCachedPrices, cacheTypeKey } from '@/lib/price-cache'
 import { supabase } from '@/lib/supabase'
 import { DEFAULT_GB_DAY_AHEAD_AUCTION, type GbDayAheadAuction } from '@/lib/gb-day-ahead'
@@ -205,23 +203,6 @@ async function fetchEnergyChartsBatch(startDate: Date, endDate: Date): Promise<P
     return prices.length > 0 ? prices : null
   } catch (error) {
     console.error('Energy-Charts batch error:', error)
-    return null
-  }
-}
-
-async function fetchCsvBatch(startDate: Date, endDate: Date, type: 'day-ahead' | 'intraday'): Promise<PricePoint[] | null> {
-  try {
-    const days = eachDayOfInterval({ start: startDate, end: endDate })
-    const allPrices: PricePoint[] = []
-    for (const day of days) {
-      try {
-        const csvPrices = await fetchCsvPrices(type, day)
-        allPrices.push(...csvPrices)
-      } catch { /* skip */ }
-    }
-    return allPrices.length > 0 ? allPrices : null
-  } catch (error) {
-    console.error('CSV batch error:', error)
     return null
   }
 }
@@ -390,7 +371,7 @@ async function cachePricesByDay(
   prices: PricePoint[],
   type: string,
   resolution: 'hour' | 'quarterhour',
-  source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'epex-gb-daa1' | 'epex-gb-daa2'
+  source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'epex-gb-daa1' | 'epex-gb-daa2'
 ): Promise<void> {
   const byDay = new Map<string, PricePoint[]>()
   const typeKey = cacheTypeKey(type, resolution)
@@ -464,7 +445,7 @@ function expandHourlyToQH(prices: PricePoint[]): PricePoint[] {
 async function fetchHourlyChain(
   startDate: Date,
   endDate: Date
-): Promise<{ prices: PricePoint[] | null; source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'demo' }> {
+): Promise<{ prices: PricePoint[] | null; source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'demo' }> {
   // 1. aWATTar (fast, ~3 days history)
   let prices = await fetchAwattarBatch(startDate, endDate)
   if (prices?.length) return { prices, source: 'awattar' }
@@ -480,10 +461,6 @@ async function fetchHourlyChain(
   // 4. Energy-Charts (Fraunhofer ISE)
   prices = await fetchEnergyChartsBatch(startDate, endDate)
   if (prices?.length) return { prices, source: 'energy-charts' }
-
-  // 5. CSV (local files)
-  prices = await fetchCsvBatch(startDate, endDate, 'day-ahead')
-  if (prices?.length) return { prices, source: 'csv' }
 
   return { prices: null, source: 'demo' }
 }
@@ -600,7 +577,7 @@ export async function GET(request: NextRequest) {
 
   // ── Step 2: Fetch uncached days from source chain ──
   let fetchedPrices: PricePoint[] | null = null
-  let source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'csv' | 'demo' | 'epex-gb-daa1' | 'epex-gb-daa2' = 'demo'
+  let source: 'awattar' | 'entsoe' | 'smard' | 'energy-charts' | 'demo' | 'epex-gb-daa1' | 'epex-gb-daa2' = 'demo'
   let isHourlyAvg = false
 
   if (uncachedDays.length > 0) {
@@ -672,9 +649,8 @@ export async function GET(request: NextRequest) {
       fetchedPrices = result.prices
       source = result.source
     } else {
-      // Forward: CSV fallback
-      fetchedPrices = await fetchCsvBatch(uncachedStart, uncachedEnd, 'day-ahead')
-      if (fetchedPrices?.length) source = 'csv'
+      // Forward currently has no dedicated live source in this route.
+      // DE requests fall through to demo data below; non-DE requests return no prices.
     }
 
     // Final fallback: demo data (DE only).
