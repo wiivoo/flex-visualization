@@ -1,9 +1,7 @@
 trigger:
-- main
 - master
 
 pr:
-- main
 - master
 
 variables:
