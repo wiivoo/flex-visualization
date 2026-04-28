@@ -886,7 +886,8 @@ interface WaterfallChartColumn {
   type: 'delta' | 'total'
   color: string
   priceCtKwh: number
-  fillSegments?: Array<{ color: string; ratio: number }>
+  fillSegments?: Array<{ color: string; ratio: number; striped?: boolean }>
+  footerLines?: string[]
   separatorBefore?: boolean
   overlay?: {
     fromValue: number
@@ -904,6 +905,34 @@ interface WaterfallChartColumn {
   endValue?: number
   deltaValue?: number
   totalValue?: number
+}
+
+interface CostComparisonBarSegment {
+  key: string
+  label: string
+  value: number
+  displayValue?: number
+  valueLabel: string
+  detailLabel: string
+  color: string
+  striped?: boolean
+}
+
+interface CostComparisonBarCard {
+  id: string
+  title: string
+  description: string
+  summaryLabel: string
+  summaryValue: string
+  barLabel: string
+  barCaption: string
+  segments: CostComparisonBarSegment[]
+}
+
+interface ComputedCostComparisonBarSegment extends CostComparisonBarSegment {
+  bottomPct: number
+  heightPct: number
+  centerPct: number
 }
 
 function formatSignedCt(value: number, priceUnit: string): string {
@@ -949,6 +978,10 @@ function formatCenteredPriceLabel(value: number, units: ReturnType<typeof getPri
   return `${value.toFixed(2)} ${units.priceUnit}`
 }
 
+function stripedFill(color: string): string {
+  return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 12px)`
+}
+
 function isDarkColumnColor(color: string): boolean {
   const normalized = color.replace('#', '')
   if (normalized.length !== 6) return false
@@ -957,6 +990,216 @@ function isDarkColumnColor(color: string): boolean {
   const b = Number.parseInt(normalized.slice(4, 6), 16)
   const luminance = ((0.299 * r) + (0.587 * g) + (0.114 * b)) / 255
   return luminance < 0.52
+}
+
+function buildCostComparisonStackedSegments(
+  segments: CostComparisonBarSegment[],
+): ComputedCostComparisonBarSegment[] {
+  const totalValue = Math.max(
+    segments.reduce((sum, segment) => sum + Math.max(segment.displayValue ?? segment.value, 0), 0),
+    1e-6,
+  )
+
+  return segments.reduce<ComputedCostComparisonBarSegment[]>((acc, segment) => {
+    const effectiveValue = Math.max(segment.displayValue ?? segment.value, 0)
+    if (effectiveValue <= 0) return acc
+    const heightPct = (effectiveValue / totalValue) * 100
+    const bottomPct = acc.length > 0 ? acc[acc.length - 1].bottomPct + acc[acc.length - 1].heightPct : 0
+
+    return [...acc, {
+      ...segment,
+      bottomPct,
+      heightPct,
+      centerPct: bottomPct + (heightPct / 2),
+    }]
+  }, [])
+}
+
+function CostComparisonFlowChart({
+  cards,
+}: {
+  cards: CostComparisonBarCard[]
+}) {
+  const computedCards = cards.map((card) => ({
+    ...card,
+    stackedSegments: buildCostComparisonStackedSegments(card.segments),
+  }))
+
+  const svgWidth = 1000
+  const plotHeight = 320
+  const barFrameHeight = 260
+  const plotTopOffset = plotHeight - barFrameHeight
+  const columnWidth = svgWidth / Math.max(computedCards.length, 1)
+  const connectorInset = Math.min(columnWidth * 0.18, 64)
+  const firstCard = computedCards[0]
+  const segmentCenterY = (centerPct: number) => plotHeight - ((centerPct / 100) * barFrameHeight)
+
+  return (
+    <div className="relative">
+      <div className="grid gap-4 lg:grid-cols-[120px_minmax(0,1fr)]">
+        <div className="hidden lg:block" />
+        <div className="grid gap-4 md:grid-cols-3">
+          {computedCards.map((card) => (
+            <div key={`${card.id}-header`} className="rounded-2xl border border-[#ECE9DE] bg-[#F8F7F2] px-4 py-3 text-center">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{card.title}</p>
+              <p className="mt-1 text-xl font-semibold tabular-nums text-gray-900">{card.summaryValue}</p>
+              <p className="mt-1 text-[11px] leading-4 text-gray-500">{card.description}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="relative hidden h-[320px] lg:block">
+          {firstCard?.stackedSegments.map((segment) => (
+            <div
+              key={`left-label-${segment.key}`}
+              className="absolute right-2 flex max-w-[104px] items-center justify-end gap-2"
+              style={{ top: `${segmentCenterY(segment.centerPct)}px`, transform: 'translateY(-50%)' }}
+            >
+              <span className="truncate text-right text-[11px] font-semibold text-gray-700">{segment.label}</span>
+              <span
+                className={cn(
+                  'h-2 w-2 shrink-0 rounded-full',
+                  segment.striped && 'border border-[#67B7D1]',
+                )}
+                style={{ background: segment.striped ? stripedFill(segment.color) : segment.color }}
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="relative h-[320px] rounded-[28px] border border-[#ECE9DE] bg-white px-4 py-5 shadow-[0_1px_0_rgba(255,255,255,0.9)]">
+          <div className="pointer-events-none absolute inset-x-4 inset-y-5 rounded-[22px] bg-white" />
+
+          <div className="pointer-events-none absolute inset-x-6 inset-y-5">
+            {[0.25, 0.5, 0.75, 1].map((ratio) => (
+              <div
+                key={`cost-grid-${ratio}`}
+                className="absolute inset-x-0 border-t border-dashed border-[#E5E7EB]"
+                style={{ top: `${plotHeight - (barFrameHeight * ratio)}px` }}
+              />
+            ))}
+            <div
+              className="absolute inset-x-0 border-t border-[#D6DAE0]"
+              style={{ top: `${plotTopOffset + barFrameHeight}px` }}
+            />
+          </div>
+
+          <div className="pointer-events-none absolute inset-x-6 inset-y-5 hidden lg:block">
+            <svg viewBox={`0 0 ${svgWidth} ${plotHeight}`} preserveAspectRatio="none" className="h-full w-full overflow-visible">
+              {computedCards.slice(0, -1).flatMap((card, index) => {
+                const nextCard = computedCards[index + 1]
+                const fromCenterX = (columnWidth * index) + (columnWidth / 2) + connectorInset
+                const toCenterX = (columnWidth * (index + 1)) + (columnWidth / 2) - connectorInset
+                const controlOffset = Math.max((toCenterX - fromCenterX) * 0.34, 28)
+
+                return card.stackedSegments.map((segment) => {
+                  const nextSegment = nextCard.stackedSegments.find((candidate) => candidate.key === segment.key)
+                  if (!nextSegment) return null
+
+                  const y1 = segmentCenterY(segment.centerPct)
+                  const y2 = segmentCenterY(nextSegment.centerPct)
+                  const path = `M ${fromCenterX} ${y1} C ${fromCenterX + controlOffset} ${y1}, ${toCenterX - controlOffset} ${y2}, ${toCenterX} ${y2}`
+
+                  return (
+                    <g key={`${card.id}-${nextCard.id}-${segment.key}`}>
+                      <path
+                        d={path}
+                        fill="none"
+                        stroke={segment.color}
+                        strokeWidth="1.35"
+                        strokeDasharray={segment.striped ? '4 4' : undefined}
+                        strokeOpacity="0.22"
+                        strokeLinecap="round"
+                      />
+                    </g>
+                  )
+                })
+              })}
+            </svg>
+          </div>
+
+          <div className="absolute inset-x-4 inset-y-5 grid gap-4 md:grid-cols-3">
+            {computedCards.map((card) => (
+              <div key={card.id} className="relative flex h-full items-end justify-center">
+                <div className="relative h-[260px] w-[78px] overflow-visible rounded-[24px] border border-[#E7E5DD] bg-[#F6F5F0] p-[6px] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]">
+                  <div className="relative h-full overflow-hidden rounded-[18px] bg-white">
+                    {card.stackedSegments.map((segment) => (
+                      <div
+                        key={`${card.id}-${segment.key}`}
+                        className="absolute inset-x-0"
+                        style={{
+                          bottom: `${segment.bottomPct}%`,
+                          height: `${segment.heightPct}%`,
+                          background: segment.striped ? stripedFill(segment.color) : segment.color,
+                        }}
+                        title={`${segment.label}: ${segment.valueLabel}`}
+                      >
+                        {segment.value > 0 && segment.heightPct >= 16 ? (
+                          <div className="absolute inset-1 flex items-center justify-center text-center">
+                            <span className={cn(
+                              'rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums',
+                              isDarkColumnColor(segment.color)
+                                ? 'bg-black/15 text-white'
+                                : 'bg-white/85 text-gray-900',
+                            )}>
+                              {segment.valueLabel}
+                            </span>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {card.stackedSegments.map((segment) => {
+                  const showExternalZeroLabel = segment.value <= 0
+                  if (!showExternalZeroLabel) return null
+
+                  const isLeftAnchored = segment.key === 'pvStored'
+                  const sideStyle = isLeftAnchored
+                    ? { right: 'calc(50% + 48px)' }
+                    : segment.key === 'pvDirect'
+                      ? { left: 'calc(50% + 48px)' }
+                      : { left: '50%', transform: 'translate(-50%, -50%)' }
+
+                  return (
+                    <div
+                      key={`${card.id}-${segment.key}-external-label`}
+                      className={cn(
+                        'pointer-events-none absolute z-10 flex items-center gap-2',
+                        isLeftAnchored ? 'flex-row' : 'flex-row-reverse',
+                      )}
+                      style={{
+                        top: `${segmentCenterY(segment.centerPct)}px`,
+                        transform: sideStyle.transform ?? 'translateY(-50%)',
+                        ...sideStyle,
+                      }}
+                    >
+                      <span className="h-px w-4 bg-[#D1D5DB]" />
+                      <span className="rounded-full border border-[#E4E4DE] bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-700 shadow-sm">
+                        {segment.valueLabel}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="hidden lg:block" />
+        <div className="grid gap-4 text-center md:grid-cols-3">
+          {computedCards.map((card) => (
+            <div key={`${card.id}-footer`}>
+              <p className="text-[11px] font-semibold tabular-nums text-gray-900">{card.barLabel}</p>
+              {card.barCaption ? (
+                <p className="mt-1 text-[10px] leading-4 text-gray-500">{card.barCaption}</p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function DeliveredAllocationCard({
@@ -1009,9 +1252,9 @@ function DeliveredAllocationCard({
     const buckets: AllocationBucket[] = [
       {
         key: 'gridDirect',
-        label: 'Grid -> Load',
-        shortLabel: 'Grid',
-        detail: 'Residual household demand served directly from the grid.',
+        label: 'Residual grid -> Load',
+        shortLabel: 'Residual grid',
+        detail: 'Only the household demand still served directly from the grid after PV and battery routing.',
         kwh: totals.gridDirectKwh,
         sharePct: (totals.gridDirectKwh / safeLoadKwh) * 100,
         unitCostCtKwh: gridDirectCt,
@@ -1095,6 +1338,75 @@ function DeliveredAllocationCard({
     return 'ct'
   }, [displayMode, volumeMode])
 
+  const costFlowBuckets = useMemo(() => {
+    const costFlowOrder: AllocationBucketKey[] = ['gridDirect', 'gridStored', 'pvStored', 'pvDirect']
+    return costFlowOrder
+      .map((key) => stats.buckets.find((bucket) => bucket.key === key))
+      .filter((bucket): bucket is AllocationBucket => Boolean(bucket))
+  }, [stats.buckets])
+
+  const costComparisonCards = useMemo<CostComparisonBarCard[]>(() => {
+    const highestBucketAvgCt = Math.max(...costFlowBuckets.map((bucket) => bucket.unitCostCtKwh), 0)
+
+    return [
+      {
+        id: 'volume',
+        title: 'Volume',
+        description: 'How much household load each bucket served. The stack is normalized to the full household load.',
+        summaryLabel: 'Household load',
+        summaryValue: formatMetricValue(stats.deliveredLoadKwh, 'kwh', units),
+        barLabel: formatMetricValue(100, 'share', units),
+        barCaption: 'routing mix of household load',
+        segments: costFlowBuckets.map((bucket) => ({
+          key: bucket.key,
+          label: bucket.shortLabel,
+          value: bucket.sharePct,
+          valueLabel: formatMetricValue(bucket.kwh, 'kwh', units),
+          detailLabel: `${bucket.sharePct.toFixed(1)}% of household load`,
+          color: bucket.color,
+        })),
+      },
+      {
+        id: 'avgPrice',
+        title: 'Average price / kWh',
+        description: 'Each segment shows the bucket’s own average price. This stack is comparative, not a bill total.',
+        summaryLabel: 'Highest bucket avg',
+        summaryValue: formatMetricValue(highestBucketAvgCt, 'ct', units),
+        barLabel: 'Bucket avg',
+        barCaption: 'stacked for comparison only',
+        segments: costFlowBuckets.map((bucket) => ({
+          key: bucket.key,
+          label: bucket.shortLabel,
+          value: bucket.unitCostCtKwh,
+          displayValue: bucket.unitCostCtKwh > 0 ? bucket.unitCostCtKwh : 1.2,
+          valueLabel: formatMetricValue(bucket.unitCostCtKwh, 'ct', units),
+          detailLabel: bucket.unitCostCtKwh > 0
+            ? 'average cost of delivered kWh in this bucket'
+            : 'zero modeled marginal cost in this view',
+          color: bucket.color,
+        })),
+      },
+      {
+        id: 'combined',
+        title: 'Combined contribution',
+        description: 'Volume share multiplied by bucket price.',
+        summaryLabel: 'Gross household',
+        summaryValue: formatMetricValue(stats.grossDeliveredCt, 'ct', units),
+        barLabel: 'Gross household',
+        barCaption: '',
+        segments: costFlowBuckets.map((bucket) => ({
+          key: bucket.key,
+          label: bucket.shortLabel,
+          value: bucket.costContributionCtKwh,
+          displayValue: bucket.costContributionCtKwh > 0 ? bucket.costContributionCtKwh : 0.6,
+          valueLabel: formatMetricValue(bucket.costContributionCtKwh, 'ct', units),
+          detailLabel: `${bucket.sharePct.toFixed(1)}% x ${formatMetricValue(bucket.unitCostCtKwh, 'ct', units)}`,
+          color: bucket.color,
+        })),
+      },
+    ]
+  }, [costFlowBuckets, stats.deliveredLoadKwh, stats.grossDeliveredCt, units])
+
   const chartSeries = useMemo(() => {
     let columns: WaterfallChartColumn[] = []
     let title = ''
@@ -1118,8 +1430,8 @@ function DeliveredAllocationCard({
       const gridDelta = volumeMode === 'abs' ? (gridDirect?.kwh ?? 0) : (gridDirect?.sharePct ?? 0)
       columns.push({
         key: 'gridDirect',
-        shortLabel: 'Grid',
-        label: 'Grid -> Load',
+        shortLabel: 'Residual grid',
+        label: 'Residual grid -> Load',
         type: 'delta',
         color: gridDirect?.color ?? '#7D8797',
         priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
@@ -1193,129 +1505,24 @@ function DeliveredAllocationCard({
         type: 'total',
         color: '#67B7D1',
         priceCtKwh: stats.exportAvgCt,
-        fillSegments: [{ color: '#67B7D1', ratio: 1 }],
+        fillSegments: [{ color: '#67B7D1', ratio: 1, striped: true }],
         separatorBefore: true,
         totalValue: exportTotal,
       })
     } else if (displayMode === 'cost') {
-      title = 'Household and export-adjusted price in ct/kWh'
-      description = 'Grid and spot-battery energy add cost to the household average, PV stays at zero marginal cost, and export credit reduces the final household price.'
+      title = 'Volume, bucket price, and combined cost'
+      description = 'Read the three stacked bars left to right: household volume, average bucket price, then combined gross contribution.'
       totalLabel = formatMetricValue(stats.overallNetEquivalentCt, 'ct', units)
-
-      let running = 0
-      const costColumns: Array<{
-        key: string
-        shortLabel: string
-        label: string
-        deltaValue: number
-        color: string
-        priceCtKwh: number
-        fillSegments?: Array<{ color: string; ratio: number }>
-      }> = [
-        {
-          key: 'gridDirect',
-          shortLabel: 'Grid',
-          label: 'Grid -> Load',
-          deltaValue: gridDirect?.costContributionCtKwh ?? 0,
-          color: gridDirect?.color ?? '#7D8797',
-          priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: gridDirect?.color ?? '#7D8797', ratio: 1 }],
-        },
-        {
-          key: 'pvDirect',
-          shortLabel: 'PV',
-          label: 'PV -> Load',
-          deltaValue: pvDirect?.costContributionCtKwh ?? 0,
-          color: pvDirect?.color ?? '#E9B94A',
-          priceCtKwh: pvDirect?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: pvDirect?.color ?? '#E9B94A', ratio: 1 }],
-        },
-        {
-          key: 'pvStored',
-          shortLabel: 'PV via battery',
-          label: 'PV -> Battery -> Load',
-          deltaValue: 0,
-          color: pvStored?.color ?? '#D9B24E',
-          priceCtKwh: 0,
-          fillSegments: [{ color: pvStored?.color ?? '#D9B24E', ratio: 1 }],
-        },
-        {
-          key: 'gridStored',
-          shortLabel: 'Spot battery',
-          label: 'Grid -> Battery -> Load',
-          deltaValue: gridStored?.costContributionCtKwh ?? 0,
-          color: gridStored?.color ?? '#2F6FB3',
-          priceCtKwh: gridStored?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: gridStored?.color ?? '#2F6FB3', ratio: 1 }],
-        },
-      ]
-
-      columns = costColumns.map((column) => {
-        const result: WaterfallChartColumn = {
-          key: column.key,
-          shortLabel: column.shortLabel,
-          label: column.label,
-          type: 'delta',
-          color: column.color,
-          priceCtKwh: column.priceCtKwh,
-          fillSegments: column.fillSegments,
-          startValue: running,
-          endValue: running + column.deltaValue,
-          deltaValue: column.deltaValue,
-        }
-        if (column.key === 'pvDirect' || column.key === 'pvStored') {
-          const avoidedSolarCt = column.key === 'pvDirect'
-            ? (pvDirect?.impactDeltaCtKwh ?? 0)
-            : (pvStored?.impactDeltaCtKwh ?? 0)
-          result.annotation = {
-            value: running,
-            label: formatSignedCt(avoidedSolarCt, units.priceUnit),
-            color: '#B7791F',
-            dashed: true,
-          }
-        }
-        running += column.deltaValue
-        return result
-      })
-      columns.push({
-        key: 'gross',
-        shortLabel: 'Household',
-        label: 'Household total',
-        type: 'total',
-        color: '#111827',
-        priceCtKwh: stats.grossDeliveredCt,
-        fillSegments: [{ color: '#111827', ratio: 1 }],
-        totalValue: running,
-      })
-      const exportDelta = -stats.exportCreditCtEquivalent
-      const finalValue = running + exportDelta
-      columns.push({
-        key: 'final',
-        shortLabel: 'Final household',
-        label: 'Final household price',
-        type: 'total',
-        color: '#0F766E',
-        priceCtKwh: stats.overallNetEquivalentCt,
-        fillSegments: [{ color: '#0F766E', ratio: 1 }],
-        separatorBefore: true,
-        overlay: {
-          fromValue: 0,
-          toValue: running,
-          label: formatSignedCt(-stats.exportCreditCtEquivalent, units.priceUnit),
-          color: '#67B7D1',
-        },
-        totalValue: finalValue,
-      })
     } else {
       const baselineValue = stats.baselineAvgCt
       title = 'Baseline to final household price in ct/kWh'
-      description = 'Starts from the all-spot baseline, then each delivered bucket reduces or increases the average household price until export credit reaches the final result.'
+      description = 'Starts from the all-household grid-only baseline, then each delivered bucket reduces or increases the average household price until export credit reaches the final result. Residual grid means only the load still bought directly from the grid after PV and battery routing.'
       totalLabel = formatMetricValue(stats.overallNetEquivalentCt, 'ct', units)
 
       columns = [{
         key: 'baseline',
         shortLabel: 'Baseline',
-        label: 'All household load at average spot price',
+        label: 'All-household grid-only baseline',
         type: 'total',
         color: '#CBD5E1',
         priceCtKwh: stats.baselineAvgCt,
@@ -1335,8 +1542,8 @@ function DeliveredAllocationCard({
       }> = [
         {
           key: 'gridDirect',
-          shortLabel: 'Grid',
-          label: 'Grid -> Load',
+          shortLabel: 'Residual grid',
+          label: 'Residual grid -> Load',
           deltaValue: gridDirect?.impactDeltaCtKwh ?? 0,
           color: gridDirect?.color ?? '#7D8797',
           priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
@@ -1451,8 +1658,8 @@ function DeliveredAllocationCard({
       <CardContent className="p-6">
         <SectionHeading
           eyebrow="Cost Allocation"
-          title="Delivered waterfall"
-          help="Volume can be shown as absolute kWh or share of household load. Cost and impact keep the household waterfall on the left and show export as a separate final-lane overlay."
+          title="Delivered allocation"
+          help="Volume shows the routing mix, Cost compares volume, bucket price, and combined contribution, and Impact bridges the baseline to the final result with export kept separate."
           icon={<Gauge className="h-5 w-5 text-gray-400" />}
         />
 
@@ -1502,7 +1709,11 @@ function DeliveredAllocationCard({
           </div>
 
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
-              <div className="mb-3 flex items-center justify-between gap-3">
+            {displayMode === 'cost' ? (
+              <CostComparisonFlowChart cards={costComparisonCards} />
+            ) : (
+              <>
+                <div className="mb-3 flex items-center justify-between gap-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                   {getMetricAxisLabel(chartMetric, units)}
                 </p>
@@ -1545,7 +1756,9 @@ function DeliveredAllocationCard({
                       className="absolute inset-0 grid gap-3"
                       style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
                     >
-                      {chartSeries.columns.map((column) => {
+                      {chartSeries.columns.map((column, index) => {
+                        const previousColumn = index > 0 ? chartSeries.columns[index - 1] : null
+                        const isImpactChart = displayMode === 'impact'
                         const isZeroValue = column.type === 'total'
                           ? Math.abs(column.totalValue ?? 0) < 1e-6
                           : Math.abs(column.deltaValue ?? 0) < 1e-6
@@ -1558,7 +1771,7 @@ function DeliveredAllocationCard({
                         const lowPct = chartSeries.valueToPct(lowValue)
                         const highPct = chartSeries.valueToPct(highValue)
                         const barHeightPct = isZeroValue ? 0 : Math.max(highPct - lowPct, 1.8)
-                        const showCenteredPrice = displayMode !== 'volume' && barHeightPct >= 10
+                        const showCenteredPrice = false
                         const overlayLowValue = column.overlay
                           ? Math.min(column.overlay.fromValue, column.overlay.toValue)
                           : 0
@@ -1592,16 +1805,41 @@ function DeliveredAllocationCard({
                               )
                           )
                           : null
+                        const showImpactTopLabel = isImpactChart
+                          && column.type === 'total'
+                          && ['baseline', 'gross', 'final'].includes(column.key)
+                        const impactRunningLabel = showImpactTopLabel
+                          ? formatMetricValue(column.totalValue ?? 0, 'ct', units)
+                          : null
+                        const impactDeltaInBarLabel = isImpactChart && column.type === 'delta' && Math.abs(column.deltaValue ?? 0) > 1e-6
+                          ? formatSignedCt(column.deltaValue ?? 0, units.priceUnit)
+                          : null
+                        const showImpactDeltaOutside = Boolean(impactDeltaInBarLabel) && barHeightPct < 14
+                        const impactDeltaCenteredLabel = showImpactDeltaOutside ? null : impactDeltaInBarLabel
+                        const impactDeltaOutsideLabel = showImpactDeltaOutside ? impactDeltaInBarLabel : null
+                        const connectorValue = previousColumn
+                          ? (
+                            previousColumn.type === 'total'
+                              ? (previousColumn.totalValue ?? 0)
+                              : (previousColumn.endValue ?? 0)
+                          )
+                          : null
+                        const connectorPct = connectorValue === null ? 0 : chartSeries.valueToPct(connectorValue)
+                        const showImpactConnector = isImpactChart
+                          && Boolean(previousColumn)
+                          && !column.separatorBefore
+                          && connectorValue !== null
                         const darkLabel = isDarkColumnColor(column.color)
-                        const showExternalPrice = displayMode !== 'volume' && !isZeroValue && !showCenteredPrice
-                        const topDeltaLabel = displayMode !== 'volume' && column.annotation
-                          ? column.annotation.label
-                          : displayMode !== 'volume' && column.type === 'delta' && Math.abs(column.deltaValue ?? 0) > 1e-6
-                            ? formatSignedCt(column.deltaValue ?? 0, units.priceUnit)
-                            : null
+                        const showExternalPrice = false
 
                         return (
                           <div key={column.key} className="relative">
+                            {showImpactConnector ? (
+                              <div
+                                className="absolute left-[-12px] w-[36px] border-t-2 border-dashed border-gray-400"
+                                style={{ bottom: `${connectorPct}%` }}
+                              />
+                            ) : null}
                             {column.separatorBefore ? (
                               <div className="absolute bottom-0 left-[-8px] top-0 border-l-2 border-dashed border-gray-500" />
                             ) : null}
@@ -1624,16 +1862,23 @@ function DeliveredAllocationCard({
                                 </span>
                               </div>
                             ) : null}
-                            {displayMode !== 'volume' && topDeltaLabel ? (
+                            {impactRunningLabel && !isZeroValue ? (
                               <div
                                 className="absolute inset-x-1 z-20 flex justify-center"
-                                style={{ bottom: `calc(${Math.min(column.annotation ? annotationPct : highPct, 100)}% + ${showExternalPrice ? 28 : 8}px)` }}
+                                style={{ bottom: `calc(${Math.min(highPct, 100)}% + 8px)` }}
                               >
-                                <span
-                                  className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums shadow-sm"
-                                  style={{ color: column.annotation?.color ?? '#374151' }}
-                                >
-                                  {topDeltaLabel}
+                                <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-900 shadow-sm">
+                                  {impactRunningLabel}
+                                </span>
+                              </div>
+                            ) : null}
+                            {impactDeltaOutsideLabel ? (
+                              <div
+                                className="absolute inset-x-1 z-20 flex justify-center"
+                                style={{ bottom: `calc(${Math.max(lowPct, 0)}% - 22px)` }}
+                              >
+                                <span className="rounded-full border border-gray-200 bg-white/95 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-600 shadow-sm">
+                                  {impactDeltaOutsideLabel}
                                 </span>
                               </div>
                             ) : null}
@@ -1696,7 +1941,7 @@ function DeliveredAllocationCard({
                                       const style = {
                                         bottom: `${segmentOffset}%`,
                                         height: `${segmentHeight}%`,
-                                        backgroundColor: segment.color,
+                                        background: segment.striped ? stripedFill(segment.color) : segment.color,
                                         opacity: 0.98,
                                       }
                                       segmentOffset += segmentHeight
@@ -1709,6 +1954,18 @@ function DeliveredAllocationCard({
                                       )
                                     })
                                   })()}
+                                </div>
+                              ) : null}
+                              {impactDeltaCenteredLabel ? (
+                                <div className="absolute inset-1 flex items-center justify-center text-center">
+                                  <span className={cn(
+                                    'rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums',
+                                    darkLabel
+                                      ? 'bg-black/15 text-white'
+                                      : 'bg-white/82 text-gray-900',
+                                  )}>
+                                    {impactDeltaCenteredLabel}
+                                  </span>
                                 </div>
                               ) : null}
                               {showCenteredPrice ? (
@@ -1744,9 +2001,10 @@ function DeliveredAllocationCard({
                     ))}
                   </div>
                 </div>
-
               </div>
-            </div>
+            </>
+            )}
+          </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
             <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
@@ -1789,7 +2047,10 @@ function DeliveredAllocationCard({
             ))}
             <div className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#67B7D1]" />
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-[#67B7D1]"
+                  style={{ background: stripedFill('#67B7D1') }}
+                />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold text-gray-900">Export</p>
                   <p className="truncate text-[11px] text-gray-500">Outside household total</p>
