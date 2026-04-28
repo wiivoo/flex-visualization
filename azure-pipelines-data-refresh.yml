@@ -1,0 +1,81 @@
+trigger: none
+pr: none
+
+schedules:
+- cron: "30 13 * * *"
+  displayName: Daily day-ahead price refresh
+  branches:
+    include:
+    - master
+    - main
+  always: true
+
+variables:
+  node_version: '22.x'
+  target_branch: 'master'
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- checkout: self
+  persistCredentials: true
+  fetchDepth: 0
+
+- task: UseNode@1
+  inputs:
+    version: $(node_version)
+
+- script: |
+    git fetch origin $(target_branch)
+    git checkout -B $(target_branch) origin/$(target_branch)
+  displayName: Checkout target branch
+
+- script: npm ci
+  displayName: Install dependencies
+
+- script: npx playwright install --with-deps chromium
+  displayName: Install Playwright Chromium
+
+- script: node scripts/download-smard.mjs
+  displayName: Download latest SMARD data (DE)
+  env:
+    ENTSOE_API_TOKEN: $(ENTSOE_API_TOKEN)
+
+- script: node scripts/update-nl.mjs
+  displayName: Update NL prices (ENTSO-E)
+  env:
+    ENTSOE_API_TOKEN: $(ENTSOE_API_TOKEN)
+
+- script: node scripts/update-gb.mjs
+  displayName: Update GB prices (EPEX day-ahead DAA 1 / DAA 2)
+
+- script: node scripts/update-gb-intraday-auctions.mjs
+  displayName: Update GB intraday auctions (EPEX IDA1 / IDA2)
+  continueOnError: true
+
+- script: |
+    node scripts/scrape-epex-intraday.mjs --area DE --static --days 4
+    node scripts/scrape-epex-intraday.mjs --area NL --static --days 4
+    node scripts/scrape-epex-intraday.mjs --area GB --static --days 4
+  displayName: Update static intraday continuous files (DE / NL / GB)
+  continueOnError: true
+
+- script: npm run smoke:data
+  displayName: Smoke test static price artifacts
+
+- script: node scripts/precompute-management-monthly.mjs
+  displayName: Precompute management monthly aggregates
+
+- script: |
+    if git diff --quiet public/data/; then
+      echo "Price data is already up to date — no commit needed."
+      exit 0
+    fi
+
+    git config user.name "Azure Pipelines"
+    git config user.email "azure-pipelines@local"
+    git add public/data/
+    git commit -m "chore: update price data and management aggregates $(date -u '+%Y-%m-%d')"
+    git push origin HEAD:$(target_branch)
+  displayName: Commit and push updated data

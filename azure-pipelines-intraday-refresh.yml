@@ -1,0 +1,144 @@
+trigger: none
+pr: none
+
+parameters:
+- name: area
+  displayName: Market area
+  type: string
+  default: all
+  values:
+  - all
+  - DE
+  - NL
+  - GB
+
+- name: date
+  displayName: Specific delivery date (YYYY-MM-DD)
+  type: string
+  default: ''
+
+schedules:
+- cron: "0 7 * * *"
+  displayName: Daily intraday scrape
+  branches:
+    include:
+    - master
+    - main
+  always: true
+
+variables:
+  node_version: '22.x'
+  target_branch: 'master'
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- checkout: self
+  persistCredentials: true
+  fetchDepth: 0
+
+- task: UseNode@1
+  inputs:
+    version: $(node_version)
+
+- script: |
+    git fetch origin $(target_branch)
+    git checkout -B $(target_branch) origin/$(target_branch)
+  displayName: Checkout target branch
+
+- script: npm ci
+  displayName: Install dependencies
+
+- script: npx playwright install --with-deps chromium
+  displayName: Install Playwright Chromium
+
+- script: |
+    if [ -n "${{ parameters.date }}" ]; then
+      node scripts/scrape-epex-intraday.mjs --area DE --date ${{ parameters.date }}
+    else
+      node scripts/scrape-epex-intraday.mjs --area DE
+    fi
+  displayName: Scrape DE intraday
+  env:
+    NEXT_PUBLIC_SUPABASE_URL: $(NEXT_PUBLIC_SUPABASE_URL)
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: $(NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  condition: or(eq('${{ parameters.area }}', 'all'), eq('${{ parameters.area }}', 'DE'))
+  continueOnError: true
+
+- script: sleep 30
+  displayName: Wait between scrapes (WAF gap)
+  condition: eq('${{ parameters.area }}', 'all')
+
+- script: |
+    if [ -n "${{ parameters.date }}" ]; then
+      node scripts/scrape-epex-intraday.mjs --area NL --date ${{ parameters.date }}
+    else
+      node scripts/scrape-epex-intraday.mjs --area NL
+    fi
+  displayName: Scrape NL intraday
+  env:
+    NEXT_PUBLIC_SUPABASE_URL: $(NEXT_PUBLIC_SUPABASE_URL)
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: $(NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  condition: or(eq('${{ parameters.area }}', 'all'), eq('${{ parameters.area }}', 'NL'))
+  continueOnError: true
+
+- script: sleep 30
+  displayName: Wait between scrapes (WAF gap)
+  condition: eq('${{ parameters.area }}', 'all')
+
+- script: |
+    if [ -n "${{ parameters.date }}" ]; then
+      node scripts/scrape-epex-intraday.mjs --area GB --date ${{ parameters.date }}
+    else
+      node scripts/scrape-epex-intraday.mjs --area GB
+    fi
+  displayName: Scrape GB intraday
+  env:
+    NEXT_PUBLIC_SUPABASE_URL: $(NEXT_PUBLIC_SUPABASE_URL)
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: $(NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  condition: or(eq('${{ parameters.area }}', 'all'), eq('${{ parameters.area }}', 'GB'))
+  continueOnError: true
+
+- script: |
+    if [ -n "${{ parameters.date }}" ]; then
+      node scripts/scrape-epex-intraday.mjs --area DE --date ${{ parameters.date }} --static
+    else
+      node scripts/scrape-epex-intraday.mjs --area DE --days 2 --static
+    fi
+  displayName: Refresh static DE intraday fallback
+  condition: or(eq('${{ parameters.area }}', 'all'), eq('${{ parameters.area }}', 'DE'))
+  continueOnError: true
+
+- script: |
+    if [ -n "${{ parameters.date }}" ]; then
+      node scripts/scrape-epex-intraday.mjs --area NL --date ${{ parameters.date }} --static
+    else
+      node scripts/scrape-epex-intraday.mjs --area NL --days 2 --static
+    fi
+  displayName: Refresh static NL intraday fallback
+  condition: or(eq('${{ parameters.area }}', 'all'), eq('${{ parameters.area }}', 'NL'))
+  continueOnError: true
+
+- script: |
+    if [ -n "${{ parameters.date }}" ]; then
+      node scripts/scrape-epex-intraday.mjs --area GB --date ${{ parameters.date }} --static
+    else
+      node scripts/scrape-epex-intraday.mjs --area GB --days 2 --static
+    fi
+  displayName: Refresh static GB intraday fallback
+  condition: or(eq('${{ parameters.area }}', 'all'), eq('${{ parameters.area }}', 'GB'))
+  continueOnError: true
+
+- script: |
+    if git diff --quiet public/data/de-intraday-continuous.json public/data/nl-intraday-continuous.json public/data/gb-intraday-continuous.json; then
+      echo "Static intraday data is already up to date — no commit needed."
+      exit 0
+    fi
+
+    git config user.name "Azure Pipelines"
+    git config user.email "azure-pipelines@local"
+    git add public/data/de-intraday-continuous.json public/data/nl-intraday-continuous.json public/data/gb-intraday-continuous.json
+    git commit -m "chore: update static intraday fallbacks $(date -u '+%Y-%m-%d')"
+    git push origin HEAD:$(target_branch)
+  displayName: Commit and push static intraday updates

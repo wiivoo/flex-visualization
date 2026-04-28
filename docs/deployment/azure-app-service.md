@@ -45,6 +45,8 @@ Optional App Settings:
 - `Dockerfile` for production container builds
 - `.dockerignore` for lean build context
 - `azure-pipelines.yml` for CI and container validation
+- `azure-pipelines-data-refresh.yml` for scheduled day-ahead/static artifact updates
+- `azure-pipelines-intraday-refresh.yml` for scheduled intraday scraping and fallback refresh
 - `next.config.ts` with `output: 'standalone'`
 
 ## Baseline Pipeline Flow
@@ -53,6 +55,11 @@ The included `azure-pipelines.yml` does two things:
 
 1. installs dependencies, lints, and builds the app
 2. builds the Docker image to validate the production container path
+
+The two data-maintenance pipelines are direct Azure replacements for the former GitHub Actions jobs:
+
+- `azure-pipelines-data-refresh.yml`
+- `azure-pipelines-intraday-refresh.yml`
 
 This is a safe default because it does not assume:
 

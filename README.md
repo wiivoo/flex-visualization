@@ -142,6 +142,8 @@ The repository includes:
 - [`Dockerfile`](Dockerfile)
 - [`.dockerignore`](.dockerignore)
 - [`azure-pipelines.yml`](azure-pipelines.yml)
+- [`azure-pipelines-data-refresh.yml`](azure-pipelines-data-refresh.yml)
+- [`azure-pipelines-intraday-refresh.yml`](azure-pipelines-intraday-refresh.yml)
 - [`docs/deployment/azure-app-service.md`](docs/deployment/azure-app-service.md)
 
 ## Versioning And Releases
