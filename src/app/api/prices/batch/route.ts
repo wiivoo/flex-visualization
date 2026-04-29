@@ -65,6 +65,7 @@ import {
 import { convertSmardPrice, SMARD_FILTER } from '@/lib/smard'
 import type { SmardPricePoint } from '@/lib/smard'
 import { fetchAwattarRange } from '@/lib/awattar'
+import { readStaticDayAheadRange } from '@/lib/day-ahead-static'
 import { fetchEntsoeRange, ENTSOE_DOMAINS } from '@/lib/entsoe'
 import { fetchEpexGbHalfHourlyRange, fetchEpexGbHourlyRange } from '@/lib/epex-gb'
 import { readGbStaticRange } from '@/lib/gb-static'
@@ -74,6 +75,7 @@ import { fetchEnergyForecast } from '@/lib/energy-forecast'
 import { getCachedPrices, setCachedPrices, cacheTypeKey } from '@/lib/price-cache'
 import { supabase } from '@/lib/supabase'
 import { DEFAULT_GB_DAY_AHEAD_AUCTION, type GbDayAheadAuction } from '@/lib/gb-day-ahead'
+import { getEnableGb, getEnableIntraday } from '@/lib/country-config'
 
 const SMARD_BASE_URL = 'https://www.smard.de/app/chart_data'
 
@@ -490,6 +492,12 @@ export async function GET(request: NextRequest) {
   }
 
   const { startDate: startDateStr, endDate: endDateStr, type, resolution, index, country, gbAuction } = parseResult.data
+  if (!getEnableGb() && country === 'GB') {
+    return NextResponse.json({ error: 'GB market is disabled in this deployment' }, { status: 400 })
+  }
+  if (!getEnableIntraday() && type === 'intraday') {
+    return NextResponse.json({ error: 'Intraday market is disabled in this deployment' }, { status: 400 })
+  }
   const indexField = type === 'intraday' && index ? `${index}_ct` : undefined
   const startDate = parseISO(startDateStr)
   const endDate = parseISO(endDateStr)
@@ -621,11 +629,19 @@ export async function GET(request: NextRequest) {
               console.error(`ENTSO-E ${country} error:`, error)
             }
           }
+          if (!fetchedPrices?.length) {
+            fetchedPrices = readStaticDayAheadRange(country, uncachedStart, uncachedEnd, resolution)
+            if (fetchedPrices?.length) source = 'entsoe'
+          }
           if (resolution === 'quarterhour' && fetchedPrices?.length) {
             // ENTSO-E may return hourly or PT15M depending on bidding zone coverage.
             // Expand to QH when only hourly slots are available.
-            fetchedPrices = expandHourlyToQH(fetchedPrices)
-            isHourlyAvg = true
+            const minuteSet = new Set(fetchedPrices.slice(0, 20).map((point) => new Date(point.timestamp).getUTCMinutes()))
+            const hasNativeQuarterHour = minuteSet.has(15) || minuteSet.has(45)
+            if (!hasNativeQuarterHour) {
+              fetchedPrices = expandHourlyToQH(fetchedPrices)
+              isHourlyAvg = true
+            }
           }
         }
       }
@@ -695,9 +711,10 @@ export async function GET(request: NextRequest) {
   // (e.g. GB) we skip the forecast step entirely so we never return DE-zone
   // prices mislabeled with the wrong currency.
   const FORECAST_COUNTRIES = new Set(['DE', 'NL'])
+  const hasEnergyForecastToken = Boolean(process.env.ENERGY_FORECAST_TOKEN)
   let forecastStart: string | null = null
   let forecastAppended = false
-  if (type === 'day-ahead' && FORECAST_COUNTRIES.has(country)) {
+  if (type === 'day-ahead' && FORECAST_COUNTRIES.has(country) && hasEnergyForecastToken) {
     try {
       const startRangeTs = startOfDay(startDate).getTime()
       const endRangeTs = startOfDay(endDate).getTime() + 86400000

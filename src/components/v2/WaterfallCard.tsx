@@ -150,7 +150,6 @@ export function WaterfallCard({
                 isAnimationActive
                 animationDuration={200}
                 animationEasing="ease-out"
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 label={(((props: any) => {
                   const { x, y, width: w, height: h, index } = props
                   const d = chartData[index]
@@ -178,7 +177,6 @@ export function WaterfallCard({
                     isAnimationActive
                     animationDuration={200}
                     animationEasing="ease-out"
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     label={(((props: any) => {
                       const { x, y, width: w, height: h, index } = props
                       const d = chartData[index]

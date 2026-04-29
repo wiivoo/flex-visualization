@@ -16,11 +16,12 @@ import {
   type FlexCalculatorResult,
   type FlexCalculatorScenario,
 } from '@/lib/flex-calculator'
+import { getEnabledCountries, parseEnabledCountry, type AppCountry } from '@/lib/country-config'
 import { usePrices, type PriceData } from '@/lib/use-prices'
 import { cn } from '@/lib/utils'
 import { getPriceUnits, type HourlyPrice } from '@/lib/v2-config'
 
-type Country = 'DE' | 'NL' | 'GB'
+type Country = AppCountry
 type AnnualBasis = 'hourly' | 'subhour'
 
 interface CalculatorState {
@@ -35,7 +36,7 @@ interface CalculatorState {
   annualBasis: AnnualBasis
 }
 
-const COUNTRY_OPTIONS: Array<{ id: Country; label: string; detail: string }> = [
+const ALL_COUNTRY_OPTIONS: Array<{ id: Country; label: string; detail: string }> = [
   { id: 'DE', label: 'Germany', detail: 'SMARD day-ahead history' },
   { id: 'NL', label: 'Netherlands', detail: 'ENTSO-E / NL tariff view' },
   { id: 'GB', label: 'Great Britain', detail: 'EPEX GB day-ahead history' },
@@ -51,8 +52,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
-function parseCountry(raw: string | null): Country {
-  return raw === 'NL' || raw === 'GB' ? raw : 'DE'
+function parseCountry(raw: string | null, enableGb: boolean): Country {
+  return parseEnabledCountry(raw, enableGb)
 }
 
 function parseMode(raw: string | null): CalculatorMode {
@@ -63,7 +64,7 @@ function parseAnnualBasis(raw: string | null): AnnualBasis {
   return raw === 'subhour' ? 'subhour' : 'hourly'
 }
 
-function parseState(params: URLSearchParams): CalculatorState {
+function parseState(params: URLSearchParams, enableGb: boolean): CalculatorState {
   const year = Number(params.get('year'))
   return {
     yearlyMileageKm: clamp(Number(params.get('mileage')) || 12000, 5000, 40000),
@@ -72,7 +73,7 @@ function parseState(params: URLSearchParams): CalculatorState {
     departureTime: clamp(Number(params.get('departure')) || 7, 5, 10),
     chargingMode: parseMode(params.get('mode')),
     chargePowerKw: Number(params.get('power')) === 11 ? 11 : 7,
-    country: parseCountry(params.get('country')),
+    country: parseCountry(params.get('country'), enableGb),
     year: Number.isFinite(year) && year >= 2020 ? year : 0,
     annualBasis: parseAnnualBasis(params.get('basis')),
   }
@@ -184,10 +185,20 @@ function ControlBlock({
   )
 }
 
-export function FlexValueCalculator() {
+export function FlexValueCalculator({
+  enableGb = true,
+  enableIntraday = false,
+}: {
+  enableGb?: boolean
+  enableIntraday?: boolean
+}) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const initialState = useMemo(() => parseState(searchParams), [searchParams])
+  const countryOptions = useMemo(
+    () => ALL_COUNTRY_OPTIONS.filter(option => getEnabledCountries(enableGb).includes(option.id)),
+    [enableGb],
+  )
+  const initialState = useMemo(() => parseState(searchParams, enableGb), [enableGb, searchParams])
   const [initialUrlDate] = useState(() => searchParams.get('date'))
   const [state, setState] = useState<CalculatorState>(initialState)
 
@@ -195,7 +206,13 @@ export function FlexValueCalculator() {
     setState(initialState)
   }, [initialState])
 
-  const prices = usePrices(state.country)
+  useEffect(() => {
+    if (!enableGb && state.country === 'GB') {
+      setState((current) => ({ ...current, country: 'DE' }))
+    }
+  }, [enableGb, state.country])
+
+  const prices = usePrices(state.country, undefined, enableIntraday)
   const units = getPriceUnits(state.country)
   const selectedDate = prices.selectedDate
   const setSelectedDate = prices.setSelectedDate
@@ -298,8 +315,8 @@ export function FlexValueCalculator() {
     [hasSubhourData, scenario, selectedDate, state.country, subhourSeries],
   )
   const spotCheckIntraday = useMemo(
-    () => prices.intradayId3.length > 0 ? estimateFlexSessionValue(prices.intradayId3, scenario, selectedDate, 15) : null,
-    [prices.intradayId3, scenario, selectedDate],
+    () => enableIntraday && prices.intradayId3.length > 0 ? estimateFlexSessionValue(prices.intradayId3, scenario, selectedDate, 15) : null,
+    [enableIntraday, prices.intradayId3, scenario, selectedDate],
   )
 
   const v2Link = useMemo(() => {
@@ -344,7 +361,7 @@ export function FlexValueCalculator() {
             <h2 className="mt-2 text-4xl font-semibold tracking-tight text-gray-900">Interactive EV flexibility calculator</h2>
             <p className="mt-3 text-[15px] leading-7 text-gray-500">
               Same pricing foundation as <Link href="/v2" className="font-semibold text-gray-700 hover:text-gray-900">/v2</Link>, but compressed into a calculator surface:
-              live inputs on the left, commercial output on the right, plus subhour and intraday checks where the data exists.
+              live inputs on the left, commercial output on the right, plus subhour checks where the data exists.
             </p>
           </div>
           <Button asChild className="w-fit rounded-full bg-[#313131] hover:bg-[#1f1f1f]">
@@ -360,7 +377,7 @@ export function FlexValueCalculator() {
             <ControlBlock label="Country and year" value={state.year ? `${state.country} - ${state.year}` : state.country} icon={<MapPinned className="h-5 w-5 text-gray-400" />}>
               <div className="space-y-4">
                 <div className="grid gap-2">
-                  {COUNTRY_OPTIONS.map((option) => (
+                  {countryOptions.map((option) => (
                     <OptionCard
                       key={option.id}
                       active={state.country === option.id}
@@ -550,7 +567,7 @@ export function FlexValueCalculator() {
                     <div className="border-b border-gray-200 px-6 py-5">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Selected-day market check</p>
                       <p className="mt-1 text-sm text-gray-500">
-                        Pick a day from {state.year} and compare the same charging session across hourly day-ahead, subhour day-ahead, and intraday ID3 when available.
+                        Pick a day from {state.year} and compare the same charging session across hourly day-ahead and subhour day-ahead where available.
                       </p>
                     </div>
                     <div className="px-4 py-3">
@@ -564,7 +581,7 @@ export function FlexValueCalculator() {
                         country={state.country}
                       />
                     </div>
-                    <div className="grid gap-4 border-t border-gray-200 p-6 lg:grid-cols-3">
+                    <div className={`grid gap-4 border-t border-gray-200 p-6 ${enableIntraday ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
                       <Card className="rounded-[20px] border-gray-200 shadow-none">
                         <CardContent className="p-5">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Hourly day-ahead</p>
@@ -597,19 +614,21 @@ export function FlexValueCalculator() {
                         </CardContent>
                       </Card>
 
-                      <Card className="rounded-[20px] border-gray-200 shadow-none">
-                        <CardContent className="p-5">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Intraday ID3 spot check</p>
-                          <p className="mt-3 text-2xl font-semibold text-gray-900">
-                            {spotCheckIntraday ? `${units.currencySym}${spotCheckIntraday.savingsPerSessionEur}` : '—'}
-                          </p>
-                          <p className="mt-2 text-sm leading-6 text-gray-500">
-                            {spotCheckIntraday
-                              ? `${spotCheckIntraday.capturedSpreadCtKwh} ${units.priceUnit} captured spread on the currently selected trading day.`
-                              : 'Intraday pricing is currently used as a selected-day spot check rather than a full-year annualized series.'}
-                          </p>
-                        </CardContent>
-                      </Card>
+                      {enableIntraday && (
+                        <Card className="rounded-[20px] border-gray-200 shadow-none">
+                          <CardContent className="p-5">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Intraday ID3 spot check</p>
+                            <p className="mt-3 text-2xl font-semibold text-gray-900">
+                              {spotCheckIntraday ? `${units.currencySym}${spotCheckIntraday.savingsPerSessionEur}` : '—'}
+                            </p>
+                            <p className="mt-2 text-sm leading-6 text-gray-500">
+                              {spotCheckIntraday
+                                ? `${spotCheckIntraday.capturedSpreadCtKwh} ${units.priceUnit} captured spread on the currently selected trading day.`
+                                : 'Intraday pricing is currently used as a selected-day spot check rather than a full-year annualized series.'}
+                            </p>
+                          </CardContent>
+                        </Card>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -681,8 +700,8 @@ export function FlexValueCalculator() {
                         <p className="mt-1 text-[13px] leading-6 text-gray-500">The calculator now recomputes the same EV profile across all historical years, so users can see volatility and timing sensitivity immediately.</p>
                       </div>
                       <div className="rounded-2xl bg-[#F5F5F2] p-4">
-                        <p className="text-sm font-semibold text-gray-900">2. Subhour and intraday layers</p>
-                        <p className="mt-1 text-[13px] leading-6 text-gray-500">Higher-resolution day-ahead series are now usable as an annual basis, and intraday ID3 is surfaced as a selected-day spot check to show possible uplift.</p>
+                        <p className="text-sm font-semibold text-gray-900">2. Subhour day-ahead layer</p>
+                        <p className="mt-1 text-[13px] leading-6 text-gray-500">Higher-resolution day-ahead series are now usable as an annual basis when the selected market has that history available.</p>
                       </div>
                       <div className="rounded-2xl bg-[#F5F5F2] p-4">
                         <p className="text-sm font-semibold text-gray-900">3. Direct handoff into /v2</p>

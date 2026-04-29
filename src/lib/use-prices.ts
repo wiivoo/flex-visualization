@@ -156,7 +156,11 @@ function deriveMonthlyStats(daily: DailySummary[], hourly: HourlyPrice[]): Month
   return stats.sort((a, b) => a.month.localeCompare(b.month))
 }
 
-export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction = DEFAULT_GB_DAY_AHEAD_AUCTION): PriceData {
+export function usePrices(
+  country: string = 'DE',
+  gbAuction: GbDayAheadAuction = DEFAULT_GB_DAY_AHEAD_AUCTION,
+  enableIntraday = false,
+): PriceData {
   const [hourly, setHourly] = useState<HourlyPrice[]>([])
   const [hourlyQH, setHourlyQH] = useState<HourlyPrice[]>([])
   const [daily, setDaily] = useState<DailySummary[]>([])
@@ -226,6 +230,7 @@ export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction =
       setMonthly([])
       setGeneration([])
       setIntradayId3([])
+      setIntradayFull([])
       setLastRealDate('')
       generationCache.current.clear()
       allGeneration.current = []
@@ -545,6 +550,10 @@ export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction =
 
   // Fetch intraday ID3 prices for selected date (+ 3 extra days for 72h view)
   useEffect(() => {
+    if (!enableIntraday || !selectedDate) {
+      setIntradayId3([])
+      return
+    }
     if (!selectedDate) return
     const controller = new AbortController()
     // Fetch 4 days of intraday data to cover 72h (3-day) view
@@ -581,10 +590,14 @@ export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction =
       })
       .catch(() => setIntradayId3([]))
     return () => controller.abort()
-  }, [selectedDate, nextDay, country])
+  }, [selectedDate, nextDay, country, enableIntraday])
 
   // Fetch full intraday data (all EPEX fields) for convergence funnel
   useEffect(() => {
+    if (!enableIntraday || !selectedDate) {
+      setIntradayFull([])
+      return
+    }
     if (!selectedDate) return
     const controller = new AbortController()
     const d2 = nextDay(selectedDate)
@@ -621,7 +634,7 @@ export function usePrices(country: string = 'DE', gbAuction: GbDayAheadAuction =
       })
       .catch(() => setIntradayFull([]))
     return () => controller.abort()
-  }, [selectedDate, nextDay, country])
+  }, [selectedDate, nextDay, country, enableIntraday])
 
   const selectedDayPrices = useMemo(
     () => hourly.filter(p => p.date === selectedDate),

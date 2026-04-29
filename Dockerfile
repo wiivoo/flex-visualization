@@ -26,8 +26,19 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
+RUN mkdir -p /app/.next/cache \
+  && chown -R nextjs:nodejs /app
+
 USER nextjs
 
 EXPOSE 3000
 
 CMD ["node", "server.js"]
+
+FROM base AS refresh
+
+COPY . .
+
+CMD ["sh", "scripts/run-data-refresh.sh"]
+
+FROM runner AS final

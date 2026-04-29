@@ -72,7 +72,6 @@ const COLORS = {
   red: 'DC2626',
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function styleHeader(row: any, colCount: number) {
   row.font = { bold: true, color: { argb: COLORS.headerFg }, size: 10 }
   row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.headerBg } }
@@ -83,7 +82,6 @@ function styleHeader(row: any, colCount: number) {
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function styleAltRows(ws: any, startRow: number, endRow: number, colCount: number) {
   for (let r = startRow; r <= endRow; r++) {
     if (r % 2 === 0) {
@@ -120,7 +118,6 @@ export async function generateEnhancedExcel(opts: EnhancedExportOptions): Promis
     .sort((a, b) => a.date.localeCompare(b.date))
 
   // Handle both ESM default and namespace imports
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const EJ = (ExcelJS as any).default ?? ExcelJS
   const wb = new EJ.Workbook()
   wb.creator = 'EV Flex Charging Dashboard'

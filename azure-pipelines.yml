@@ -7,6 +7,12 @@ pr:
 variables:
   node_version: '22.x'
   container_image_name: 'flex-visualization'
+  refresh_image_name: 'flex-visualization-refresh'
+  deploy_enabled: 'false'
+  azure_subscription_service_connection: ''
+  azure_container_registry_service_connection: ''
+  azure_container_registry_login_server: ''
+  app_service_name: ''
 
 pool:
   vmImage: ubuntu-latest
@@ -36,7 +42,39 @@ stages:
   dependsOn: Validate
   jobs:
   - job: docker_build
-    displayName: Build Docker image
+    displayName: Build Docker images
     steps:
     - script: docker build -t $(container_image_name):$(Build.BuildId) .
       displayName: Build production image
+
+    - script: docker build --target refresh -t $(refresh_image_name):$(Build.BuildId) .
+      displayName: Build refresh image
+
+- stage: Deploy
+  displayName: Push and deploy app container
+  dependsOn: Container
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'), eq(variables['deploy_enabled'], 'true'))
+  jobs:
+  - deployment: deploy_app_service
+    displayName: Push image to ACR and deploy App Service
+    environment: production
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: Docker@2
+            displayName: Build and push production image
+            inputs:
+              command: buildAndPush
+              repository: $(container_image_name)
+              dockerfile: Dockerfile
+              containerRegistry: $(azure_container_registry_service_connection)
+              tags: |
+                $(Build.BuildId)
+
+          - task: AzureWebAppContainer@1
+            displayName: Deploy App Service container
+            inputs:
+              azureSubscription: $(azure_subscription_service_connection)
+              appName: $(app_service_name)
+              containers: $(azure_container_registry_login_server)/$(container_image_name):$(Build.BuildId)

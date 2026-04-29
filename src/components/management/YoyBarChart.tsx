@@ -214,7 +214,6 @@ export const YoyBarChart = ({
               radius={[3, 3, 0, 0]}
               maxBarSize={18}
             >
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
               <LabelList dataKey="deltaPct" content={DeltaLabel as any} />
             </Bar>
           </ComposedChart>

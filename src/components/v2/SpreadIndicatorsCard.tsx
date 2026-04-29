@@ -388,7 +388,6 @@ export function SpreadIndicatorsCard({
                   <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" vertical={false} />
                   <XAxis
                     dataKey="idx"
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     tick={((props: any) => {
                       const { x, y, payload } = props as { x: number; y: number; payload: { value: number } }
                       const pt = weeklyPriceData.chartPoints[payload.value]
@@ -428,7 +427,6 @@ export function SpreadIndicatorsCard({
                   {/* Price line */}
                   <Line type="monotone" dataKey="price" stroke="#9CA3AF" strokeWidth={1.5} dot={false} activeDot={{ r: 3 }} />
                   {/* Optimal charging dots for each horizon */}
-                  {/* eslint-disable @typescript-eslint/no-explicit-any */}
                   <Line type="monotone" dataKey="overnightOptimal" stroke="none"
                     dot={((p: any) => {
                       const { cx, cy, value } = p
@@ -451,7 +449,6 @@ export function SpreadIndicatorsCard({
                       const { cx, cy, value } = p
                       return value != null ? <circle cx={cx} cy={cy} r={2.5} fill="#10B981" stroke="#fff" strokeWidth={1} /> : <g />
                     }) as any} activeDot={false} />
-                  {/* eslint-enable @typescript-eslint/no-explicit-any */}
                 </ComposedChart>
               </ResponsiveContainer>
             </div>

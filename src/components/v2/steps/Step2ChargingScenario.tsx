@@ -71,6 +71,8 @@ interface Props {
   optimization: OptimizeResult | null
   country?: 'DE' | 'NL' | 'GB'
   setCountry?: (c: 'DE' | 'NL' | 'GB') => void
+  enableGb?: boolean
+  enableIntraday?: boolean
   gbAuction?: GbDayAheadAuction
   setGbAuction?: (auction: GbDayAheadAuction) => void
   resolution: 'hour' | 'quarterhour'
@@ -85,12 +87,15 @@ export function Step2ChargingScenario({
   setScenario,
   country = 'DE',
   setCountry,
+  enableGb = true,
+  enableIntraday = false,
   gbAuction = 'daa1',
   setGbAuction,
   resolution,
   setResolution,
   onExportReady,
 }: Props) {
+  const { selectedDate, setSelectedDate, intradayId3, intradayFull, hourly, hourlyQH, daily, loading, lastRealDate } = prices
   const isGb = country === 'GB'
   const units = getPriceUnits(country)
   const intradaySeriesLabel = country === 'GB' ? 'RPD HH' : 'ID3'
@@ -168,7 +173,7 @@ export function Step2ChargingScenario({
       const idx = sortedDatesRef.current.indexOf(selectedDateRef.current)
       if (idx < 0) return
       const next = sortedDatesRef.current[idx + dir]
-      if (next) prices.setSelectedDate(next)
+      if (next) setSelectedDate(next)
     }
     step() // immediate first step
     let speed = 400
@@ -178,7 +183,7 @@ export function Step2ChargingScenario({
       scrollTimerRef.current = setTimeout(tick, speed)
     }
     scrollTimerRef.current = setTimeout(tick, speed)
-  }, [prices.setSelectedDate])
+  }, [setSelectedDate])
 
   const stopEdgeScroll = useCallback(() => {
     if (scrollTimerRef.current) {
@@ -196,12 +201,12 @@ export function Step2ChargingScenario({
 
   useEffect(() => {
     if (sortedDates.length === 0) return
-    if (!prices.selectedDate || !sortedDates.includes(prices.selectedDate)) {
-      prices.setSelectedDate(sortedDates[sortedDates.length - 1])
+    if (!selectedDate || !sortedDates.includes(selectedDate)) {
+      setSelectedDate(sortedDates[sortedDates.length - 1])
     }
-  }, [prices.selectedDate, prices.setSelectedDate, sortedDates])
+  }, [selectedDate, setSelectedDate, sortedDates])
 
-  const date1 = prices.selectedDate
+  const date1 = selectedDate
   const date2 = date1 ? nextDayStr(date1) : ''
   const date3 = date2 ? nextDayStr(date2) : ''
   const date4 = date3 ? nextDayStr(date3) : ''
@@ -232,7 +237,7 @@ export function Step2ChargingScenario({
       setRenewableData(map)
     })
     return () => controller.abort()
-  }, [date1, isThreeDay])
+  }, [date1, date2, date3, date4, isThreeDay])
 
   // Deferred scenario values — heavy computations (heatmap, monthly) use these
   // so they don't block the UI during handle dragging
@@ -243,7 +248,7 @@ export function Step2ChargingScenario({
   const deferredWeeklyPlugIns = useDeferredValue(weeklyPlugIns)
   const deferredEnergyPerSession = useDeferredValue(energyPerSession)
   // Memoize plugInDays to avoid new array ref every render (would break useMemo deps)
-  const plugInDays = useMemo(() => effectivePlugInDays(scenario), [scenario.plugInDays, scenario.weekdayPlugIns, scenario.weekendPlugIns])
+  const plugInDays = useMemo(() => effectivePlugInDays(scenario), [scenario])
   const deferredPlugInDays = useDeferredValue(plugInDays)
   // Stable key for useMemo dependency arrays (array identity changes even when contents are same)
   const plugInDaysKey = deferredPlugInDays.join(',')
@@ -257,13 +262,13 @@ export function Step2ChargingScenario({
   const subhourHours = subhourMinutes / 60
   const subhourLabel = `${subhourMinutes} min`
   const subhourPrices = useMemo(
-    () => isGb ? prices.hourlyQH.filter(p => ((p.minute ?? 0) % 30) === 0) : prices.hourlyQH,
-    [isGb, prices.hourlyQH],
+    () => isGb ? hourlyQH.filter(p => ((p.minute ?? 0) % 30) === 0) : hourlyQH,
+    [isGb, hourlyQH],
   )
   const isSubhourUnavailable = isGb
-    ? !prices.loading && subhourPrices.length === 0
+    ? !loading && subhourPrices.length === 0
     : subhourPrices.length === 0
-  const chartPrices = isQH && subhourPrices.length > 0 ? subhourPrices : prices.hourly
+  const chartPrices = isQH && subhourPrices.length > 0 ? subhourPrices : hourly
   const hasDate3Data = date3 ? chartPrices.some(p => p.date === date3) : false
 
   // ── Auto-fallback: if 3-day mode but no date3 data, switch to fullday ──
@@ -366,18 +371,18 @@ export function Step2ChargingScenario({
     // Build ID3 intraday price map
     // ID3 data is always QH (96 pts/day). When chart is hourly, aggregate to hourly avg.
     const id3Map = new Map<string, number>()
-    if (prices.intradayId3) {
+    if (intradayId3) {
       if (isQH) {
         const intradayPoints = isGb
-          ? prices.intradayId3.filter(p => ((p.minute ?? 0) % 30) === 0)
-          : prices.intradayId3
+          ? intradayId3.filter(p => ((p.minute ?? 0) % 30) === 0)
+          : intradayId3
         for (const p of intradayPoints) {
           id3Map.set(`${p.date}-${p.hour}-${p.minute ?? 0}`, p.priceCtKwh)
         }
       } else {
         // Aggregate QH → hourly: average the 4 quarter-hour prices per hour
         const hourBuckets = new Map<string, number[]>()
-        for (const p of prices.intradayId3) {
+        for (const p of intradayId3) {
           const hKey = `${p.date}-${p.hour}-0`
           const arr = hourBuckets.get(hKey) || []
           arr.push(p.priceCtKwh)
@@ -523,7 +528,7 @@ export function Step2ChargingScenario({
     }
 
     return { chartData: data, sessionCost: cost, v2gResult: v2g, hasIntraday: hasIntradayData, intradayUpliftCt: intradayUpliftCtVal, intradayUpliftEur: intradayUpliftEurVal, id3DaScheduleAvgCt: id3DaScheduleAvgCtVal, id3OptScheduleAvgCt: id3OptScheduleAvgCtVal }
-  }, [chartPrices, date1, date2, date3, energyPerSession, scenario.plugInTime, scenario.departureTime, scenario.chargingMode, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh, prices.intradayId3, subhourHours, subhourMinutes, isGb])
+  }, [chartPrices, date1, date2, date3, date4, energyPerSession, scenario.plugInTime, scenario.departureTime, isQH, isFullDay, isThreeDay, chargePowerKw, renewableData, isV2G, batteryKwh, scenario.v2gStartSoc, scenario.v2gTargetSoc, scenario.minSocPercent, scenario.dischargePowerKw, scenario.roundTripEfficiency, scenario.degradationCtKwh, intradayId3, subhourHours, subhourMinutes, isGb])
 
   // ── Fleet flex band + optimization (PROJ-36/37) ──
   const isFleetActive = showFleet && fleetView === 'fleet'
@@ -570,17 +575,17 @@ export function Step2ChargingScenario({
     if (!showProcessView || !date1 || chartData.length === 0) return null
     return computeProcessViewResults({
       prices: pvWindowPrices,
-      intradayPrices: prices.intradayId3 && prices.intradayId3.length > 0 ? prices.intradayId3 : null,
+      intradayPrices: intradayId3 && intradayId3.length > 0 ? intradayId3 : null,
       scenario,
       uncertaintyScenario,
       uncertaintyPct,
       showFleet,
       fleetConfig: showFleet ? deferredFleetConfig : null,
-      dateSeed: prices.selectedDate,
+      dateSeed: selectedDate,
       perfectBaseline: sessionCost ? { baselineAvgCt: sessionCost.baselineAvgCt, optimizedAvgCt: sessionCost.optimizedAvgCt } : null,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showProcessView, date1, chartData.length, pvWindowPrices, prices.intradayId3, pvScenarioKey, uncertaintyScenario, uncertaintyPct, showFleet, deferredFleetConfig, prices.selectedDate, sessionCost?.baselineAvgCt, sessionCost?.optimizedAvgCt])
+  }, [showProcessView, date1, chartData.length, pvWindowPrices, intradayId3, pvScenarioKey, uncertaintyScenario, uncertaintyPct, showFleet, deferredFleetConfig, selectedDate, sessionCost?.baselineAvgCt, sessionCost?.optimizedAvgCt])
 
   // Merge fleet band + schedule data into chartData for Recharts
   const enrichedChartData = useMemo(() => {
@@ -623,7 +628,7 @@ export function Step2ChargingScenario({
   const fleetActiveResult = useMemo(() => {
     if (!showFleet || !date1) return null
     const useQH = isQH && subhourPrices.length > 0
-    const sp = useQH ? subhourPrices : prices.hourly
+    const sp = useQH ? subhourPrices : hourly
     const mode = scenario.chargingMode
     // Fleet windows use the EARLIEST fleet arrival (arrivalMin) and LATEST departure
     // to capture the full range, not the single-car plugInTime
@@ -648,12 +653,12 @@ export function Step2ChargingScenario({
       baselineAvgCt: opt.baselineAvgCtKwh,
       optimizedAvgCt: opt.optimizedAvgCtKwh,
     }
-  }, [showFleet, date1, date2, date4, scenario.chargingMode, scenario.plugInTime, scenario.departureTime, fleetConfig, isQH, prices.hourly, subhourPrices])
+  }, [showFleet, date1, date2, date4, scenario.chargingMode, fleetConfig, isQH, hourly, subhourPrices])
 
   // Auto-disable ID overlay when coverage is insufficient (e.g., mode change to 3-day without data)
   useEffect(() => {
-    if (showIntraday && !hasIntraday) setShowIntraday(false)
-  }, [hasIntraday, showIntraday])
+    if (showIntraday && (!enableIntraday || !hasIntraday)) setShowIntraday(false)
+  }, [enableIntraday, hasIntraday, showIntraday])
 
   // ── Intraday convergence funnel ──
   // Always compute when intraday is shown; funnel activates when user clicks a stage
@@ -671,7 +676,7 @@ export function Step2ChargingScenario({
   }, [chartData, showIntraday])
 
   const funnel = useIntradayFunnel({
-    intradayFull: prices.intradayFull ?? [],
+    intradayFull: intradayFull ?? [],
     daPrices: funnelDaPrices,
     active: showIntraday,
     isQH,
@@ -747,7 +752,7 @@ export function Step2ChargingScenario({
       }
     })
     return { chartDataFunnel, funnelReoptSavingsCt: savingsCt, funnelReoptSavingsEur: savingsEur }
-  }, [enrichedChartData, showFunnel, funnel.hasFunnelData, funnel.currentState.points, funnel.currentState.stageIndex, energyPerSession, isQH, chargePowerKw])
+  }, [enrichedChartData, showFunnel, funnel.hasFunnelData, funnel.currentState.points, funnel.currentState.stageIndex, energyPerSession, isQH, chargePowerKw, subhourHours])
 
   // Final chart data: funnel-enriched when active, otherwise enrichedChartData
   const finalChartData = showFunnel && funnel.hasFunnelData ? chartDataWithFunnel : enrichedChartData
@@ -756,7 +761,7 @@ export function Step2ChargingScenario({
   // Uses deferred plug-in/departure values so it doesn't block drag interactions
   // Mode-aware: builds appropriate windows for overnight/fullday/threeday
   const { rollingAvgSavings, monthlySavings, dailySavingsMap } = useMemo(() => {
-    if (!date1 || prices.hourly.length === 0) return { rollingAvgSavings: 0, monthlySavings: 0, dailySavingsMap: new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>() }
+    if (!date1 || hourly.length === 0) return { rollingAvgSavings: 0, monthlySavings: 0, dailySavingsMap: new Map<string, { savingsEur: number; bAvg: number; oAvg: number; spreadCt: number; windowHours: number }>() }
     const mode = scenario.chargingMode
 
     const endDate = date1
@@ -2230,7 +2235,7 @@ export function Step2ChargingScenario({
                     })}
                   </div>
                 )}
-                {hasIntraday && (
+                {enableIntraday && hasIntraday && (
                   <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">
                     <button
                       onClick={() => setShowIntraday(false)}
@@ -2260,22 +2265,24 @@ export function Step2ChargingScenario({
                     <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]"><rect width="14" height="3.33" fill="#AE1C28"/><rect y="3.33" width="14" height="3.34" fill="#FFF"/><rect y="6.67" width="14" height="3.33" fill="#21468B"/></svg>
                     NL
                   </button>
-                  <button
-                    onClick={() => { if (!prices.loading) setCountry?.('GB') }}
-                    disabled={prices.loading && country !== 'GB'}
-                    title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom (GB) — EPEX Spot day-ahead, GBp/kWh'}
-                    className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'GB' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
-                    <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]">
-                      <rect width="14" height="10" fill="#012169"/>
-                      <path d="M0 0 L14 10 M14 0 L0 10" stroke="#FFF" strokeWidth="2"/>
-                      <path d="M0 0 L14 10 M14 0 L0 10" stroke="#C8102E" strokeWidth="0.8"/>
-                      <rect x="5.83" width="2.33" height="10" fill="#FFF"/>
-                      <rect y="3.83" width="14" height="2.33" fill="#FFF"/>
-                      <rect x="6.42" width="1.17" height="10" fill="#C8102E"/>
-                      <rect y="4.42" width="14" height="1.17" fill="#C8102E"/>
-                    </svg>
-                    UK
-                  </button>
+                  {enableGb && (
+                    <button
+                      onClick={() => { if (!prices.loading) setCountry?.('GB') }}
+                      disabled={prices.loading && country !== 'GB'}
+                      title={prices.loading && country !== 'GB' ? 'Loading...' : 'United Kingdom (GB) — EPEX Spot day-ahead, GBp/kWh'}
+                      className={`text-[11px] font-semibold px-2 py-1 rounded-full transition-colors flex items-center gap-1 ${country === 'GB' ? 'bg-white text-[#313131] shadow-sm' : 'text-gray-400 hover:text-gray-600'} disabled:opacity-30 disabled:cursor-not-allowed`}>
+                      <svg width="14" height="10" viewBox="0 0 14 10" className="rounded-[1px]">
+                        <rect width="14" height="10" fill="#012169"/>
+                        <path d="M0 0 L14 10 M14 0 L0 10" stroke="#FFF" strokeWidth="2"/>
+                        <path d="M0 0 L14 10 M14 0 L0 10" stroke="#C8102E" strokeWidth="0.8"/>
+                        <rect x="5.83" width="2.33" height="10" fill="#FFF"/>
+                        <rect y="3.83" width="14" height="2.33" fill="#FFF"/>
+                        <rect x="6.42" width="1.17" height="10" fill="#C8102E"/>
+                        <rect y="4.42" width="14" height="1.17" fill="#C8102E"/>
+                      </svg>
+                      UK
+                    </button>
+                  )}
                 </div>
                 {/* Mode toggle */}
                 <div className="flex items-center gap-1 bg-gray-100 rounded-full p-0.5 flex-shrink-0">

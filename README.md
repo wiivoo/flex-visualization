@@ -64,6 +64,7 @@ Use these first if an external engineer needs to understand or review the system
 
 - External review guide: [`docs/review/external-review-guide.md`](docs/review/external-review-guide.md)
 - Azure deployment guide: [`docs/deployment/azure-app-service.md`](docs/deployment/azure-app-service.md)
+- IT handoff note: [`docs/deployment/it-handoff.md`](docs/deployment/it-handoff.md)
 - Current data/runtime behavior: [`docs/v2/current-data-state.md`](docs/v2/current-data-state.md)
 - PV + battery audit note: [`docs/battery/pv-battery-calculator-audit-and-model-notes.md`](docs/battery/pv-battery-calculator-audit-and-model-notes.md)
 
@@ -92,18 +93,20 @@ Use these first if an external engineer needs to understand or review the system
 npm install
 ```
 
-2. Create a local env file:
+2. Create a local env file if you need optional integrations:
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-3. Set the required variables:
+3. Set any optional variables you need:
 
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `NEXT_PUBLIC_SUPABASE_URL` | Optional | Needed only if you want Supabase-backed cache/features |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Optional | Paired with the Supabase URL |
+| `ENABLE_GB` | Optional | Set to `true` to enable GB in the hosted app |
+| `ENABLE_INTRADAY` | Optional | Set to `true` only if you explicitly want to re-enable intraday surfaces |
 | `ENTSOE_API_TOKEN` | Optional | Needed for ENTSO-E-backed fetches |
 | `ENERGY_FORECAST_TOKEN` | Optional | Needed for EnergyForecast-backed fetches |
 
@@ -121,7 +124,87 @@ The app serves locally at `http://127.0.0.1:3000`.
 npm run build
 npm run lint
 docker build -t flex-visualization .
+docker run --rm --name flex-visualization -p 3000:3000 flex-visualization
+npm run smoke:deploy
 ```
+
+If the app is not on port `3000`, point the smoke check at the running target:
+
+```bash
+SMOKE_BASE_URL=http://127.0.0.1:3001 npm run smoke:deploy
+```
+
+## Docker For IT Handoff
+
+The simplest run path needs no env file at all:
+
+```bash
+docker build -t flex-visualization .
+docker run --rm --name flex-visualization -p 3000:3000 flex-visualization
+```
+
+Then open:
+
+- `http://127.0.0.1:3000/`
+- `http://127.0.0.1:3000/v2`
+
+If you want optional external integrations, create an env file from `.env.docker.example` and run:
+
+```bash
+cp .env.docker.example .env.docker
+docker run --rm --name flex-visualization --env-file .env.docker -p 3000:3000 flex-visualization
+```
+
+Without optional tokens:
+
+- the container still starts and serves the app
+- ENTSO-E-backed fallback paths may be unavailable
+- the future DE/NL forecast extension is skipped
+
+For the current deployment scope, leave both `ENABLE_GB` and `ENABLE_INTRADAY` unset so the hosted app stays focused on the DE/NL day-ahead experience.
+
+## Operational Model
+
+To keep the product working as intended, there are two separate operational pieces:
+
+1. The `flex-visualization` web container must be running so users can open the app.
+2. The scheduled data-refresh job must also be active so `public/data/` keeps getting updated.
+
+Important:
+
+- These are not two web containers.
+- The web container runs continuously.
+- The refresh flow runs on a schedule in Azure Pipelines; it does not need to stay up as a long-running service.
+- If the refresh pipeline is disabled, the app still opens, but the checked-in static market data will become stale over time.
+
+## Dockerized Refresh
+
+The repository includes a dedicated Docker `refresh` target for the Azure data-update flow.
+
+Build it:
+
+```bash
+docker build --target refresh -t flex-visualization-refresh .
+```
+
+Run it against the checked-out repo data directory:
+
+```bash
+docker run --rm \
+  -e ENTSOE_API_TOKEN=your_entsoe_token_here \
+  -v "$(pwd)/public/data:/app/public/data" \
+  flex-visualization-refresh
+```
+
+This refresh container:
+
+- updates only the DE/NL static market data files backed by SMARD and ENTSO-E
+- refreshes DE generation data used by the management layer
+- runs the smoke test
+- recomputes management aggregates
+- does not refresh or expose intraday data in the current deployment shape
+
+It does not commit or push by itself. In Azure, the pipeline runs this refresh container and then commits changed `public/data` files back to the target branch.
 
 ## Deployment Shape
 
@@ -131,6 +214,8 @@ For Azure, the cleanest target is **Azure App Service on Linux** with either:
 2. a custom container built from the included `Dockerfile`.
 
 The container path is the more reproducible option because it avoids runtime drift between local, CI, and host environments.
+
+Use `flex-visualization` as the canonical Docker image/container name. The earlier `flexviz-local-test` name was only a throwaway local test container label, not a product name.
 
 The repository includes:
 
@@ -150,6 +235,17 @@ The repository includes:
 ## Runtime Notes
 
 - Supabase is optional. Without `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`, the app still runs but skips Supabase-backed caching.
+- `ENERGY_FORECAST_TOKEN` is optional at runtime. If you omit it in Azure, `/v2` still serves normally; only the forecast extension for future DE/NL prices is skipped.
+- By default the hosted app exposes only `DE` and `NL`. Set `ENABLE_GB=true` only if you explicitly want to enable GB.
+- Intraday is disabled by default in this deployment path. Leave `ENABLE_INTRADAY` unset unless you also restore a maintained intraday refresh flow.
+
+## Azure Secret Placement
+
+- Put runtime app secrets used by the web container in Azure App Service Application Settings.
+- Put scheduled refresh secrets used by `azure-pipelines-data-refresh.yml` in Azure Pipelines secret variables or a variable group.
+- `ENTSOE_API_TOKEN` is only needed for the refresh pipeline and ENTSO-E-backed fallback paths.
+- `ENERGY_FORECAST_TOKEN` is not required for the Azure refresh pipeline.
+- For the current rollout, do not set `ENABLE_GB` or `ENABLE_INTRADAY`.
 
 ## GitHub And Azure
 

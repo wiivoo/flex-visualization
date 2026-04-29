@@ -4,7 +4,6 @@ const config = [
   {
     ignores: [
       '.next/**',
-      'playwright-report/**',
       'research/**',
       'src/_archive/**',
     ],

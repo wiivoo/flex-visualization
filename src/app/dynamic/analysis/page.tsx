@@ -275,15 +275,15 @@ function AnalysisInner() {
     return result.dailyBreakdown.sort((a, b) => a.date.localeCompare(b.date))
   }, [prices.hourly, fixedPrice, consumption, profile])
 
-  const febDays = useMemo(() => allDaily.filter(d => d.date >= febStart && d.date < febEnd), [allDaily])
-  const marDays = useMemo(() => allDaily.filter(d => d.date >= marStart && d.date < marEnd), [allDaily])
+  const febDays = useMemo(() => allDaily.filter(d => d.date >= febStart && d.date < febEnd), [allDaily, febStart, febEnd])
+  const marDays = useMemo(() => allDaily.filter(d => d.date >= marStart && d.date < marEnd), [allDaily, marStart, marEnd])
 
   const febStats = useMemo(() => computeStats(febDays, prices.hourly), [febDays, prices.hourly])
   const marStats = useMemo(() => computeStats(marDays, prices.hourly), [marDays, prices.hourly])
 
   // Hourly profiles
-  const febProfile = useMemo(() => hourlyProfile(prices.hourly, febStart, febEnd), [prices.hourly])
-  const marProfile = useMemo(() => hourlyProfile(prices.hourly, marStart, marEnd), [prices.hourly])
+  const febProfile = useMemo(() => hourlyProfile(prices.hourly, febStart, febEnd), [prices.hourly, febStart, febEnd])
+  const marProfile = useMemo(() => hourlyProfile(prices.hourly, marStart, marEnd), [prices.hourly, marStart, marEnd])
 
   // Gas generation daily aggregates
   const gasGenDaily = useMemo(() => {
@@ -338,7 +338,7 @@ function AnalysisInner() {
       febResShare: febResShare[h].length > 0 ? febResShare[h].reduce((a, b) => a + b, 0) / febResShare[h].length : 0,
       marResShare: marResShare[h].length > 0 ? marResShare[h].reduce((a, b) => a + b, 0) / marResShare[h].length : 0,
     }))
-  }, [genMix])
+  }, [genMix, marEnd])
 
   // Hourly price + gen share data for Chart 4
   const hourlyData = useMemo(() => Array.from({ length: 24 }, (_, h) => {
@@ -399,7 +399,7 @@ function AnalysisInner() {
       marPct: marMw.length > 0 ? (marCount / marMw.length) * 100 : 0,
       febMedianMw: febMedian, marMedianMw: marMedian,
     }
-  }, [genMix])
+  }, [genMix, marEnd])
 
   // ── Chart 4a: Weekly price curves (15-min QH) with gas dispatch overlay ──
   // 672 slots per week: 7 days × 96 quarter-hours
@@ -457,7 +457,7 @@ function AnalysisInner() {
         delta: marAvg - febAvg,
       }
     })
-  }, [prices.hourlyQH, genMix])
+  }, [prices.hourlyQH, genMix, febStart, febEnd, marStart, marEnd, SLOTS_PER_WEEK])
 
   // ── Chart 4b: 15-min boxplot data — combined into one array for overlay ──
   const qhBoxplotData = useMemo(() => {
@@ -502,7 +502,7 @@ function AnalysisInner() {
         marMin: mar[idx].min, marQ25: mar[idx].q25, marMedian: mar[idx].median, marQ75: mar[idx].q75, marMax: mar[idx].max,
       }
     })
-  }, [prices.hourlyQH])
+  }, [prices.hourlyQH, febStart, febEnd, marStart, marEnd])
 
   // ── Story charts: "Why spreads exploded" ──
 
@@ -532,7 +532,7 @@ function AnalysisInner() {
           isMarch: date >= marStart,
         }
       })
-  }, [prices.hourly])
+  }, [prices.hourly, febStart, marStart, marEnd])
 
   // Chart S2: Two forces — solar midday vs gas evening, grouped by period
   const twoForcesData = useMemo(() => {
@@ -574,7 +574,7 @@ function AnalysisInner() {
         marResShare: avg(marRes),
       }
     })
-  }, [prices.hourly, genMix])
+  }, [prices.hourly, genMix, febStart, febEnd, marStart, marEnd])
 
   // Chart S3: Price histogram — bucket distribution
   const histogramData = useMemo(() => {
@@ -603,7 +603,7 @@ function AnalysisInner() {
       // Negative marPct for mirrored butterfly chart
       marPctNeg: marTotal > 0 ? -(marCounts[i] / marTotal) * 100 : 0,
     }))
-  }, [prices.hourly])
+  }, [prices.hourly, marEnd])
 
   // Fact charts data: spot profiles + H25 weights + CSS/gas profitability
   const factChartData = useMemo(() => {
@@ -685,7 +685,7 @@ function AnalysisInner() {
     const marCost30 = (marCost / marDaysN) * 30
 
     return { hourlyDetail, febWeightedAvg, marWeightedAvg, febCost30, marCost30 }
-  }, [prices.hourly, cssData, febProfile, marProfile, gasHourlyProfile, febDays, marDays, profile])
+  }, [prices.hourly, cssData, febProfile, marProfile, gasHourlyProfile, febDays, marDays, profile, febStart, febEnd, marStart, marEnd])
 
   // Full timeline chart data
   const chartData = useMemo(() => {

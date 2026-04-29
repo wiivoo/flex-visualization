@@ -23,6 +23,7 @@ const RETRY_DELAY = 1000
 const ENTSOE_BASE_URL = 'https://web-api.tp.entsoe.eu/api'
 const ENTSOE_DOMAIN = '10Y1001A1001A82H' // DE-LU bidding zone
 const ENTSOE_TOKEN = process.env.ENTSOE_API_TOKEN || ''
+const USE_AWATTAR = process.env.SMARD_USE_AWATTAR !== '0'
 
 async function fetchWithRetry(url, retries = 3) {
   for (let i = 0; i < retries; i++) {
@@ -227,29 +228,34 @@ async function extendWithLatestPrices(prices, pricesQH) {
   }
 
   const gapStart = lastSmardTs + 3600000
-  console.log(`\n📡 Extending prices beyond SMARD (${lastSmardDate}) with aWATTar + ENTSO-E...`)
+  const extensionLabel = USE_AWATTAR ? 'aWATTar + ENTSO-E' : 'ENTSO-E'
+  console.log(`\n📡 Extending prices beyond SMARD (${lastSmardDate}) with ${extensionLabel}...`)
 
   let extended = 0
 
   // 1. aWATTar — fast, no auth needed, covers today + D+1
-  try {
-    const awattarUrl = `https://api.awattar.de/v1/marketdata?start=${gapStart}&end=${tomorrowEnd}`
-    const res = await fetchWithRetry(awattarUrl)
-    if (res) {
-      const data = await res.json()
-      if (data.data?.length > 0) {
-        for (const point of data.data) {
-          const ts = point.start_timestamp
-          if (!prices.has(ts)) {
-            prices.set(ts, Math.round(point.marketprice * 100) / 100) // EUR/MWh
-            extended++
+  if (USE_AWATTAR) {
+    try {
+      const awattarUrl = `https://api.awattar.de/v1/marketdata?start=${gapStart}&end=${tomorrowEnd}`
+      const res = await fetchWithRetry(awattarUrl)
+      if (res) {
+        const data = await res.json()
+        if (data.data?.length > 0) {
+          let awattarAdded = 0
+          for (const point of data.data) {
+            const ts = point.start_timestamp
+            if (!prices.has(ts)) {
+              prices.set(ts, Math.round(point.marketprice * 100) / 100) // EUR/MWh
+              extended++
+              awattarAdded++
+            }
           }
+          console.log(`   aWATTar: +${awattarAdded} hourly prices`)
         }
-        console.log(`   aWATTar: +${extended} hourly prices`)
       }
+    } catch (e) {
+      console.log(`   ⚠️  aWATTar failed: ${e.message}`)
     }
-  } catch (e) {
-    console.log(`   ⚠️  aWATTar failed: ${e.message}`)
   }
 
   // 2. ENTSO-E — fills remaining gaps (broader coverage than aWATTar)
@@ -373,7 +379,7 @@ async function main() {
     pricePoints: priceArray.length,
     priceQHPoints: priceQHArray.length,
     generationPoints: genArray.length,
-    source: 'smard.de + awattar.de + entsoe.eu',
+    source: USE_AWATTAR ? 'smard.de + awattar.de + entsoe.eu' : 'smard.de + entsoe.eu',
   }
   fs.writeFileSync(path.join(outDir, 'smard-meta.json'), JSON.stringify(meta, null, 2))
 
