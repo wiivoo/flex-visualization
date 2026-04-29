@@ -24,6 +24,7 @@ Verified on `2026-04-29`:
 
 - Build and run the app from `Dockerfile`
 - Host it on Azure App Service for Containers
+- Set `WEBSITES_PORT=3000`
 - Leave `ENABLE_GB` unset
 - Leave `ENABLE_INTRADAY` unset
 

@@ -34,6 +34,7 @@ This app is not a static SPA. It requires a Node.js server because it includes:
 
 Recommended App Service Application Settings:
 
+- `WEBSITES_PORT=3000`
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 - `ENABLE_GB`
@@ -43,6 +44,7 @@ Recommended App Service Application Settings:
 
 Notes:
 
+- `WEBSITES_PORT=3000` is required for this container on Azure App Service because the included Docker image listens on port `3000`, not port `80`.
 - `ENTSOE_API_TOKEN` is optional for the web app, but useful for ENTSO-E-backed fallback paths.
 - `ENERGY_FORECAST_TOKEN` is optional. If omitted, the app still serves `/v2`; only the forecast extension for future `DE` / `NL` prices is skipped.
 - The daily Azure refresh pipeline does not need `ENERGY_FORECAST_TOKEN`.
@@ -148,6 +150,7 @@ Create:
 Then configure:
 
 - container image source
+- `WEBSITES_PORT=3000`
 - required App Settings
 - HTTPS/custom domain as needed
 
