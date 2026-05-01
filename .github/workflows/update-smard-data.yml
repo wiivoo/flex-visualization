@@ -3,7 +3,7 @@ name: Update Day-Ahead Price Data
 on:
   schedule:
     # Run daily at 13:30 UTC = 14:30 CET / 15:30 CEST
-    # SMARD and ENTSO-E should have the latest DE/NL day-ahead data by then
+    # EPEX SPOT publishes D+1 day-ahead prices ~12:00 CET; SMARD ingests within ~1h
     - cron: '30 13 * * *'
   workflow_dispatch: # Allow manual trigger from GitHub Actions UI
 
@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Download latest SMARD data (DE)
         run: node scripts/download-smard.mjs
         env:
@@ -35,6 +38,20 @@ jobs:
         run: node scripts/update-nl.mjs
         env:
           ENTSOE_API_TOKEN: ${{ secrets.ENTSOE_API_TOKEN }}
+
+      - name: Update GB prices (EPEX day-ahead DAA 1 / DAA 2)
+        run: node scripts/update-gb.mjs
+
+      - name: Update GB intraday auctions (EPEX IDA1 / IDA2)
+        run: node scripts/update-gb-intraday-auctions.mjs
+        continue-on-error: true
+
+      - name: Update static intraday continuous files (DE / NL / GB)
+        run: |
+          node scripts/scrape-epex-intraday.mjs --area DE --static --days 4
+          node scripts/scrape-epex-intraday.mjs --area NL --static --days 4
+          node scripts/scrape-epex-intraday.mjs --area GB --static --days 4
+        continue-on-error: true
 
       - name: Smoke test static price artifacts
         run: npm run smoke:data
