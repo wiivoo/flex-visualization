@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // Enable Next.js standalone output for container builds.
   output: 'standalone',
+  allowedDevOrigins: ['127.0.0.1'],
 
   // Security headers for production
   async headers() {
