@@ -1,7 +1,7 @@
 # PROJ-43 - PV + Battery Dynamic Tariff Calculator
 
 ## Status: In Progress
-**Last Updated:** 2026-04-27
+**Last Updated:** 2026-05-05
 
 ## Dependencies
 - None
@@ -192,12 +192,42 @@ The view must use these delivered-load buckets:
 
 Rules:
 
-- The first panel is a volume panel in `kWh`, with `Household total` as a reference row and the delivered-load buckets shown underneath.
-- The second panel is a unit-cost panel in `ct/kWh` for the same delivered-load buckets.
-- PV-delivered buckets use the confirmed `0.00 ct/kWh` marginal view in this summary.
-- The third panel is a waterfall / bridge from an artificial baseline where all household load is priced at the average spot price of the replay horizon.
+- The upper part of the card remains the delivered-load cost summary:
+  - volume panel in `kWh`, with `Household total` as a reference row and the delivered-load buckets shown underneath
+  - unit-cost panel in `ct/kWh` for the same delivered-load buckets
+  - waterfall / bridge from an artificial baseline where all household load is priced at the average spot price of the replay horizon
 - The waterfall must support a toggle between `ct/kWh` and `EUR/year`.
+- PV-delivered buckets use the confirmed `0.00 ct/kWh` marginal view in this summary.
 - Export revenue must stay visually separate from the delivered-load bridge so users can distinguish `cost to serve household load` from `overall modeled net energy result`.
+- The lower explanatory area of the card replaces the current legend-table treatment with an isometric flow allocation scene. This scene is explanatory only and does not replace the upper cost summary.
+- The desktop node layout must read as one destination-led scene:
+  - `Grid` at back-left
+  - `PV` at front-left
+  - `Battery` at mid-left
+  - `Household load` as the front-right hero destination
+  - `Export` as a smaller side dock on the far-right edge
+- Bucket-to-flow mapping in the lower scene must be:
+  - `Residual grid`: `Grid -> Household`
+  - `PV`: `PV -> Household`
+  - `PV via battery`: `PV -> Battery -> Household`
+  - `Spot battery`: `Grid -> Battery -> Household`
+  - `Export`: outbound branch from the PV / battery side toward `Export`
+- The scene must use a single encoding system:
+  - lane width = annual `kWh` share
+  - lane color family = source / path family
+  - price = compact badge or caption value, not a second full-scene color encoding
+- Labels must stay concise and attached to the flow end-state, using the existing product language:
+  - short bucket label
+  - `kWh`
+  - `% of delivered load`
+  - `ct/kWh` for paid delivered paths
+  - `kWh` plus export revenue for `Export`
+- Heavier explanatory details such as modeled cost, baseline-equivalent share, and impact delta belong in tooltip, hover, tap, or expandable detail treatment rather than being permanently embedded in the scene.
+- The scene should feel like one explanatory routing diagram, not a legend, mini-table, or repeated metric grid.
+- Responsive behavior:
+  - `lg+`: full isometric scene
+  - `md`: compressed isometric scene with fewer always-visible captions
+  - `sm`: flattened stepped flow-rail fallback that preserves the same node order and bucket mapping rather than shrinking the desktop isometric drawing
 
 ## Out Of Scope
 
@@ -238,6 +268,9 @@ Rules:
 - [ ] The annual results include a three-part delivered-load allocation summary covering `kWh`, bucket-level `ct/kWh`, and a baseline-to-delivered impact bridge.
 - [ ] The impact bridge starts from an artificial all-spot household baseline, uses the delivered-load buckets consistently, and supports a `ct/kWh` / `EUR/year` toggle.
 - [ ] Export revenue is shown separately from the delivered-load bridge rather than blended into the same waterfall.
+- [ ] The lower part of the delivered allocation card replaces the legend-table presentation with a source-to-load explanatory scene that uses the defined `Grid / PV / Battery / Household / Export` layout and bucket-to-flow mapping.
+- [ ] The scene encodes `kWh` share by lane width and source/path by lane color family, while price remains a badge/caption value rather than a second scene-wide heatmap.
+- [ ] The upper delivered-load waterfall remains in place as the cost summary, while the lower scene acts as a separate explanatory layer for routing.
 - [ ] The selected-day controls let the user inspect any valid replay day without changing the annual optimization result.
 - [ ] If the requested replay year or selected day lacks sufficient data, the UI states that limitation clearly instead of showing a misleading annual result or unsupported fine-grain replay.
 
@@ -258,10 +291,16 @@ Rules:
 +-- Right Panel: `CalculatorResultsPanel`
   - `AnnualKpiStrip` (baseline vs optimized totals, savings, self-sufficiency, self-consumption)
   - `AnnualDeliveryAllocationCard`
-    - volume panel for delivered household `kWh`
-    - unit-cost panel for delivered household `ct/kWh`
-    - impact bridge from artificial all-spot baseline to gross delivered household cost
-    - separate export-credit / net-result callouts
+    - upper delivered-cost summary
+      - volume panel for delivered household `kWh`
+      - unit-cost panel for delivered household `ct/kWh`
+      - impact bridge from artificial all-spot baseline to gross delivered household cost
+      - separate export-credit / net-result callouts
+    - lower `DeliveredAllocationIsometricScene`
+      - destination-led node layout: `Grid`, `PV`, `Battery`, `Household load`, `Export`
+      - routed lanes for `Residual grid`, `PV`, `PV via battery`, `Spot battery`, and `Export`
+      - compact pinned captions for flow label, `kWh`, share, and price/revenue badge
+    - mobile fallback: `DeliveredAllocationFlowRail`
   - `FlowPermissionSummaryCard` (active operational mode summary)
   - `SelectedDayReplayCard`
   - `SelectedDayRoutingChart` (price + flows + SoC trace)
@@ -270,6 +309,7 @@ Rules:
 Notes:
 - Existing components under `src/components/battery/calculator/` remain the implementation anchor.
 - This feature adds or refines responsibilities, not a second competing calculator architecture.
+- The top delivered-load waterfall remains unchanged in role; the lower legend-table area is the part replaced by the new explanatory scene.
 
 ### 2) Data Model (plain-language domain entities)
 

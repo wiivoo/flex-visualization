@@ -1040,61 +1040,500 @@ function formatBraceDetailLabel(
   return costLabel
 }
 
-function getAllocationFlowNodes(key: string): Array<FlowNodeKey> {
-  if (key === 'gridDirect' || key === 'baseline') return ['grid', 'home']
-  if (key === 'pvDirect') return ['pv', 'home']
-  if (key === 'pvStored') return ['pv', 'battery', 'home']
-  if (key === 'gridStored') return ['grid', 'battery', 'home']
-  if (key === 'export') return ['pv', 'battery', 'grid']
-  return ['home']
+function stripedFill(color: string): string {
+  return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 12px)`
 }
 
-function AllocationFlowBadge({ node }: { node: FlowNodeKey }) {
-  const meta = FLOW_NODE_META[node]
-  const Icon = meta.icon
-
-  return (
-    <span
-      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/80 shadow-sm"
-      style={{ backgroundColor: meta.background, color: meta.text }}
-    >
-      <Icon className="h-2.5 w-2.5" />
-    </span>
-  )
+const ALLOCATION_SCENE_NODE_LAYOUT: Record<FlowNodeKey, {
+  left: string
+  top: string
+  label: string
+  eyebrow?: string
+  emphasis?: 'normal' | 'hero'
+}> = {
+  grid: {
+    left: '12%',
+    top: '46%',
+    label: 'Grid',
+    eyebrow: 'Import + export',
+  },
+  pv: {
+    left: '50%',
+    top: '16%',
+    label: 'PV',
+    eyebrow: 'On-site generation',
+  },
+  battery: {
+    left: '50%',
+    top: '82%',
+    label: 'Battery',
+    eyebrow: 'Shifted energy',
+  },
+  home: {
+    left: '84%',
+    top: '50%',
+    label: 'Household load',
+    eyebrow: 'Delivered destination',
+    emphasis: 'hero',
+  },
 }
 
-function AllocationFlowVisual({
-  columnKey,
-  label,
-  muted = false,
+function getAllocationSceneWidth(sharePct: number, maxSharePct: number): number {
+  const normalized = maxSharePct > 0 ? sharePct / maxSharePct : 0
+  return 8 + (normalized * 12)
+}
+
+function formatScenePriceBadge(
+  entry: { kind: 'bucket'; bucket: AllocationBucket } | { kind: 'export'; exportRevenueEur: number; exportAvgCt: number },
+  units: ReturnType<typeof getPriceUnits>,
+): string {
+  if (entry.kind === 'export') return `+${units.currencySym}${entry.exportRevenueEur.toFixed(0)} rev.`
+  return `${entry.bucket.unitCostCtKwh.toFixed(2)} ${units.priceUnit}`
+}
+
+function formatSceneStats(kwh: number, sharePct: number): string {
+  return `${Math.round(kwh).toLocaleString()} kWh · ${sharePct.toFixed(1)}%`
+}
+
+function AllocationSceneNode({
+  node,
 }: {
-  columnKey: string
-  label?: string
-  muted?: boolean
+  node: FlowNodeKey
 }) {
-  const nodes = getAllocationFlowNodes(columnKey)
+  const meta = ALLOCATION_SCENE_NODE_LAYOUT[node]
+  const iconMeta = FLOW_NODE_META[node]
+  const Icon = iconMeta.icon
+  const iconSize = meta.emphasis === 'hero' ? 'h-6 w-6' : 'h-5 w-5'
+  const shellSize = meta.emphasis === 'hero' ? 'h-18 w-18' : 'h-14 w-14'
 
   return (
-    <div className="flex items-center justify-center gap-1.5">
-      {nodes.map((node, index) => (
-        <span key={`${columnKey}-${node}-${index}`} className="inline-flex items-center gap-1.5">
-          <AllocationFlowBadge node={node} />
-          {index < nodes.length - 1 ? (
-            <span className={cn('text-[10px] font-semibold', muted ? 'text-slate-300' : 'text-slate-400')}>→</span>
-          ) : null}
-        </span>
-      ))}
-      {label ? (
-        <span className={cn('ml-1 text-[10px] font-semibold uppercase tracking-[0.12em]', muted ? 'text-slate-400' : 'text-slate-500')}>
-          {label}
-        </span>
-      ) : null}
+    <div
+      className="absolute -translate-x-1/2 -translate-y-1/2"
+      style={{ left: meta.left, top: meta.top }}
+    >
+      <div className="flex flex-col items-center">
+        <div
+          className={cn(
+            'relative flex items-center justify-center rounded-full border border-white/80 bg-white/82 backdrop-blur-md shadow-[0_20px_40px_rgba(15,23,42,0.14)]',
+            shellSize,
+          )}
+          style={{
+            boxShadow: `0 20px 40px rgba(15,23,42,0.14), inset 0 1px 0 rgba(255,255,255,0.85)`,
+          }}
+        >
+          <div
+            className={cn('flex items-center justify-center rounded-full', meta.emphasis === 'hero' ? 'h-14 w-14' : 'h-12 w-12')}
+            style={{ backgroundColor: iconMeta.background, color: iconMeta.text }}
+          >
+            <Icon className={iconSize} />
+          </div>
+        </div>
+        {meta.eyebrow ? (
+          <p className="mt-2.5 text-[8px] font-semibold uppercase tracking-[0.18em] text-slate-400">{meta.eyebrow}</p>
+        ) : null}
+        <p className={cn(
+          'mt-1 whitespace-nowrap text-[11px] font-semibold tracking-[0.01em] text-slate-900',
+          meta.emphasis === 'hero' && 'text-[12px]',
+        )}>
+          {meta.label}
+        </p>
+      </div>
     </div>
   )
 }
 
-function stripedFill(color: string): string {
-  return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 12px)`
+function AllocationSceneLane({
+  path,
+  color,
+  width,
+  striped = false,
+  speedSeconds = 6,
+}: {
+  path: string
+  color: string
+  width: number
+  striped?: boolean
+  speedSeconds?: number
+}) {
+  const dotCount = Math.max(2, Math.min(3, Math.round(width / 5)))
+
+  return (
+    <>
+      <path
+        d={path}
+        fill="none"
+        stroke="rgba(148,163,184,0.14)"
+        strokeWidth={width + 2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d={path}
+        fill="none"
+        stroke={color}
+        strokeWidth={width}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d={path}
+        fill="none"
+        stroke="rgba(255,255,255,0.24)"
+        strokeWidth={Math.max(width * 0.14, 1.2)}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {striped ? (
+        <path
+          d={path}
+          fill="none"
+          stroke="rgba(255,255,255,0.74)"
+          strokeWidth={Math.max(width * 0.12, 1.2)}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray="10 10"
+        />
+      ) : null}
+      {Array.from({ length: dotCount }, (_, index) => (
+        <circle
+          key={`${path}-dot-${index}`}
+          r={Math.max(width * 0.09, 1.6)}
+          fill="rgba(255,255,255,0.78)"
+          opacity={0.95 - (index * 0.12)}
+        >
+          <animateMotion
+            dur={`${speedSeconds}s`}
+            repeatCount="indefinite"
+            begin={`${index * (speedSeconds / dotCount)}s`}
+            path={path}
+            rotate="auto"
+          />
+        </circle>
+      ))}
+    </>
+  )
+}
+
+function AllocationSceneCaption({
+  title,
+  statsLine,
+  badge,
+  accentColor,
+  left,
+  top,
+  tooltip,
+  align = 'left',
+}: {
+  title: string
+  statsLine: string
+  badge: string
+  accentColor: string
+  left: string
+  top: string
+  tooltip: ReactNode
+  align?: 'left' | 'center' | 'right'
+}) {
+  const translateClass = align === 'center'
+    ? '-translate-x-1/2'
+    : align === 'right'
+      ? '-translate-x-full'
+      : ''
+
+  return (
+    <div
+      className={cn('absolute pointer-events-none', translateClass)}
+      style={{ left, top }}
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="pointer-events-auto rounded-2xl border border-white/80 bg-white/78 px-2.5 py-2 text-left shadow-[0_16px_32px_rgba(15,23,42,0.10)] backdrop-blur-md transition-transform duration-200 hover:-translate-y-0.5"
+          >
+            <div className="flex items-start gap-2.5">
+              <span className="mt-0.5 h-8 w-1.5 rounded-full" style={{ backgroundColor: accentColor }} />
+              <div className="min-w-[124px]">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400">{title}</p>
+                <p className="mt-1 text-[11px] font-semibold tabular-nums text-slate-900">{statsLine}</p>
+                <span
+                  className="mt-2 inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold tabular-nums text-slate-700"
+                  style={{ backgroundColor: `${accentColor}1F` }}
+                >
+                  {badge}
+                </span>
+              </div>
+            </div>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-[280px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  )
+}
+
+function DeliveredAllocationScene({
+  visibleBuckets,
+  showExportBucket,
+  stats,
+  units,
+}: {
+  visibleBuckets: AllocationBucket[]
+  showExportBucket: boolean
+  stats: {
+    deliveredLoadKwh: number
+    exportKwh: number
+    exportRevenueEur: number
+    exportAvgCt: number
+  }
+  units: ReturnType<typeof getPriceUnits>
+}) {
+  const exportSharePct = (stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100
+  const maxSharePct = Math.max(
+    ...visibleBuckets.map((bucket) => bucket.sharePct),
+    showExportBucket ? exportSharePct : 0,
+    1,
+  )
+
+  const laneSpecs = visibleBuckets.flatMap((bucket) => {
+    const laneWidth = getAllocationSceneWidth(bucket.sharePct, maxSharePct)
+    if (bucket.key === 'gridDirect') {
+      return [{ key: bucket.key, path: 'M192 280 L 748 280', color: bucket.color, width: laneWidth }]
+    }
+    if (bucket.key === 'pvDirect') {
+      return [{ key: bucket.key, path: 'M500 118 L 500 188 Q 500 236 548 236 L 748 236', color: bucket.color, width: laneWidth }]
+    }
+    if (bucket.key === 'pvStored') {
+      return [
+        { key: `${bucket.key}-charge`, path: 'M484 132 L 484 404', color: bucket.color, width: laneWidth },
+        { key: `${bucket.key}-serve`, path: 'M516 404 Q 560 328 622 312 L 748 312', color: bucket.color, width: laneWidth },
+      ]
+    }
+    return [
+      { key: `${bucket.key}-charge`, path: 'M206 320 Q 280 398 460 424', color: bucket.color, width: laneWidth },
+      { key: `${bucket.key}-serve`, path: 'M520 424 Q 608 332 664 328 L 748 328', color: bucket.color, width: laneWidth },
+    ]
+  })
+
+  const captionSpecs = visibleBuckets.map((bucket) => {
+    const tooltip = (
+      <div className="space-y-1.5">
+        <p className="font-medium text-slate-900">{bucket.detail}</p>
+        <p>Modeled cost: {units.currencySym}{bucket.totalCostEur.toFixed(0)}</p>
+        <p>Baseline-equivalent share: {units.currencySym}{bucket.baselineCostShareEur.toFixed(0)}</p>
+        <p>Impact vs baseline: {formatMetricDelta(bucket.impactDeltaCtKwh, 'ct', units)}</p>
+      </div>
+    )
+
+    if (bucket.key === 'gridDirect') {
+      return {
+        key: bucket.key,
+        left: '24%',
+        top: '36%',
+        align: 'left' as const,
+        accentColor: bucket.color,
+        title: bucket.shortLabel,
+        statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
+        badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
+        tooltip,
+      }
+    }
+    if (bucket.key === 'pvDirect') {
+      return {
+        key: bucket.key,
+        left: '50%',
+        top: '26%',
+        align: 'center' as const,
+        accentColor: bucket.color,
+        title: bucket.shortLabel,
+        statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
+        badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
+        tooltip,
+      }
+    }
+    if (bucket.key === 'pvStored') {
+      return {
+        key: bucket.key,
+        left: '34%',
+        top: '64%',
+        align: 'center' as const,
+        accentColor: bucket.color,
+        title: bucket.shortLabel,
+        statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
+        badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
+        tooltip,
+      }
+    }
+    return {
+      key: bucket.key,
+      left: '63%',
+      top: '66%',
+      align: 'left' as const,
+      accentColor: bucket.color,
+      title: bucket.shortLabel,
+      statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
+      badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
+      tooltip,
+    }
+  })
+
+  const mobileEntries = visibleBuckets.map((bucket) => ({
+    key: bucket.key,
+    title: bucket.shortLabel,
+    route: bucket.label,
+    sharePct: bucket.sharePct,
+    kwh: bucket.kwh,
+    color: bucket.color,
+    badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
+    tooltip: bucket.detail,
+  }))
+
+  if (showExportBucket) {
+    laneSpecs.push({
+      key: 'export',
+      path: 'M468 132 Q 430 184 344 214 L 192 214',
+      color: '#67B7D1',
+      width: getAllocationSceneWidth(exportSharePct, maxSharePct),
+      striped: true,
+    })
+    captionSpecs.push({
+      key: 'export',
+      left: '24%',
+      top: '19%',
+      align: 'left' as const,
+      accentColor: '#67B7D1',
+      title: 'Grid export',
+      statsLine: formatSceneStats(stats.exportKwh, exportSharePct),
+      badge: formatScenePriceBadge({
+        kind: 'export',
+        exportRevenueEur: stats.exportRevenueEur,
+        exportAvgCt: stats.exportAvgCt,
+      }, units),
+      tooltip: (
+        <div className="space-y-1.5">
+          <p className="font-medium text-slate-900">Outbound export goes to the grid and stays outside the delivered-load mix so revenue does not read like a household supply path.</p>
+          <p>Export volume: {Math.round(stats.exportKwh).toLocaleString()} kWh</p>
+          <p>Average export value: {stats.exportAvgCt.toFixed(2)} {units.priceUnit}</p>
+          <p>Revenue: +{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
+        </div>
+      ),
+    })
+    mobileEntries.push({
+      key: 'export',
+      title: 'Export',
+      route: 'PV -> grid export',
+      sharePct: exportSharePct,
+      kwh: stats.exportKwh,
+      color: '#67B7D1',
+      badge: formatScenePriceBadge({
+        kind: 'export',
+        exportRevenueEur: stats.exportRevenueEur,
+        exportAvgCt: stats.exportAvgCt,
+      }, units),
+      tooltip: 'Outbound branch kept separate from delivered household supply.',
+      striped: true,
+    })
+  }
+
+  return (
+    <div className="mt-5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Flow allocation scene</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Power map with straighter rails, faster dots on larger flows, and compact frosted cards.</p>
+        </div>
+      </div>
+
+      <div className="mt-4 hidden overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(180deg,#fdfdfd_0%,#f6f8fb_100%)] md:block">
+        <div className="relative aspect-[16/9]">
+          <svg viewBox="0 0 1000 560" className="h-full w-full" aria-hidden="true">
+            <defs>
+              <linearGradient id="allocation-scene-sky" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#FFFFFF" />
+                <stop offset="100%" stopColor="#F0F4FA" />
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="1000" height="560" fill="url(#allocation-scene-sky)" />
+            <path d="M150 280 L 770 280" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M500 118 L 500 430" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M770 150 L 770 410" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            {laneSpecs.map((lane) => (
+              <AllocationSceneLane
+                key={lane.key}
+                path={lane.path}
+                color={lane.color}
+                width={lane.width}
+                striped={lane.striped}
+                speedSeconds={Math.max(1.8, 6.6 - (lane.width * 0.24))}
+              />
+            ))}
+          </svg>
+
+          <div className="absolute inset-0">
+            {(['grid', 'pv', 'battery', 'home'] as const).map((node) => (
+              <AllocationSceneNode key={node} node={node} />
+            ))}
+            {captionSpecs.map((caption) => (
+              <AllocationSceneCaption
+                key={caption.key}
+                title={caption.title}
+                statsLine={caption.statsLine}
+                badge={caption.badge}
+                accentColor={caption.accentColor}
+                left={caption.left}
+                top={caption.top}
+                align={caption.align}
+                tooltip={caption.tooltip}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:hidden">
+        {mobileEntries.map((entry) => (
+          <Tooltip key={entry.key}>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className="rounded-[22px] border border-slate-200 bg-white px-4 py-3 text-left shadow-sm"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{entry.title}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">{entry.route}</p>
+                  </div>
+                  <span
+                    className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-700"
+                    style={{ background: entry.striped ? stripedFill('#67B7D1') : `${entry.color}1F` }}
+                  >
+                    {entry.badge}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.min(Math.max(entry.sharePct, 4), 100)}%`,
+                        background: entry.striped ? stripedFill('#67B7D1') : entry.color,
+                      }}
+                    />
+                  </div>
+                  <span className="text-[11px] font-semibold tabular-nums text-slate-600">{entry.sharePct.toFixed(1)}%</span>
+                </div>
+                <p className="mt-2 text-[11px] tabular-nums text-slate-500">{Math.round(entry.kwh).toLocaleString()} kWh annual flow</p>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="max-w-[260px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
+              {entry.tooltip}
+            </TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function isDarkColumnColor(color: string): boolean {
@@ -1449,17 +1888,37 @@ function DeliveredAllocationCard({
 
   return (
     <Card className="border-gray-200/80 bg-white shadow-sm">
-      <CardContent className="p-6">
-        <SectionHeading
-          eyebrow="Cost Allocation"
-          title="Delivered allocation"
-          icon={<Gauge className="h-5 w-5 text-gray-400" />}
-        />
+      <CardContent className="p-0">
+        <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+          <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(0,2.1fr)] lg:items-center">
+            <div className="pt-0.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Cost Allocation</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Delivered allocation</p>
+              <p className="mt-2 max-w-[38rem] text-[12px] leading-5 text-slate-500">
+                Compare delivered household supply paths and their modeled impact without nesting the chart inside a second card surface.
+              </p>
+            </div>
+            <div className="min-w-0">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                {visibleBuckets.map((bucket) => (
+                  <div key={`${bucket.key}-summary`} className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
+                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">{bucket.shortLabel}</p>
+                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{Math.round(bucket.kwh).toLocaleString()} kWh</p>
+                    <p className="mt-1 text-[10px] leading-4 text-gray-500">{bucket.sharePct.toFixed(1)}% of delivered load</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
 
-        <div className="rounded-2xl border border-gray-200 bg-[#FBFBF8] p-4">
-          <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="pl-4 pr-2 pb-4 pt-3 sm:pl-5 sm:pr-3">
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold text-gray-900">{chartSeries.title}</p>
+              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                {getMetricAxisLabel(chartMetric, units)}
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 pb-1 lg:justify-end">
               <SegmentedPillGroup
@@ -1498,52 +1957,44 @@ function DeliveredAllocationCard({
             </div>
           </div>
 
-          <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
-            <>
-              <div className="mb-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                  {getMetricAxisLabel(chartMetric, units)}
-                </p>
-              </div>
+          <div className="grid grid-cols-[68px_minmax(0,1fr)] items-start gap-3">
+            <div className="relative h-[340px]">
+              {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                const value = chartSeries.minValue + ((chartSeries.maxValue - chartSeries.minValue) * ratio)
+                return (
+                  <div
+                    key={`${chartMetric}-axis-${ratio}`}
+                    className="absolute inset-x-0"
+                    style={{ bottom: `${ratio * 100}%` }}
+                  >
+                    <span className="absolute right-0 top-[-10px] text-[10px] tabular-nums text-gray-400">
+                      {formatMetricValue(value, chartMetric, units)}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
 
-              <div className="grid grid-cols-[68px_minmax(0,1fr)] items-start gap-3">
+            <div className="overflow-x-auto overflow-y-visible pb-1 pt-8 -mt-8">
+              <div className="space-y-2" style={{ minWidth: `${chartMinWidthPx}px` }}>
                 <div className="relative h-[340px]">
-                  {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-                    const value = chartSeries.minValue + ((chartSeries.maxValue - chartSeries.minValue) * ratio)
-                    return (
-                      <div
-                        key={`${chartMetric}-axis-${ratio}`}
-                        className="absolute inset-x-0"
-                        style={{ bottom: `${ratio * 100}%` }}
-                      >
-                        <span className="absolute right-0 top-[-10px] text-[10px] tabular-nums text-gray-400">
-                          {formatMetricValue(value, chartMetric, units)}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
+                  {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+                    <div
+                      key={`${chartMetric}-grid-${ratio}`}
+                      className="absolute inset-x-0 border-t border-dashed border-gray-200"
+                      style={{ bottom: `${ratio * 100}%` }}
+                    />
+                  ))}
+                  <div
+                    className="absolute inset-x-0 border-t-2 border-gray-500"
+                    style={{ bottom: `${chartSeries.valueToPct(0)}%` }}
+                  />
 
-                <div className="overflow-x-auto overflow-y-visible pb-1 pt-8 -mt-8">
-                  <div className="space-y-2" style={{ minWidth: `${chartMinWidthPx}px` }}>
-                    <div className="relative h-[340px]">
-                      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
-                        <div
-                          key={`${chartMetric}-grid-${ratio}`}
-                          className="absolute inset-x-0 border-t border-dashed border-gray-200"
-                          style={{ bottom: `${ratio * 100}%` }}
-                        />
-                      ))}
-                      <div
-                        className="absolute inset-x-0 border-t-2 border-gray-500"
-                        style={{ bottom: `${chartSeries.valueToPct(0)}%` }}
-                      />
-
-                      <div
-                        className="absolute inset-0 grid gap-3"
-                        style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
-                      >
-                        {chartSeries.columns.map((column, index) => {
+                  <div
+                    className="absolute inset-0 grid gap-3"
+                    style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                  >
+                    {chartSeries.columns.map((column, index) => {
                           const previousColumn = index > 0 ? chartSeries.columns[index - 1] : null
                           const isImpactChart = displayMode === 'impact'
                           const isZeroValue = column.type === 'total'
@@ -1629,8 +2080,8 @@ function DeliveredAllocationCard({
                             right: `${barRightInsetPx}px`,
                           }
 
-                          return (
-                            <div key={column.key} className="relative">
+                      return (
+                        <div key={column.key} className="relative">
                             {showImpactConnector ? (
                               <div
                                 className="absolute left-[-12px] w-[36px] border-t-2 border-dashed border-gray-400"
@@ -1810,38 +2261,41 @@ function DeliveredAllocationCard({
                                   </span>
                                 </div>
                               ) : null}
-                            </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-
-                    <div
-                      className="grid gap-3"
-                      style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
-                    >
-                      {chartSeries.columns.map((column) => (
-                        <div
-                          key={`${column.key}-xlabel`}
-                          className="relative text-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                        >
-                          {column.separatorBefore ? (
-                            <div className="absolute bottom-0 left-[-8px] top-0 border-l-2 border-dashed border-gray-500" />
-                          ) : null}
-                          <AllocationFlowVisual columnKey={column.key} label={column.shortLabel} muted={column.key === 'export'} />
-                          {column.footerLines?.map((line, lineIndex) => (
-                            <p key={`${column.key}-footer-${lineIndex}`} className="mt-0.5 text-[10px] leading-4 tabular-nums text-gray-500">
-                              {line}
-                            </p>
-                          ))}
                         </div>
-                      ))}
-                    </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
+
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                >
+                  {chartSeries.columns.map((column) => (
+                    <div
+                      key={`${column.key}-xlabel`}
+                      className="relative text-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                    >
+                      {column.separatorBefore ? (
+                        <div className="absolute bottom-0 left-[-8px] top-0 border-l-2 border-dashed border-gray-500" />
+                      ) : null}
+                      <p className={cn(
+                        'text-[11px] font-semibold uppercase tracking-[0.12em]',
+                        column.key === 'export' ? 'text-slate-400' : 'text-slate-600',
+                      )}>
+                        {column.shortLabel}
+                      </p>
+                      {column.footerLines?.map((line, lineIndex) => (
+                        <p key={`${column.key}-footer-${lineIndex}`} className="mt-0.5 text-[10px] leading-4 tabular-nums text-gray-500">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </>
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
@@ -1866,48 +2320,12 @@ function DeliveredAllocationCard({
             </div>
           </div>
 
-          <div className="mt-4 grid gap-2">
-            {visibleBuckets.map((bucket) => (
-              <div
-                key={`${bucket.key}-legend`}
-                className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
-                    <p className="truncate text-sm font-semibold text-gray-900">{bucket.shortLabel}</p>
-                  </div>
-                  <div className="mt-1">
-                    <AllocationFlowVisual columnKey={bucket.key} />
-                  </div>
-                </div>
-                <p className="text-right text-[11px] tabular-nums text-gray-600">{Math.round(bucket.kwh).toLocaleString()} kWh</p>
-                <p className="text-right text-[11px] tabular-nums text-gray-600">{bucket.sharePct.toFixed(1)}%</p>
-                <p className="text-right text-[11px] tabular-nums text-gray-600">{bucket.unitCostCtKwh.toFixed(2)} {units.priceUnit}</p>
-                <p className="text-right text-[11px] tabular-nums text-gray-600">{units.currencySym}{bucket.totalCostEur.toFixed(0)}</p>
-              </div>
-            ))}
-            {showExportBucket ? (
-              <div className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full border border-[#67B7D1]"
-                      style={{ background: stripedFill('#67B7D1') }}
-                    />
-                    <p className="truncate text-sm font-semibold text-slate-700">Export</p>
-                  </div>
-                  <div className="mt-1">
-                    <AllocationFlowVisual columnKey="export" muted />
-                  </div>
-                </div>
-                <p className="text-right text-[11px] tabular-nums text-slate-500">{Math.round(stats.exportKwh).toLocaleString()} kWh</p>
-                <p className="text-right text-[11px] tabular-nums text-slate-500">{((stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100).toFixed(1)}%</p>
-                <p className="text-right text-[11px] tabular-nums text-slate-500">{stats.exportAvgCt.toFixed(2)} {units.priceUnit}</p>
-                <p className="text-right text-[11px] tabular-nums text-slate-500">+{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
-              </div>
-            ) : null}
-          </div>
+          <DeliveredAllocationScene
+            visibleBuckets={visibleBuckets}
+            showExportBucket={showExportBucket}
+            stats={stats}
+            units={units}
+          />
         </div>
       </CardContent>
     </Card>
