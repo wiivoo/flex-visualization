@@ -23,6 +23,7 @@ const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 const MAX_RETRIES = 5
 const BOOTSTRAP_DAYS = 7
 const MONTHS = ['Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.']
+const FORM_BUILD_SELECTOR = 'input[name="form_build_id"][value*="form-"][value]:not([value=""])'
 
 const AUCTIONS = {
   ida1: { code: 'GB-IDA1', label: 'GB-IDA1', minRows: 48 },
@@ -63,10 +64,18 @@ function decodeHtml(text) {
 
 function parseWidgetHtml(ops) {
   if (!Array.isArray(ops)) throw new Error('EPEX GB intraday AJAX response was not an array')
-  const invoke = ops.find(op => op?.command === 'invoke' && op.selector === '.js-md-widget' && op.method === 'html')
-  const html = invoke?.args?.[0]
+  const htmlOps = ops
+    .filter(op => op?.command === 'invoke' && op.selector === '.js-md-widget' && op.method === 'html')
+    .map(op => op?.args?.[0])
+    .filter(html => typeof html === 'string' && html.length > 0)
+  const html = htmlOps.at(-1)
   if (typeof html !== 'string' || html.length === 0) throw new Error('EPEX GB intraday widget HTML missing')
   return html
+}
+
+function extractUpdatedBuildId(ops) {
+  if (!Array.isArray(ops)) return ''
+  return ops.find(op => op?.command === 'update_build_id' && typeof op?.new === 'string' && op.new.length > 0)?.new || ''
 }
 
 function parseStartMinutes(label) {
@@ -110,6 +119,18 @@ function getPageUrl(date) {
   return `${EPEX_BASE_URL}?market_area=GB&delivery_date=${dateStr}&modality=Auction&sub_modality=Intraday&data_mode=table&product=15`
 }
 
+async function readFormBuildId(page) {
+  return await page.evaluate(selector => document.querySelector(selector)?.getAttribute('value') || '', FORM_BUILD_SELECTOR)
+}
+
+async function refreshSession(session, date = new Date()) {
+  session.pageUrl = getPageUrl(date)
+  session.ajaxUrl = `${session.pageUrl}&ajax_form=1`
+  await session.page.goto(session.pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 })
+  await session.page.waitForTimeout(2000)
+  session.formBuildId = await readFormBuildId(session.page)
+}
+
 async function createBrowserSession() {
   const browser = await chromium.launch({
     headless: true,
@@ -131,21 +152,25 @@ async function createBrowserSession() {
 
   const page = await context.newPage()
   const baseDate = fmtDay(new Date())
-  const pageUrl = getPageUrl(new Date(`${baseDate}T12:00:00Z`))
-  await page.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 90000 })
-  await page.waitForTimeout(2500)
-
-  return { browser, page, ajaxUrl: `${pageUrl}&ajax_form=1` }
+  const session = {
+    browser,
+    page,
+    pageUrl: '',
+    ajaxUrl: '',
+    formBuildId: '',
+  }
+  await refreshSession(session, new Date(`${baseDate}T12:00:00Z`))
+  return session
 }
 
-async function fetchAuctionDay(page, ajaxUrl, date, auctionKey) {
+async function fetchAuctionDay(session, date, auctionKey) {
   const auction = AUCTIONS[auctionKey]
   const dateLabel = formatDisplayDate(date)
+  let retriedAfterEmpty = false
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const responseText = await page.evaluate(async ({ ajaxUrl, dateLabel, auctionCode }) => {
-        const formBuildId = document.querySelector('input[name="form_build_id"][value*="form-"][value]:not([value=""])')?.getAttribute('value') || ''
+      const responseText = await session.page.evaluate(async ({ ajaxUrl, dateLabel, auctionCode, formBuildId }) => {
         const body = new URLSearchParams({
           'filters[modality]': 'Auction',
           'filters[sub_modality]': 'Intraday',
@@ -175,13 +200,24 @@ async function fetchAuctionDay(page, ajaxUrl, date, auctionKey) {
         }
 
         return await response.text()
-      }, { ajaxUrl, dateLabel, auctionCode: auction.code })
+      }, { ajaxUrl: session.ajaxUrl, dateLabel, auctionCode: auction.code, formBuildId: session.formBuildId })
 
-      const widgetHtml = parseWidgetHtml(JSON.parse(responseText))
-      return parseAuctionRows(date, widgetHtml)
+      const ops = JSON.parse(responseText)
+      const nextBuildId = extractUpdatedBuildId(ops)
+      if (nextBuildId) session.formBuildId = nextBuildId
+      const widgetHtml = parseWidgetHtml(ops)
+      const rows = parseAuctionRows(date, widgetHtml)
+      if (rows.length > 0) return rows
+      if (!retriedAfterEmpty) {
+        retriedAfterEmpty = true
+        await refreshSession(session, date)
+        continue
+      }
+      return rows
     } catch (error) {
       if (attempt === MAX_RETRIES - 1) throw error
-      await page.waitForTimeout(500 * (attempt + 1))
+      await refreshSession(session, date)
+      await session.page.waitForTimeout(500 * (attempt + 1))
       await sleep(300 * (attempt + 1))
     }
   }
@@ -239,9 +275,9 @@ function writeSeries(path, data) {
   return (statSync(path).size / 1024).toFixed(0)
 }
 
-async function detectLatestAvailableDateForAuction(page, ajaxUrl, auctionKey) {
+async function detectLatestAvailableDateForAuction(session, auctionKey) {
   const today = toUtcDay(new Date())
-  const todayProbe = await fetchAuctionDay(page, ajaxUrl, today, auctionKey).catch(() => [])
+  const todayProbe = await fetchAuctionDay(session, today, auctionKey).catch(() => [])
   if (todayProbe.length >= AUCTIONS[auctionKey].minRows) return today
   return addDays(today, -1)
 }
@@ -272,10 +308,10 @@ async function main() {
       .filter(series => series.length > 0)
       .map(series => series[series.length - 1].t),
   )
-  const { browser, page, ajaxUrl } = await createBrowserSession()
+  const session = await createBrowserSession()
   const latestAvailableDates = {
-    ida1: await detectLatestAvailableDateForAuction(page, ajaxUrl, 'ida1'),
-    ida2: await detectLatestAvailableDateForAuction(page, ajaxUrl, 'ida2'),
+    ida1: await detectLatestAvailableDateForAuction(session, 'ida1'),
+    ida2: await detectLatestAvailableDateForAuction(session, 'ida2'),
   }
   const latestAvailableDate = maxDate(latestAvailableDates.ida1, latestAvailableDates.ida2)
   const fetchStart = bootstrap
@@ -301,7 +337,7 @@ async function main() {
       const dayStr = fmtDay(day)
       if (day <= latestAvailableDates.ida1) {
         try {
-          const ida1Rows = await fetchAuctionDay(page, ajaxUrl, day, 'ida1')
+          const ida1Rows = await fetchAuctionDay(session, day, 'ida1')
           if (ida1Rows.length < AUCTIONS.ida1.minRows) throw new Error(`IDA1 returned only ${ida1Rows.length} rows`)
           for (const point of aggregateHalfHourlyToHourly(ida1Rows)) ida1HourlyMap.set(point.t, point.p)
           for (const point of expandHalfHourlyToQuarterHour(ida1Rows)) ida1QHMap.set(point.t, point.p)
@@ -312,7 +348,7 @@ async function main() {
 
       if (day <= latestAvailableDates.ida2) {
         try {
-          const ida2Rows = await fetchAuctionDay(page, ajaxUrl, day, 'ida2')
+          const ida2Rows = await fetchAuctionDay(session, day, 'ida2')
           if (ida2Rows.length < AUCTIONS.ida2.minRows) throw new Error(`IDA2 returned only ${ida2Rows.length} rows`)
           for (const point of aggregateHalfHourlyToHourly(ida2Rows)) ida2HourlyMap.set(point.t, point.p)
           for (const point of expandHalfHourlyToQuarterHour(ida2Rows)) ida2QHMap.set(point.t, point.p)
@@ -327,7 +363,7 @@ async function main() {
       }
     }
   } finally {
-    await browser.close()
+    await session.browser.close()
   }
 
   const out = {
