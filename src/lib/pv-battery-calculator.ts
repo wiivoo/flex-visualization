@@ -5,6 +5,7 @@ import type { HourlyPrice } from '@/lib/v2-config'
 
 export type PvBatteryCountry = 'DE' | 'NL'
 export type PvBatteryResolution = 'hour' | 'quarterhour'
+export type PvBatteryPlanningModel = 'deterministic' | 'rolling'
 
 export interface PvBatteryFlowPermissions {
   pvToLoad: boolean
@@ -27,6 +28,55 @@ export interface PvBatteryCalculatorScenario {
   feedInCapKw: number
   exportCompensationPct: number
   flowPermissions: PvBatteryFlowPermissions
+}
+
+export interface PvBatteryPlannerAssumptions {
+  objective: string
+  loadForecastSource: string
+  pvForecastSource: string
+  priceSource: string
+  tariffBasis: string
+  replanCadence: string
+  terminalRule: string
+}
+
+export interface PvBatteryRunProvenance {
+  runId: string
+  runTimestamp: number
+  runDate: string
+  runLabel: string
+  knownHorizonStart: number
+  knownHorizonEnd: number
+  committedFrom: number
+  committedUntil: number
+  initialSocKwh: number
+  terminalSocKwh: number | null
+  terminalRule: string
+  loadForecastSource: string
+  pvForecastSource: string
+  priceSource: string
+  tariffBasis: string
+  committedSlotCount: number
+}
+
+export interface PvBatteryStoredLot {
+  storedKwh: number
+  valueCtKwh: number
+}
+
+export interface PvBatteryInventoryState {
+  pvLots: PvBatteryStoredLot[]
+  gridLots: PvBatteryStoredLot[]
+}
+
+export interface PvBatteryOptimizationOptions {
+  initialSocKwh?: number
+  terminalSocKwh?: number | null
+  planningModel?: PvBatteryPlanningModel
+  modelLabel?: string
+  assumptions?: Partial<PvBatteryPlannerAssumptions>
+  run?: Partial<PvBatteryRunProvenance>
+  initialInventory?: PvBatteryInventoryState | null
 }
 
 export interface PvBatterySlotResult {
@@ -75,6 +125,27 @@ export interface PvBatterySlotResult {
   exportRevenueEur: number
   netCostEur: number
   savingsEur: number
+  loadForecastKwh: number
+  pvForecastKwh: number
+  slotImportCostEur: number
+  slotExportRevenueEur: number
+  slotNetCostEur: number
+  planningModel: PvBatteryPlanningModel
+  runId: string
+  runTimestamp: number
+  runLabel: string
+  knownHorizonStart: number
+  knownHorizonEnd: number
+  committedFrom: number
+  committedUntil: number
+  runInitialSocKwh: number
+  terminalRule: string
+  loadForecastSource: string
+  pvForecastSource: string
+  priceSource: string
+  tariffBasis: string
+  runSlotIndex: number
+  committedSlotIndex: number | null
 }
 
 export interface PvBatteryMonthResult {
@@ -105,6 +176,11 @@ export interface PvBatteryAnnualResult {
   selfConsumptionPct: number
   months: PvBatteryMonthResult[]
   slots: PvBatterySlotResult[]
+  planningModel: PvBatteryPlanningModel
+  modelLabel: string
+  assumptions: PvBatteryPlannerAssumptions
+  runs: PvBatteryRunProvenance[]
+  inventoryAtCommittedEnd?: PvBatteryInventoryState
 }
 
 export interface OptimizerSlotInput {
@@ -201,6 +277,10 @@ function formatLabel(price: HourlyPrice): string {
   return `${String(price.hour).padStart(2, '0')}:${String(price.minute ?? 0).padStart(2, '0')}`
 }
 
+function formatRunLabel(price: HourlyPrice): string {
+  return `${price.date} ${formatLabel(price)}`
+}
+
 function getSlotHours(prices: HourlyPrice[]): number {
   if (prices.length < 2) return 1
   return Math.max(1 / 60, (prices[1].timestamp - prices[0].timestamp) / 3_600_000)
@@ -233,6 +313,94 @@ function uniqueCandidates(values: number[]): number[] {
 
 function cloneLayers(layers: EnergyLayer[]): EnergyLayer[] {
   return layers.map((layer) => ({ ...layer }))
+}
+
+function snapshotInventory(
+  pvLots: StoredEnergyLot[],
+  gridLots: StoredEnergyLot[],
+): PvBatteryInventoryState {
+  return {
+    pvLots: pvLots.map((lot) => ({
+      storedKwh: round6(lot.storedKwh),
+      valueCtKwh: round6(lot.valueCtKwh),
+    })),
+    gridLots: gridLots.map((lot) => ({
+      storedKwh: round6(lot.storedKwh),
+      valueCtKwh: round6(lot.valueCtKwh),
+    })),
+  }
+}
+
+function getDefaultPlannerAssumptions(planningModel: PvBatteryPlanningModel): PvBatteryPlannerAssumptions {
+  if (planningModel === 'rolling') {
+    return {
+      objective: 'Minimize modeled household net electricity cost',
+      loadForecastSource: 'H25 household load forecast',
+      pvForecastSource: 'Existing PV profile plus active radiation adjustment',
+      priceSource: 'Historical published day-ahead replay',
+      tariffBasis: 'Retail import tariff with spot-linked export valuation',
+      replanCadence: 'Year-start bootstrap, then daily replanning at 12:00',
+      terminalRule: 'Final SoC equals initial SoC for each run',
+    }
+  }
+
+  return {
+    objective: 'Minimize modeled household net electricity cost',
+    loadForecastSource: 'Selected standard load profile replay',
+    pvForecastSource: 'Existing PV profile plus active radiation adjustment',
+    priceSource: 'Historical published market replay',
+    tariffBasis: 'Retail import tariff with spot-linked export valuation',
+    replanCadence: 'Single full-horizon replay',
+    terminalRule: 'Free terminal SoC',
+  }
+}
+
+function resolvePlannerAssumptions(
+  planningModel: PvBatteryPlanningModel,
+  overrides: Partial<PvBatteryPlannerAssumptions> | undefined,
+): PvBatteryPlannerAssumptions {
+  return {
+    ...getDefaultPlannerAssumptions(planningModel),
+    ...overrides,
+  }
+}
+
+function socToStateIndex(socKwh: number, capacity: number): number {
+  if (capacity <= EPSILON) return 0
+  const clampedSoc = clamp(socKwh, 0, capacity)
+  return Math.round(clampedSoc / SOC_STEP_KWH)
+}
+
+function resolveRunProvenance(
+  inputs: OptimizerSlotInput[],
+  planningModel: PvBatteryPlanningModel,
+  assumptions: PvBatteryPlannerAssumptions,
+  options: PvBatteryOptimizationOptions,
+  initialSocKwh: number,
+  terminalSocKwh: number | null,
+): PvBatteryRunProvenance {
+  const first = inputs[0].price
+  const last = inputs[inputs.length - 1].price
+  const fallbackRunLabel = formatRunLabel(first)
+
+  return {
+    runId: options.run?.runId ?? `${planningModel}-${first.date}-${formatLabel(first).replace(':', '')}`,
+    runTimestamp: options.run?.runTimestamp ?? first.timestamp,
+    runDate: options.run?.runDate ?? first.date,
+    runLabel: options.run?.runLabel ?? fallbackRunLabel,
+    knownHorizonStart: options.run?.knownHorizonStart ?? first.timestamp,
+    knownHorizonEnd: options.run?.knownHorizonEnd ?? last.timestamp,
+    committedFrom: options.run?.committedFrom ?? first.timestamp,
+    committedUntil: options.run?.committedUntil ?? last.timestamp,
+    initialSocKwh: round3(options.run?.initialSocKwh ?? initialSocKwh),
+    terminalSocKwh: options.run?.terminalSocKwh ?? (terminalSocKwh === null ? null : round3(terminalSocKwh)),
+    terminalRule: options.run?.terminalRule ?? assumptions.terminalRule,
+    loadForecastSource: options.run?.loadForecastSource ?? assumptions.loadForecastSource,
+    pvForecastSource: options.run?.pvForecastSource ?? assumptions.pvForecastSource,
+    priceSource: options.run?.priceSource ?? assumptions.priceSource,
+    tariffBasis: options.run?.tariffBasis ?? assumptions.tariffBasis,
+    committedSlotCount: options.run?.committedSlotCount ?? inputs.length,
+  }
 }
 
 function totalStoredKwh(layers: EnergyLayer[]): number {
@@ -956,7 +1124,122 @@ export function buildPvBatteryInputs(
   }))
 }
 
-export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatteryCalculatorScenario): PvBatteryAnnualResult {
+export interface PvBatteryAnnualResultMetadata {
+  planningModel: PvBatteryPlanningModel
+  modelLabel: string
+  assumptions: PvBatteryPlannerAssumptions
+  runs: PvBatteryRunProvenance[]
+}
+
+export function aggregatePvBatteryAnnualResult(
+  slots: PvBatterySlotResult[],
+  metadata: PvBatteryAnnualResultMetadata,
+): PvBatteryAnnualResult {
+  const monthMap = new Map<string, PvBatteryMonthResult>()
+  let baselineCostEur = 0
+  let gridImportCostEur = 0
+  let exportRevenueEur = 0
+  let directSelfConsumedKwh = 0
+  let gridToBatteryKwh = 0
+  let batteryToLoadKwh = 0
+  let directExportKwh = 0
+  let batteryExportKwh = 0
+  let curtailedKwh = 0
+  let gridImportKwh = 0
+  let pvGenerationKwh = 0
+  let loadKwh = 0
+  let pvBatteryToLoadKwh = 0
+
+  for (const slot of slots) {
+    const month = slot.date.slice(0, 7)
+    const monthEntry = monthMap.get(month) ?? {
+      month,
+      baselineCostEur: 0,
+      gridImportCostEur: 0,
+      exportRevenueEur: 0,
+      netCostEur: 0,
+      savingsEur: 0,
+    }
+
+    monthEntry.baselineCostEur += slot.baselineCostEur
+    monthEntry.gridImportCostEur += slot.gridImportCostEur
+    monthEntry.exportRevenueEur += slot.exportRevenueEur
+    monthEntry.netCostEur += slot.netCostEur
+    monthEntry.savingsEur += slot.savingsEur
+    monthMap.set(month, monthEntry)
+
+    baselineCostEur += slot.baselineCostEur
+    gridImportCostEur += slot.gridImportCostEur
+    exportRevenueEur += slot.exportRevenueEur
+    directSelfConsumedKwh += slot.directSelfKwh
+    gridToBatteryKwh += slot.gridToBatteryKwh
+    batteryToLoadKwh += slot.batteryToLoadKwh
+    directExportKwh += slot.directExportKwh
+    batteryExportKwh += slot.batteryExportKwh
+    curtailedKwh += slot.curtailedKwh
+    gridImportKwh += slot.gridImportKwh
+    pvGenerationKwh += slot.pvKwh
+    loadKwh += slot.loadKwh
+    pvBatteryToLoadKwh += slot.batteryPvToLoadKwh
+  }
+
+  const netCostEur = gridImportCostEur - exportRevenueEur
+  const savingsEur = baselineCostEur - netCostEur
+  const selfSufficiencyPct = loadKwh > 0
+    ? ((directSelfConsumedKwh + pvBatteryToLoadKwh) / loadKwh) * 100
+    : 0
+  const selfConsumptionPct = pvGenerationKwh > 0
+    ? ((directSelfConsumedKwh + pvBatteryToLoadKwh) / pvGenerationKwh) * 100
+    : 0
+
+  return {
+    baselineCostEur: round2(baselineCostEur),
+    gridImportCostEur: round2(gridImportCostEur),
+    exportRevenueEur: round2(exportRevenueEur),
+    netCostEur: round2(netCostEur),
+    savingsEur: round2(savingsEur),
+    directSelfConsumedKwh: round2(directSelfConsumedKwh),
+    gridToBatteryKwh: round2(gridToBatteryKwh),
+    batteryToLoadKwh: round2(batteryToLoadKwh),
+    directExportKwh: round2(directExportKwh),
+    batteryExportKwh: round2(batteryExportKwh),
+    curtailedKwh: round2(curtailedKwh),
+    gridImportKwh: round2(gridImportKwh),
+    pvGenerationKwh: round2(pvGenerationKwh),
+    loadKwh: round2(loadKwh),
+    selfSufficiencyPct: round2(selfSufficiencyPct),
+    selfConsumptionPct: round2(selfConsumptionPct),
+    months: [...monthMap.values()]
+      .sort((a, b) => a.month.localeCompare(b.month))
+      .map((month) => ({
+        ...month,
+        baselineCostEur: round2(month.baselineCostEur),
+        gridImportCostEur: round2(month.gridImportCostEur),
+        exportRevenueEur: round2(month.exportRevenueEur),
+        netCostEur: round2(month.netCostEur),
+        savingsEur: round2(month.savingsEur),
+      })),
+    slots,
+    planningModel: metadata.planningModel,
+    modelLabel: metadata.modelLabel,
+    assumptions: metadata.assumptions,
+    runs: metadata.runs,
+  }
+}
+
+export function optimizePvBatteryWithOptions(
+  inputs: OptimizerSlotInput[],
+  scenario: PvBatteryCalculatorScenario,
+  options: PvBatteryOptimizationOptions = {},
+): PvBatteryAnnualResult {
+  const planningModel = options.planningModel ?? 'deterministic'
+  const modelLabel = options.modelLabel ?? (
+    planningModel === 'rolling'
+      ? 'Rolling day-ahead planner'
+      : 'Deterministic replay'
+  )
+  const assumptions = resolvePlannerAssumptions(planningModel, options.assumptions)
+
   if (inputs.length === 0) {
     return {
       baselineCostEur: 0,
@@ -977,6 +1260,10 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       selfConsumptionPct: 0,
       months: [],
       slots: [],
+      planningModel,
+      modelLabel,
+      assumptions,
+      runs: [],
     }
   }
 
@@ -989,8 +1276,26 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
   const permissions = normalizeFlowPermissions(scenario.flowPermissions)
   const stateCount = Math.max(1, Math.floor(capacity / SOC_STEP_KWH + 1e-9) + 1)
   const bestNext = Array.from({ length: inputs.length }, () => new Uint16Array(stateCount))
+  const initialStateIndex = Math.min(stateCount - 1, Math.max(0, socToStateIndex(options.initialSocKwh ?? 0, capacity)))
+  const initialSocKwh = initialStateIndex * SOC_STEP_KWH
+  const targetTerminalIndex = options.terminalSocKwh === null || options.terminalSocKwh === undefined
+    ? null
+    : Math.min(stateCount - 1, Math.max(0, socToStateIndex(options.terminalSocKwh, capacity)))
+  const terminalSocKwh = targetTerminalIndex === null ? null : targetTerminalIndex * SOC_STEP_KWH
+  const runProvenance = resolveRunProvenance(
+    inputs,
+    planningModel,
+    assumptions,
+    options,
+    initialSocKwh,
+    terminalSocKwh,
+  )
 
   let nextValues = new Float64Array(stateCount)
+  if (targetTerminalIndex !== null) {
+    nextValues.fill(Number.POSITIVE_INFINITY)
+    nextValues[targetTerminalIndex] = 0
+  }
 
   for (let slotIndex = inputs.length - 1; slotIndex >= 0; slotIndex--) {
     const currentValues = new Float64Array(stateCount)
@@ -1050,9 +1355,13 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
     nextValues = currentValues
   }
 
+  if (!Number.isFinite(nextValues[initialStateIndex])) {
+    throw new Error('optimizePvBattery: no feasible path for requested initial/terminal SoC conditions')
+  }
+
   const monthMap = new Map<string, PvBatteryMonthResult>()
   const slots: PvBatterySlotResult[] = []
-  let stateIndex = 0
+  let stateIndex = initialStateIndex
 
   let baselineCostEur = 0
   let gridImportCostEur = 0
@@ -1067,8 +1376,18 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
   let pvGenerationKwh = 0
   let loadKwh = 0
   let pvBatteryToLoadKwh = 0
-  const pvLots: StoredEnergyLot[] = []
-  const gridLots: StoredEnergyLot[] = []
+  const pvLots: StoredEnergyLot[] = options.initialInventory?.pvLots.map((lot) => ({
+    storedKwh: lot.storedKwh,
+    valueCtKwh: lot.valueCtKwh,
+  })) ?? []
+  const gridLots: StoredEnergyLot[] = options.initialInventory?.gridLots.map((lot) => ({
+    storedKwh: lot.storedKwh,
+    valueCtKwh: lot.valueCtKwh,
+  })) ?? []
+  if (!options.initialInventory && initialSocKwh > EPSILON) {
+    insertStoredLot(gridLots, initialSocKwh, inputs[0].importPriceCtKwh)
+  }
+  let inventoryAtCommittedEnd: PvBatteryInventoryState | undefined
 
   for (let slotIndex = 0; slotIndex < inputs.length; slotIndex++) {
     const slot = inputs[slotIndex]
@@ -1181,7 +1500,32 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
       exportRevenueEur: round3(slotExportRevenueEur),
       netCostEur: round3(slotNetCostEur),
       savingsEur: round3(slotSavingsEur),
+      loadForecastKwh: round3(slot.loadKwh),
+      pvForecastKwh: round3(slot.pvKwh),
+      slotImportCostEur: round3(slotImportCostEur),
+      slotExportRevenueEur: round3(slotExportRevenueEur),
+      slotNetCostEur: round3(slotNetCostEur),
+      planningModel,
+      runId: runProvenance.runId,
+      runTimestamp: runProvenance.runTimestamp,
+      runLabel: runProvenance.runLabel,
+      knownHorizonStart: runProvenance.knownHorizonStart,
+      knownHorizonEnd: runProvenance.knownHorizonEnd,
+      committedFrom: runProvenance.committedFrom,
+      committedUntil: runProvenance.committedUntil,
+      runInitialSocKwh: round3(runProvenance.initialSocKwh),
+      terminalRule: runProvenance.terminalRule,
+      loadForecastSource: runProvenance.loadForecastSource,
+      pvForecastSource: runProvenance.pvForecastSource,
+      priceSource: runProvenance.priceSource,
+      tariffBasis: runProvenance.tariffBasis,
+      runSlotIndex: slotIndex,
+      committedSlotIndex: slotIndex < runProvenance.committedSlotCount ? slotIndex : null,
     })
+
+    if (slotIndex === runProvenance.committedSlotCount - 1) {
+      inventoryAtCommittedEnd = snapshotInventory(pvLots, gridLots)
+    }
 
     stateIndex = nextIndex
   }
@@ -1223,5 +1567,17 @@ export function optimizePvBattery(inputs: OptimizerSlotInput[], scenario: PvBatt
         savingsEur: round2(month.savingsEur),
       })),
     slots,
+    planningModel,
+    modelLabel,
+    assumptions,
+    runs: [runProvenance],
+    inventoryAtCommittedEnd: inventoryAtCommittedEnd ?? snapshotInventory(pvLots, gridLots),
   }
+}
+
+export function optimizePvBattery(
+  inputs: OptimizerSlotInput[],
+  scenario: PvBatteryCalculatorScenario,
+): PvBatteryAnnualResult {
+  return optimizePvBatteryWithOptions(inputs, scenario)
 }

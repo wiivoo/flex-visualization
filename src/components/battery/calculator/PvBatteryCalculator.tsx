@@ -5,6 +5,7 @@ import { Suspense, type ReactNode, useDeferredValue, useEffect, useMemo, useRef,
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 
+import { ConsumptionPriceBlockCard } from '@/components/battery/calculator/ConsumptionPriceBlockCard'
 import { PvBatteryDayChart } from '@/components/battery/calculator/PvBatteryDayChart'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { Card, CardContent } from '@/components/ui/card'
@@ -18,13 +19,16 @@ import { useBatteryProfiles } from '@/lib/use-battery-profiles'
 import {
   buildPvBatteryInputs,
   getAvailablePvBatteryYears,
-  optimizePvBattery,
+  optimizePvBatteryWithOptions,
   type PvBatteryAnnualResult,
   type PvBatteryCalculatorScenario,
   type PvBatteryCountry,
   type PvBatteryFlowPermissions,
+  type PvBatteryPlannerAssumptions,
+  type PvBatteryPlanningModel,
   type PvBatteryResolution,
 } from '@/lib/pv-battery-calculator'
+import { optimizePvBatteryRollingReplay } from '@/lib/pv-battery-rolling-replay'
 import { getDefaultTariffId, getTariffsFor } from '@/lib/retail-tariffs'
 import { usePrices } from '@/lib/use-prices'
 import { cn } from '@/lib/utils'
@@ -163,6 +167,7 @@ const FLOW_ROUTE_GRAPH: Array<{
 interface CalculatorState {
   country: PvBatteryCountry
   tariffId: string
+  planningModel: PvBatteryPlanningModel
   year: number
   viewHours: 24 | 48 | 72
   resolution: PvBatteryResolution
@@ -172,6 +177,7 @@ interface CalculatorState {
   pvCapacityWp: number
   pvZipCode: string
   usableKwh: number
+  initialSocKwh: number
   maxChargeKw: number
   maxDischargeKw: number
   roundTripEff: number
@@ -182,6 +188,7 @@ interface CalculatorState {
 function sameState(a: CalculatorState, b: CalculatorState): boolean {
   return a.country === b.country
     && a.tariffId === b.tariffId
+    && a.planningModel === b.planningModel
     && a.year === b.year
     && a.viewHours === b.viewHours
     && a.resolution === b.resolution
@@ -191,6 +198,7 @@ function sameState(a: CalculatorState, b: CalculatorState): boolean {
     && a.pvCapacityWp === b.pvCapacityWp
     && a.pvZipCode === b.pvZipCode
     && a.usableKwh === b.usableKwh
+    && a.initialSocKwh === b.initialSocKwh
     && a.maxChargeKw === b.maxChargeKw
     && a.maxDischargeKw === b.maxDischargeKw
     && a.roundTripEff === b.roundTripEff
@@ -201,6 +209,7 @@ function sameState(a: CalculatorState, b: CalculatorState): boolean {
 const DEFAULT_STATE: CalculatorState = {
   country: CALCULATOR_COUNTRY,
   tariffId: 'enviam-vision',
+  planningModel: 'deterministic',
   year: 0,
   viewHours: 24,
   resolution: 'quarterhour',
@@ -210,6 +219,7 @@ const DEFAULT_STATE: CalculatorState = {
   pvCapacityWp: 8000,
   pvZipCode: '',
   usableKwh: 10,
+  initialSocKwh: 5,
   maxChargeKw: 5,
   maxDischargeKw: 5,
   roundTripEff: 0.9,
@@ -318,6 +328,7 @@ function parseState(params: URLSearchParams): CalculatorState {
   const loadProfileId = isAllowedDeLoadProfile(rawLoadProfileId)
     ? rawLoadProfileId
     : getDefaultCalculatorLoadProfileId(country)
+  const planningModel: PvBatteryPlanningModel = params.get('model') === 'rolling' ? 'rolling' : 'deterministic'
   const parsedYear = Number(params.get('year'))
   const tariffIds = new Set(getTariffsFor(country).map((tariff) => tariff.id))
   const tariffId = tariffIds.has(params.get('tariff') ?? '')
@@ -338,10 +349,13 @@ function parseState(params: URLSearchParams): CalculatorState {
 
   const zipCodeRaw = params.get('pvzip') ?? ''
   const pvZipCode = /^\d{5}$/.test(zipCodeRaw) ? zipCodeRaw : ''
+  const usableKwh = getNum('battery', DEFAULT_STATE.usableKwh, 0, 20)
+  const initialSocDefault = usableKwh > 0 ? usableKwh / 2 : 0
 
   return {
     country,
     tariffId,
+    planningModel,
     year: Number.isFinite(parsedYear) ? parsedYear : 0,
     viewHours,
     resolution,
@@ -350,7 +364,8 @@ function parseState(params: URLSearchParams): CalculatorState {
     annualLoadKwh: getNum('load', DEFAULT_STATE.annualLoadKwh, 1500, 15000),
     pvCapacityWp: getNum('pv', DEFAULT_STATE.pvCapacityWp, 0, 20000),
     pvZipCode,
-    usableKwh: getNum('battery', DEFAULT_STATE.usableKwh, 0, 20),
+    usableKwh,
+    initialSocKwh: getNum('soc', initialSocDefault, 0, Math.max(usableKwh, 0)),
     maxChargeKw: getNum('charge', DEFAULT_STATE.maxChargeKw, 1, 15),
     maxDischargeKw: getNum('discharge', DEFAULT_STATE.maxDischargeKw, 1, 15),
     roundTripEff: getNum('eff', DEFAULT_STATE.roundTripEff, 0.75, 0.96),
@@ -381,6 +396,61 @@ function formatMonthLabel(month: string): string {
   return new Date(Number(year), Number(mm) - 1, 1).toLocaleDateString('en-US', {
     month: 'short',
   })
+}
+
+function getPlanningModelLabel(planningModel: PvBatteryPlanningModel): string {
+  return planningModel === 'rolling'
+    ? 'Rolling day-ahead planner'
+    : 'Deterministic replay'
+}
+
+function getPlanningModelSummary(planningModel: PvBatteryPlanningModel): string {
+  return planningModel === 'rolling'
+    ? 'Rebuilds the year as a stitched chain of publication-time runs. Each run knows the remaining day plus the next day, commits only until the next 12:00 replan, and returns to its starting SoC by horizon end.'
+    : 'Uses the full selected replay year in one deterministic solve. This is the current audit baseline: one horizon, full hindsight, and a free terminal SoC.'
+}
+
+function getPvForecastSourceLabel(pvZipCode: string): string {
+  return pvZipCode
+    ? 'Existing PV profile plus location-based radiation adjustment'
+    : 'Existing PV profile plus default German radiation adjustment'
+}
+
+function buildPlannerAssumptions({
+  planningModel,
+  loadProfileLabel,
+  tariffLabel,
+  pvZipCode,
+}: {
+  planningModel: PvBatteryPlanningModel
+  loadProfileLabel: string
+  tariffLabel: string
+  pvZipCode: string
+}): PvBatteryPlannerAssumptions {
+  const pvForecastSource = getPvForecastSourceLabel(pvZipCode)
+  const tariffBasis = `${tariffLabel} retail import tariff with ${getAutomaticExportLabel(CALCULATOR_COUNTRY)} export valuation`
+
+  if (planningModel === 'rolling') {
+    return {
+      objective: 'Minimize modeled household net electricity cost',
+      loadForecastSource: 'H25 household load forecast',
+      pvForecastSource,
+      priceSource: 'Historical day-ahead replay, replanned on publication events',
+      tariffBasis,
+      replanCadence: 'Year-start bootstrap, then daily replanning at 12:00',
+      terminalRule: 'Each run must end with the same SoC it started with',
+    }
+  }
+
+  return {
+    objective: 'Minimize modeled household net electricity cost',
+    loadForecastSource: `${loadProfileLabel} standard load replay`,
+    pvForecastSource,
+    priceSource: 'Historical full-year replay solved in one pass',
+    tariffBasis,
+    replanCadence: 'Single full-horizon replay',
+    terminalRule: 'Free terminal SoC at the end of the selected year',
+  }
 }
 
 function SegmentedPillGroup({
@@ -633,7 +703,10 @@ function FlowRouteCard({
           const routeKey = route.routeKey
 
           return (
-            <div key={`${source}-${route.target}`} className={cn(spread && 'flex-1')}>
+            <div
+              key={`${source}-${route.target}-${routeKey ?? route.arrowDirection ?? 'static'}`}
+              className={cn(spread && 'flex-1')}
+            >
               <FlowDestinationSlot
                 target={route.target}
                 routeKey={routeKey}
@@ -859,7 +932,7 @@ function AnnualHero({
 }
 
 type AllocationBucketKey = 'gridDirect' | 'pvDirect' | 'pvStored' | 'gridStored'
-type AllocationDisplayMode = 'volume' | 'cost' | 'impact'
+type AllocationDisplayMode = 'volume' | 'impact'
 type AllocationVolumeMode = 'abs' | 'share'
 type AllocationMetricKind = 'kwh' | 'share' | 'ct' | 'eur'
 
@@ -886,6 +959,8 @@ interface WaterfallChartColumn {
   type: 'delta' | 'total'
   color: string
   priceCtKwh: number
+  braceLabel?: string
+  braceDetailLabel?: string
   fillSegments?: Array<{ color: string; ratio: number; striped?: boolean }>
   footerLines?: string[]
   separatorBefore?: boolean
@@ -950,6 +1025,74 @@ function formatCenteredPriceLabel(value: number, units: ReturnType<typeof getPri
   return `${value.toFixed(2)} ${units.priceUnit}`
 }
 
+function formatBracePriceLabel(value: number, priceUnit: string): string {
+  return `${value.toFixed(1)} ${priceUnit}`
+}
+
+function formatBraceDetailLabel(
+  valueEur: number,
+  sharePct: number | null,
+  volumeMode: AllocationVolumeMode,
+  units: ReturnType<typeof getPriceUnits>,
+): string {
+  const costLabel = formatMetricValue(valueEur, 'eur', units)
+  if (volumeMode === 'share' && sharePct !== null) return `${costLabel} / ${sharePct.toFixed(1)}%`
+  return costLabel
+}
+
+function getAllocationFlowNodes(key: string): Array<FlowNodeKey> {
+  if (key === 'gridDirect' || key === 'baseline') return ['grid', 'home']
+  if (key === 'pvDirect') return ['pv', 'home']
+  if (key === 'pvStored') return ['pv', 'battery', 'home']
+  if (key === 'gridStored') return ['grid', 'battery', 'home']
+  if (key === 'export') return ['pv', 'battery', 'grid']
+  return ['home']
+}
+
+function AllocationFlowBadge({ node }: { node: FlowNodeKey }) {
+  const meta = FLOW_NODE_META[node]
+  const Icon = meta.icon
+
+  return (
+    <span
+      className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/80 shadow-sm"
+      style={{ backgroundColor: meta.background, color: meta.text }}
+    >
+      <Icon className="h-2.5 w-2.5" />
+    </span>
+  )
+}
+
+function AllocationFlowVisual({
+  columnKey,
+  label,
+  muted = false,
+}: {
+  columnKey: string
+  label?: string
+  muted?: boolean
+}) {
+  const nodes = getAllocationFlowNodes(columnKey)
+
+  return (
+    <div className="flex items-center justify-center gap-1.5">
+      {nodes.map((node, index) => (
+        <span key={`${columnKey}-${node}-${index}`} className="inline-flex items-center gap-1.5">
+          <AllocationFlowBadge node={node} />
+          {index < nodes.length - 1 ? (
+            <span className={cn('text-[10px] font-semibold', muted ? 'text-slate-300' : 'text-slate-400')}>→</span>
+          ) : null}
+        </span>
+      ))}
+      {label ? (
+        <span className={cn('ml-1 text-[10px] font-semibold uppercase tracking-[0.12em]', muted ? 'text-slate-400' : 'text-slate-500')}>
+          {label}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 function stripedFill(color: string): string {
   return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 12px)`
 }
@@ -967,9 +1110,15 @@ function isDarkColumnColor(color: string): boolean {
 function DeliveredAllocationCard({
   annual,
   units,
+  flowPermissions,
+  isPvSelected,
+  isBatterySelected,
 }: {
   annual: PvBatteryAnnualResult
   units: ReturnType<typeof getPriceUnits>
+  flowPermissions: FlowPermissions
+  isPvSelected: boolean
+  isBatterySelected: boolean
 }) {
   const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>('volume')
   const [volumeMode, setVolumeMode] = useState<AllocationVolumeMode>('abs')
@@ -1096,127 +1245,52 @@ function DeliveredAllocationCard({
   }, [annual])
 
   const chartMetric = useMemo<AllocationMetricKind>(() => {
-    if (displayMode === 'volume') return volumeMode === 'abs' ? 'kwh' : 'share'
-    if (displayMode === 'cost') return 'eur'
-    return 'ct'
+    if (displayMode === 'impact') return 'ct'
+    return volumeMode === 'abs' ? 'kwh' : 'share'
   }, [displayMode, volumeMode])
 
-  const costFlowBuckets = useMemo(() => {
-    const costFlowOrder: AllocationBucketKey[] = ['gridDirect', 'gridStored', 'pvStored', 'pvDirect']
-    return costFlowOrder
+  const visibleBuckets = useMemo(() => {
+    const orderedKeys: AllocationBucketKey[] = ['gridDirect', 'pvDirect', 'pvStored', 'gridStored']
+    return orderedKeys
       .map((key) => stats.buckets.find((bucket) => bucket.key === key))
-      .filter((bucket): bucket is AllocationBucket => Boolean(bucket))
-  }, [stats.buckets])
+      .filter((bucket): bucket is AllocationBucket => {
+        if (!bucket || bucket.kwh <= 1e-6) return false
+        if (bucket.key === 'gridDirect') return true
+        if (bucket.key === 'pvDirect') return isPvSelected && flowPermissions.pvToLoad
+        if (bucket.key === 'pvStored') return isPvSelected && isBatterySelected && flowPermissions.pvToBattery && flowPermissions.batteryToLoad
+        return isBatterySelected && flowPermissions.gridToBattery && flowPermissions.batteryToLoad
+      })
+  }, [flowPermissions, isBatterySelected, isPvSelected, stats.buckets])
+
+  const showExportBucket = useMemo(
+    () => stats.exportKwh > 1e-6 && (
+      (isPvSelected && flowPermissions.pvToGrid) || (isBatterySelected && flowPermissions.batteryToGrid)
+    ),
+    [flowPermissions, isBatterySelected, isPvSelected, stats.exportKwh],
+  )
 
   const chartSeries = useMemo(() => {
     let columns: WaterfallChartColumn[] = []
     let title = ''
     let description = ''
     let totalLabel = ''
-    const pvDirect = stats.buckets.find((bucket) => bucket.key === 'pvDirect')
-    const pvStored = stats.buckets.find((bucket) => bucket.key === 'pvStored')
-    const gridDirect = stats.buckets.find((bucket) => bucket.key === 'gridDirect')
-    const gridStored = stats.buckets.find((bucket) => bucket.key === 'gridStored')
 
     if (displayMode === 'volume') {
-      title = volumeMode === 'abs' ? 'Delivered household volume build-up' : 'Delivered household volume share build-up'
-      description = volumeMode === 'abs'
-        ? 'Each bar adds its delivered household kWh until the household total, with export shown separately to the right.'
-        : 'Each bar adds its share of household load until the final 100% household total, with export shown separately to the right.'
-      totalLabel = volumeMode === 'abs'
-        ? formatMetricValue(stats.deliveredLoadKwh, 'kwh', units)
-        : formatMetricValue(100, 'share', units)
-
-      let running = 0
-      const gridDelta = volumeMode === 'abs' ? (gridDirect?.kwh ?? 0) : (gridDirect?.sharePct ?? 0)
-      columns.push({
-        key: 'gridDirect',
-        shortLabel: 'Residual grid',
-        label: 'Residual grid -> Load',
-        type: 'delta',
-        color: gridDirect?.color ?? '#7D8797',
-        priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
-        fillSegments: [{ color: gridDirect?.color ?? '#7D8797', ratio: 1 }],
-        startValue: running,
-        endValue: running + gridDelta,
-        deltaValue: gridDelta,
-      })
-      running += gridDelta
-
-      columns.push({
-        key: 'pvDirect',
-        shortLabel: 'PV',
-        label: 'PV -> Load',
-        type: 'delta',
-        color: pvDirect?.color ?? '#E9B94A',
-        priceCtKwh: 0,
-        fillSegments: [{ color: pvDirect?.color ?? '#E9B94A', ratio: 1 }],
-        startValue: running,
-        endValue: running + (volumeMode === 'abs' ? (pvDirect?.kwh ?? 0) : (pvDirect?.sharePct ?? 0)),
-        deltaValue: volumeMode === 'abs' ? (pvDirect?.kwh ?? 0) : (pvDirect?.sharePct ?? 0),
-      })
-      running += volumeMode === 'abs' ? (pvDirect?.kwh ?? 0) : (pvDirect?.sharePct ?? 0)
-
-      columns.push({
-        key: 'pvStored',
-        shortLabel: 'PV via battery',
-        label: 'PV -> Battery -> Load',
-        type: 'delta',
-        color: pvStored?.color ?? '#D9B24E',
-        priceCtKwh: 0,
-        fillSegments: [{ color: pvStored?.color ?? '#D9B24E', ratio: 1 }],
-        startValue: running,
-        endValue: running + (volumeMode === 'abs' ? (pvStored?.kwh ?? 0) : (pvStored?.sharePct ?? 0)),
-        deltaValue: volumeMode === 'abs' ? (pvStored?.kwh ?? 0) : (pvStored?.sharePct ?? 0),
-      })
-      running += volumeMode === 'abs' ? (pvStored?.kwh ?? 0) : (pvStored?.sharePct ?? 0)
-
-      const spotDelta = volumeMode === 'abs' ? (gridStored?.kwh ?? 0) : (gridStored?.sharePct ?? 0)
-      columns.push({
-        key: 'gridStored',
-        shortLabel: 'Spot battery',
-        label: 'Grid -> Battery -> Load',
-        type: 'delta',
-        color: gridStored?.color ?? '#2F6FB3',
-        priceCtKwh: gridStored?.unitCostCtKwh ?? 0,
-        fillSegments: [{ color: gridStored?.color ?? '#2F6FB3', ratio: 1 }],
-        startValue: running,
-        endValue: running + spotDelta,
-        deltaValue: spotDelta,
-      })
-      running += spotDelta
-
-      const exportTotal = volumeMode === 'abs'
+      const usesAbsoluteBasis = volumeMode === 'abs'
+      const basisMetric: AllocationMetricKind = usesAbsoluteBasis ? 'kwh' : 'share'
+      const basisLabel = usesAbsoluteBasis ? 'delivered household kWh' : 'share of household load'
+      const totalBasisValue = usesAbsoluteBasis ? stats.deliveredLoadKwh : 100
+      const exportBasisValue = usesAbsoluteBasis
         ? stats.exportKwh
         : ((stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100)
-      columns.push({
-        key: 'total',
-        shortLabel: 'Household',
-        label: 'Household total',
-        type: 'total',
-        color: '#111827',
-        priceCtKwh: stats.grossDeliveredCt,
-        fillSegments: [{ color: '#111827', ratio: 1 }],
-        totalValue: running,
-      })
-      columns.push({
-        key: 'export',
-        shortLabel: 'Export',
-        label: 'Export outside household total',
-        type: 'total',
-        color: '#67B7D1',
-        priceCtKwh: stats.exportAvgCt,
-        fillSegments: [{ color: '#67B7D1', ratio: 1, striped: true }],
-        separatorBefore: true,
-        totalValue: exportTotal,
-      })
-    } else if (displayMode === 'cost') {
-      title = 'Absolute yearly cost build-up'
-      description = 'Uses the same waterfall grammar as volume, but each bucket shows absolute yearly EUR. The small label under each bucket is the realized average ct/kWh for that delivered volume. Export remains separate as a credit and stays upward to keep the scale stable.'
-      totalLabel = formatMetricValue(stats.grossDeliveredCostEur, 'eur', units)
+
+      title = usesAbsoluteBasis ? 'Delivered household volume build-up' : 'Delivered household volume share build-up'
+      description = `Each bar adds its ${basisLabel} until the household total, with export shown separately to the right. Braces carry average ${units.priceUnit}, with annual cost directly underneath.`
+      totalLabel = formatMetricValue(totalBasisValue, basisMetric, units)
 
       let running = 0
-      for (const bucket of costFlowBuckets) {
+      for (const bucket of visibleBuckets) {
+        const basisValue = usesAbsoluteBasis ? bucket.kwh : bucket.sharePct
         columns.push({
           key: bucket.key,
           shortLabel: bucket.shortLabel,
@@ -1224,39 +1298,49 @@ function DeliveredAllocationCard({
           type: 'delta',
           color: bucket.color,
           priceCtKwh: bucket.unitCostCtKwh,
+          braceLabel: formatBracePriceLabel(bucket.unitCostCtKwh, units.priceUnit),
+          braceDetailLabel: formatBraceDetailLabel(bucket.totalCostEur, volumeMode === 'share' ? bucket.sharePct : null, volumeMode, units),
           fillSegments: [{ color: bucket.color, ratio: 1 }],
+          footerLines: [],
           startValue: running,
-          endValue: running + bucket.totalCostEur,
-          deltaValue: bucket.totalCostEur,
-          footerLines: [`${bucket.unitCostCtKwh.toFixed(2)} ${units.priceUnit} avg`],
+          endValue: running + basisValue,
+          deltaValue: basisValue,
         })
-        running += bucket.totalCostEur
+        running += basisValue
       }
 
       columns.push({
-        key: 'gross',
+        key: 'total',
         shortLabel: 'Household',
-        label: 'Gross household cost',
+        label: 'Household total',
         type: 'total',
         color: '#111827',
         priceCtKwh: stats.grossDeliveredCt,
+        braceLabel: formatBracePriceLabel(stats.grossDeliveredCt, units.priceUnit),
+        braceDetailLabel: formatBraceDetailLabel(stats.grossDeliveredCostEur, volumeMode === 'share' ? 100 : null, volumeMode, units),
         fillSegments: [{ color: '#111827', ratio: 1 }],
+        footerLines: [],
         totalValue: running,
-        footerLines: [`${stats.grossDeliveredCt.toFixed(2)} ${units.priceUnit} avg`],
       })
 
-      columns.push({
-        key: 'export',
-        shortLabel: 'Export',
-        label: 'Export credit outside household total',
-        type: 'total',
-        color: '#67B7D1',
-        priceCtKwh: stats.exportAvgCt,
-        fillSegments: [{ color: '#67B7D1', ratio: 1, striped: true }],
-        separatorBefore: true,
-        totalValue: Math.abs(stats.exportRevenueEur),
-        footerLines: [`${stats.exportAvgCt.toFixed(2)} ${units.priceUnit} avg`],
-      })
+      if (showExportBucket) {
+        columns.push({
+          key: 'export',
+          shortLabel: 'Export',
+          label: 'Export outside household total',
+          type: 'total',
+          color: '#67B7D1',
+          priceCtKwh: stats.exportAvgCt,
+          braceLabel: formatBracePriceLabel(stats.exportAvgCt, units.priceUnit),
+          braceDetailLabel: volumeMode === 'share'
+            ? `${formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)} / ${exportBasisValue.toFixed(1)}%`
+            : formatSignedCurrency(-stats.exportRevenueEur, units.currencySym),
+          fillSegments: [{ color: '#67B7D1', ratio: 1, striped: true }],
+          footerLines: [],
+          separatorBefore: true,
+          totalValue: exportBasisValue,
+        })
+      }
     } else {
       const baselineValue = stats.baselineAvgCt
       title = 'Baseline to final household price in ct/kWh'
@@ -1275,52 +1359,15 @@ function DeliveredAllocationCard({
       }]
 
       let running = baselineValue
-      const impactColumns: Array<{
-        key: string
-        shortLabel: string
-        label: string
-        deltaValue: number
-        color: string
-        priceCtKwh: number
-        fillSegments?: Array<{ color: string; ratio: number }>
-      }> = [
-        {
-          key: 'gridDirect',
-          shortLabel: 'Residual grid',
-          label: 'Residual grid -> Load',
-          deltaValue: gridDirect?.impactDeltaCtKwh ?? 0,
-          color: gridDirect?.color ?? '#7D8797',
-          priceCtKwh: gridDirect?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: gridDirect?.color ?? '#7D8797', ratio: 1 }],
-        },
-        {
-          key: 'pvDirect',
-          shortLabel: 'PV',
-          label: 'PV -> Load',
-          deltaValue: pvDirect?.impactDeltaCtKwh ?? 0,
-          color: pvDirect?.color ?? '#E9B94A',
-          priceCtKwh: pvDirect?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: pvDirect?.color ?? '#E9B94A', ratio: 1 }],
-        },
-        {
-          key: 'pvStored',
-          shortLabel: 'PV via battery',
-          label: 'PV -> Battery -> Load',
-          deltaValue: pvStored?.impactDeltaCtKwh ?? 0,
-          color: pvStored?.color ?? '#D9B24E',
-          priceCtKwh: pvStored?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: pvStored?.color ?? '#D9B24E', ratio: 1 }],
-        },
-        {
-          key: 'gridStored',
-          shortLabel: 'Spot battery',
-          label: 'Grid -> Battery -> Load',
-          deltaValue: gridStored?.impactDeltaCtKwh ?? 0,
-          color: gridStored?.color ?? '#2F6FB3',
-          priceCtKwh: gridStored?.unitCostCtKwh ?? 0,
-          fillSegments: [{ color: gridStored?.color ?? '#2F6FB3', ratio: 1 }],
-        },
-      ]
+      const impactColumns = visibleBuckets.map((bucket) => ({
+        key: bucket.key,
+        shortLabel: bucket.shortLabel,
+        label: bucket.label,
+        deltaValue: bucket.impactDeltaCtKwh,
+        color: bucket.color,
+        priceCtKwh: bucket.unitCostCtKwh,
+        fillSegments: [{ color: bucket.color, ratio: 1 }],
+      }))
 
       for (const column of impactColumns) {
         columns.push({
@@ -1395,7 +1442,10 @@ function DeliveredAllocationCard({
       maxValue,
       valueToPct,
     }
-  }, [costFlowBuckets, displayMode, stats, units, volumeMode])
+  }, [displayMode, showExportBucket, stats, units, visibleBuckets, volumeMode])
+
+  const usesBridgeBraceLabels = displayMode === 'volume'
+  const chartMinWidthPx = chartSeries.columns.length * (usesBridgeBraceLabels ? 132 : 108)
 
   return (
     <Card className="border-gray-200/80 bg-white shadow-sm">
@@ -1403,7 +1453,6 @@ function DeliveredAllocationCard({
         <SectionHeading
           eyebrow="Cost Allocation"
           title="Delivered allocation"
-          help="Volume shows the routing mix, Cost compares volume, bucket price, and combined contribution, and Impact bridges the baseline to the final result with export kept separate."
           icon={<Gauge className="h-5 w-5 text-gray-400" />}
         />
 
@@ -1411,20 +1460,14 @@ function DeliveredAllocationCard({
           <div className="flex flex-col gap-3 border-b border-gray-200 pb-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <p className="text-sm font-semibold text-gray-900">{chartSeries.title}</p>
-              <p className="mt-1 text-[12px] leading-5 text-gray-500">{chartSeries.description}</p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2 pb-1 lg:justify-end">
               <SegmentedPillGroup
                 options={[
                   {
                     label: 'Volume',
                     active: displayMode === 'volume',
                     onClick: () => setDisplayMode('volume'),
-                  },
-                  {
-                    label: 'Cost',
-                    active: displayMode === 'cost',
-                    onClick: () => setDisplayMode('cost'),
                   },
                   {
                     label: 'Impact',
@@ -1434,31 +1477,33 @@ function DeliveredAllocationCard({
                 ]}
               />
               {displayMode === 'volume' ? (
-                <SegmentedPillGroup
-                  options={[
-                    {
-                      label: 'Abs. kWh',
-                      active: volumeMode === 'abs',
-                      onClick: () => setVolumeMode('abs'),
-                    },
-                    {
-                      label: '%',
-                      active: volumeMode === 'share',
-                      onClick: () => setVolumeMode('share'),
-                    },
-                  ]}
-                />
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-400">Bar basis</span>
+                  <SegmentedPillGroup
+                    options={[
+                      {
+                        label: 'Abs. kWh',
+                        active: volumeMode === 'abs',
+                        onClick: () => setVolumeMode('abs'),
+                      },
+                      {
+                        label: '%',
+                        active: volumeMode === 'share',
+                        onClick: () => setVolumeMode('share'),
+                      },
+                    ]}
+                  />
+                </div>
               ) : null}
             </div>
           </div>
 
           <div className="mt-4 rounded-xl border border-gray-200 bg-white p-4">
             <>
-                <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="mb-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                   {getMetricAxisLabel(chartMetric, units)}
                 </p>
-                <div />
               </div>
 
               <div className="grid grid-cols-[68px_minmax(0,1fr)] items-start gap-3">
@@ -1479,112 +1524,113 @@ function DeliveredAllocationCard({
                   })}
                 </div>
 
-                <div className="space-y-2">
-                  <div className="relative h-[340px]">
-                    {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+                <div className="overflow-x-auto overflow-y-visible pb-1 pt-8 -mt-8">
+                  <div className="space-y-2" style={{ minWidth: `${chartMinWidthPx}px` }}>
+                    <div className="relative h-[340px]">
+                      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+                        <div
+                          key={`${chartMetric}-grid-${ratio}`}
+                          className="absolute inset-x-0 border-t border-dashed border-gray-200"
+                          style={{ bottom: `${ratio * 100}%` }}
+                        />
+                      ))}
                       <div
-                        key={`${chartMetric}-grid-${ratio}`}
-                        className="absolute inset-x-0 border-t border-dashed border-gray-200"
-                        style={{ bottom: `${ratio * 100}%` }}
+                        className="absolute inset-x-0 border-t-2 border-gray-500"
+                        style={{ bottom: `${chartSeries.valueToPct(0)}%` }}
                       />
-                    ))}
-                    <div
-                      className="absolute inset-x-0 border-t-2 border-gray-500"
-                      style={{ bottom: `${chartSeries.valueToPct(0)}%` }}
-                    />
 
-                    <div
-                      className="absolute inset-0 grid gap-3"
-                      style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
-                    >
-                      {chartSeries.columns.map((column, index) => {
-                        const previousColumn = index > 0 ? chartSeries.columns[index - 1] : null
-                        const isImpactChart = displayMode === 'impact'
-                        const isZeroValue = column.type === 'total'
-                          ? Math.abs(column.totalValue ?? 0) < 1e-6
-                          : Math.abs(column.deltaValue ?? 0) < 1e-6
-                        const lowValue = column.type === 'total'
-                          ? Math.min(0, column.totalValue ?? 0)
-                          : Math.min(column.startValue ?? 0, column.endValue ?? 0)
-                        const highValue = column.type === 'total'
-                          ? Math.max(0, column.totalValue ?? 0)
-                          : Math.max(column.startValue ?? 0, column.endValue ?? 0)
-                        const lowPct = chartSeries.valueToPct(lowValue)
-                        const highPct = chartSeries.valueToPct(highValue)
-                        const barHeightPct = isZeroValue ? 0 : Math.max(highPct - lowPct, 1.8)
-                        const showCenteredPrice = false
-                        const overlayLowValue = column.overlay
-                          ? Math.min(column.overlay.fromValue, column.overlay.toValue)
-                          : 0
-                        const overlayHighValue = column.overlay
-                          ? Math.max(column.overlay.fromValue, column.overlay.toValue)
-                          : 0
-                        const overlayLowPct = chartSeries.valueToPct(overlayLowValue)
-                        const overlayHighPct = chartSeries.valueToPct(overlayHighValue)
-                        const overlayBarHeightPct = Math.max(overlayHighPct - overlayLowPct, 1.8)
-                        const overlayLabelLowValue = column.overlay
-                          ? Math.max(column.totalValue ?? 0, column.overlay.fromValue)
-                          : 0
-                        const overlayLabelHighValue = column.overlay
-                          ? column.overlay.toValue
-                          : 0
-                        const overlayLabelLowPct = chartSeries.valueToPct(overlayLabelLowValue)
-                        const overlayLabelHighPct = chartSeries.valueToPct(overlayLabelHighValue)
-                        const overlayLabelHeightPct = Math.max(overlayLabelHighPct - overlayLabelLowPct, 0)
-                        const showOverlayLabel = overlayLabelHeightPct >= 9
-                        const annotationPct = column.annotation
-                          ? chartSeries.valueToPct(column.annotation.value)
-                          : 0
-                        const topValueLabel = displayMode === 'volume'
-                          ? (
-                            column.key === 'export'
-                              ? formatMetricValue(stats.exportKwh, 'kwh', units)
-                              : formatMetricValue(
-                                column.type === 'total' ? (column.totalValue ?? 0) : Math.abs(column.deltaValue ?? 0),
-                                chartMetric,
-                                units,
-                              )
-                          )
-                          : displayMode === 'cost'
-                            ? formatMetricValue(
+                      <div
+                        className="absolute inset-0 grid gap-3"
+                        style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                      >
+                        {chartSeries.columns.map((column, index) => {
+                          const previousColumn = index > 0 ? chartSeries.columns[index - 1] : null
+                          const isImpactChart = displayMode === 'impact'
+                          const isZeroValue = column.type === 'total'
+                            ? Math.abs(column.totalValue ?? 0) < 1e-6
+                            : Math.abs(column.deltaValue ?? 0) < 1e-6
+                          const lowValue = column.type === 'total'
+                            ? Math.min(0, column.totalValue ?? 0)
+                            : Math.min(column.startValue ?? 0, column.endValue ?? 0)
+                          const highValue = column.type === 'total'
+                            ? Math.max(0, column.totalValue ?? 0)
+                            : Math.max(column.startValue ?? 0, column.endValue ?? 0)
+                          const lowPct = chartSeries.valueToPct(lowValue)
+                          const highPct = chartSeries.valueToPct(highValue)
+                          const barHeightPct = isZeroValue ? 0 : Math.max(highPct - lowPct, 1.8)
+                          const showCenteredPrice = false
+                          const overlayLowValue = column.overlay
+                            ? Math.min(column.overlay.fromValue, column.overlay.toValue)
+                            : 0
+                          const overlayHighValue = column.overlay
+                            ? Math.max(column.overlay.fromValue, column.overlay.toValue)
+                            : 0
+                          const overlayLowPct = chartSeries.valueToPct(overlayLowValue)
+                          const overlayHighPct = chartSeries.valueToPct(overlayHighValue)
+                          const overlayBarHeightPct = Math.max(overlayHighPct - overlayLowPct, 1.8)
+                          const overlayLabelLowValue = column.overlay
+                            ? Math.max(column.totalValue ?? 0, column.overlay.fromValue)
+                            : 0
+                          const overlayLabelHighValue = column.overlay
+                            ? column.overlay.toValue
+                            : 0
+                          const overlayLabelLowPct = chartSeries.valueToPct(overlayLabelLowValue)
+                          const overlayLabelHighPct = chartSeries.valueToPct(overlayLabelHighValue)
+                          const overlayLabelHeightPct = Math.max(overlayLabelHighPct - overlayLabelLowPct, 0)
+                          const showOverlayLabel = overlayLabelHeightPct >= 9
+                          const annotationPct = column.annotation
+                            ? chartSeries.valueToPct(column.annotation.value)
+                            : 0
+                          const topValueLabel = displayMode === 'volume'
+                            ? (
                               column.key === 'export'
-                                ? -(Math.abs(column.totalValue ?? 0))
-                                : (column.type === 'total' ? (column.totalValue ?? 0) : Math.abs(column.deltaValue ?? 0)),
-                              chartMetric,
-                              units,
+                                ? formatMetricValue(stats.exportKwh, 'kwh', units)
+                                : formatMetricValue(
+                                  column.type === 'total' ? (column.totalValue ?? 0) : Math.abs(column.deltaValue ?? 0),
+                                  chartMetric,
+                                  units,
+                                )
                             )
-                          : null
-                        const showCostTopLabel = displayMode === 'cost'
-                        const showZeroCostLabel = showCostTopLabel && isZeroValue && column.key !== 'export'
-                        const showImpactTopLabel = isImpactChart
-                          && column.type === 'total'
-                          && ['baseline', 'gross', 'final'].includes(column.key)
-                        const impactRunningLabel = showImpactTopLabel
-                          ? formatMetricValue(column.totalValue ?? 0, 'ct', units)
-                          : null
-                        const impactDeltaInBarLabel = isImpactChart && column.type === 'delta' && Math.abs(column.deltaValue ?? 0) > 1e-6
-                          ? formatSignedCt(column.deltaValue ?? 0, units.priceUnit)
-                          : null
-                        const showImpactDeltaOutside = Boolean(impactDeltaInBarLabel) && barHeightPct < 14
-                        const impactDeltaCenteredLabel = showImpactDeltaOutside ? null : impactDeltaInBarLabel
-                        const impactDeltaOutsideLabel = showImpactDeltaOutside ? impactDeltaInBarLabel : null
-                        const connectorValue = previousColumn
-                          ? (
-                            previousColumn.type === 'total'
-                              ? (previousColumn.totalValue ?? 0)
-                              : (previousColumn.endValue ?? 0)
-                          )
-                          : null
-                        const connectorPct = connectorValue === null ? 0 : chartSeries.valueToPct(connectorValue)
-                        const showImpactConnector = isImpactChart
-                          && Boolean(previousColumn)
-                          && !column.separatorBefore
-                          && connectorValue !== null
-                        const darkLabel = isDarkColumnColor(column.color)
-                        const showExternalPrice = false
+                            : null
+                          const showImpactTopLabel = isImpactChart
+                            && column.type === 'total'
+                            && ['baseline', 'gross', 'final'].includes(column.key)
+                          const impactRunningLabel = showImpactTopLabel
+                            ? formatMetricValue(column.totalValue ?? 0, 'ct', units)
+                            : null
+                          const impactDeltaInBarLabel = isImpactChart && column.type === 'delta' && Math.abs(column.deltaValue ?? 0) > 1e-6
+                            ? formatSignedCt(column.deltaValue ?? 0, units.priceUnit)
+                            : null
+                          const showImpactDeltaOutside = Boolean(impactDeltaInBarLabel) && barHeightPct < 14
+                          const impactDeltaCenteredLabel = showImpactDeltaOutside ? null : impactDeltaInBarLabel
+                          const impactDeltaOutsideLabel = showImpactDeltaOutside ? impactDeltaInBarLabel : null
+                          const connectorValue = previousColumn
+                            ? (
+                              previousColumn.type === 'total'
+                                ? (previousColumn.totalValue ?? 0)
+                                : (previousColumn.endValue ?? 0)
+                            )
+                            : null
+                          const connectorPct = connectorValue === null ? 0 : chartSeries.valueToPct(connectorValue)
+                          const showImpactConnector = isImpactChart
+                            && Boolean(previousColumn)
+                            && !column.separatorBefore
+                            && connectorValue !== null
+                          const darkLabel = isDarkColumnColor(column.color)
+                          const showExternalPrice = false
+                          const showBridgeBraceLabel = usesBridgeBraceLabels && Boolean(column.braceLabel)
+                          const braceHeightPct = Math.min(Math.max(barHeightPct, 5.5), 100)
+                          const braceMidPct = (lowPct + highPct) / 2
+                          const braceBottomPct = Math.max(Math.min(braceMidPct - (braceHeightPct / 2), 100 - braceHeightPct), 0)
+                          const barLeftInsetPx = 24
+                          const barRightInsetPx = showBridgeBraceLabel ? 58 : 24
+                          const barFrameStyle = {
+                            left: `${barLeftInsetPx}px`,
+                            right: `${barRightInsetPx}px`,
+                          }
 
-                        return (
-                          <div key={column.key} className="relative">
+                          return (
+                            <div key={column.key} className="relative">
                             {showImpactConnector ? (
                               <div
                                 className="absolute left-[-12px] w-[36px] border-t-2 border-dashed border-gray-400"
@@ -1596,8 +1642,9 @@ function DeliveredAllocationCard({
                             ) : null}
                             {displayMode !== 'volume' && column.annotation?.dashed ? (
                               <div
-                                className="absolute left-6 right-6 border-t-2 border-dashed"
+                                className="absolute border-t-2 border-dashed"
                                 style={{
+                                  ...barFrameStyle,
                                   bottom: `${annotationPct}%`,
                                   borderColor: column.annotation.color,
                                 }}
@@ -1605,37 +1652,20 @@ function DeliveredAllocationCard({
                             ) : null}
                             {displayMode === 'volume' && topValueLabel && !isZeroValue ? (
                               <div
-                                className="absolute inset-x-1 z-10 flex justify-center"
-                                style={{ bottom: `calc(${Math.min(highPct, 100)}% + 8px)` }}
+                                className="absolute z-10 flex justify-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                                style={{
+                                  ...barFrameStyle,
+                                  bottom: `calc(${Math.min(highPct, 100)}% + 8px)`,
+                                }}
                               >
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-700 shadow-sm">
-                                  {topValueLabel}
-                                </span>
-                              </div>
-                            ) : null}
-                            {showCostTopLabel && topValueLabel && !isZeroValue ? (
-                              <div
-                                className="absolute inset-x-1 z-10 flex justify-center"
-                                style={{ bottom: `calc(${Math.min(highPct, 100)}% + 8px)` }}
-                              >
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-700 shadow-sm">
-                                  {topValueLabel}
-                                </span>
-                              </div>
-                            ) : null}
-                            {showZeroCostLabel && topValueLabel ? (
-                              <div
-                                className="absolute inset-x-1 z-10 flex justify-center"
-                                style={{ bottom: `calc(${chartSeries.valueToPct(0)}% + 8px)` }}
-                              >
-                                <span className="rounded-full border border-gray-200 bg-white/95 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-600 shadow-sm">
+                                <span className="whitespace-nowrap rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-700 shadow-sm">
                                   {topValueLabel}
                                 </span>
                               </div>
                             ) : null}
                             {impactRunningLabel && !isZeroValue ? (
                               <div
-                                className="absolute inset-x-1 z-20 flex justify-center"
+                                className="absolute inset-x-1 z-20 flex justify-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                                 style={{ bottom: `calc(${Math.min(highPct, 100)}% + 8px)` }}
                               >
                                 <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-900 shadow-sm">
@@ -1645,7 +1675,7 @@ function DeliveredAllocationCard({
                             ) : null}
                             {impactDeltaOutsideLabel ? (
                               <div
-                                className="absolute inset-x-1 z-20 flex justify-center"
+                                className="absolute inset-x-1 z-20 flex justify-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                                 style={{ bottom: `calc(${Math.max(lowPct, 0)}% - 22px)` }}
                               >
                                 <span className="rounded-full border border-gray-200 bg-white/95 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-600 shadow-sm">
@@ -1653,10 +1683,38 @@ function DeliveredAllocationCard({
                                 </span>
                               </div>
                             ) : null}
+                            {showBridgeBraceLabel ? (
+                              <div
+                                className="pointer-events-none absolute z-20 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                                style={{
+                                  bottom: `${braceBottomPct}%`,
+                                  height: `${braceHeightPct}%`,
+                                  right: '4px',
+                                  width: '54px',
+                                }}
+                              >
+                                <div className="absolute left-0 top-[1px] h-px w-3 bg-gray-300" />
+                                <div className="absolute bottom-[1px] left-0 h-px w-3 bg-gray-300" />
+                                <div className="absolute bottom-[1px] left-3 top-[1px] w-px bg-gray-300" />
+                                <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                                  <div className="flex flex-col gap-1">
+                                    <span className="whitespace-nowrap rounded-full border border-gray-200 bg-white/95 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-gray-700 shadow-sm">
+                                      {column.braceLabel}
+                                    </span>
+                                    {column.braceDetailLabel ? (
+                                      <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50/95 px-1.5 py-0.5 text-[8px] font-medium tabular-nums text-slate-500 shadow-sm">
+                                        {column.braceDetailLabel}
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : null}
                             {column.overlay ? (
                               <div
-                                className="absolute inset-x-6 rounded-t-lg rounded-b-lg"
+                                className="absolute rounded-t-lg rounded-b-lg transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                                 style={{
+                                  ...barFrameStyle,
                                   bottom: `${overlayLowPct}%`,
                                   height: `${overlayBarHeightPct}%`,
                                   backgroundColor: column.overlay.color,
@@ -1680,7 +1738,7 @@ function DeliveredAllocationCard({
                             ) : null}
                             {showExternalPrice ? (
                               <div
-                                className="absolute inset-x-1 z-10 flex justify-center"
+                                className="absolute inset-x-1 z-10 flex justify-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                                 style={{ bottom: `calc(${Math.min(highPct, 100)}% + 6px)` }}
                               >
                                 <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-900 shadow-sm">
@@ -1691,11 +1749,12 @@ function DeliveredAllocationCard({
 
                             <div
                               className={cn(
-                                'absolute inset-x-6 rounded-t-lg rounded-b-lg',
+                                'absolute rounded-t-lg rounded-b-lg transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
                                 column.type === 'total' && 'shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]',
                                 isZeroValue && 'hidden',
                               )}
                               style={{
+                                ...barFrameStyle,
                                 bottom: `${lowPct}%`,
                                 height: `${barHeightPct}%`,
                                 opacity: 0.94,
@@ -1719,7 +1778,7 @@ function DeliveredAllocationCard({
                                       return (
                                         <div
                                           key={`${column.key}-fill-${index}`}
-                                          className="absolute inset-x-0"
+                                          className="absolute inset-x-0 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                                           style={style}
                                         />
                                       )
@@ -1752,29 +1811,33 @@ function DeliveredAllocationCard({
                                 </div>
                               ) : null}
                             </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-
-                  <div
-                    className="grid gap-3"
-                    style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
-                  >
-                    {chartSeries.columns.map((column) => (
-                      <div key={`${column.key}-xlabel`} className="relative text-center">
-                        {column.separatorBefore ? (
-                          <div className="absolute bottom-0 left-[-8px] top-0 border-l-2 border-dashed border-gray-500" />
-                        ) : null}
-                        <p className="text-[11px] font-semibold text-gray-700">{column.shortLabel}</p>
-                        {column.footerLines?.map((line, lineIndex) => (
-                          <p key={`${column.key}-footer-${lineIndex}`} className="mt-0.5 text-[10px] leading-4 tabular-nums text-gray-500">
-                            {line}
-                          </p>
-                        ))}
+                            </div>
+                          )
+                        })}
                       </div>
-                    ))}
+                    </div>
+
+                    <div
+                      className="grid gap-3"
+                      style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                    >
+                      {chartSeries.columns.map((column) => (
+                        <div
+                          key={`${column.key}-xlabel`}
+                          className="relative text-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                        >
+                          {column.separatorBefore ? (
+                            <div className="absolute bottom-0 left-[-8px] top-0 border-l-2 border-dashed border-gray-500" />
+                          ) : null}
+                          <AllocationFlowVisual columnKey={column.key} label={column.shortLabel} muted={column.key === 'export'} />
+                          {column.footerLines?.map((line, lineIndex) => (
+                            <p key={`${column.key}-footer-${lineIndex}`} className="mt-0.5 text-[10px] leading-4 tabular-nums text-gray-500">
+                              {line}
+                            </p>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1782,15 +1845,17 @@ function DeliveredAllocationCard({
           </div>
 
           <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">Export kept separate</p>
-              <p className="mt-1 text-lg font-bold tabular-nums text-blue-900">
-                {formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)}
-              </p>
-              <p className="mt-1 text-[11px] text-blue-800">
-                {units.currencySym}{stats.exportRevenueEur.toFixed(0)} export revenue
-              </p>
-            </div>
+            {showExportBucket ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Export kept separate</p>
+                <p className="mt-1 text-base font-semibold tabular-nums text-slate-700">
+                  {formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  {units.currencySym}{stats.exportRevenueEur.toFixed(0)} export revenue
+                </p>
+              </div>
+            ) : null}
 
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Overall modeled net result</p>
@@ -1802,16 +1867,18 @@ function DeliveredAllocationCard({
           </div>
 
           <div className="mt-4 grid gap-2">
-            {stats.buckets.map((bucket) => (
+            {visibleBuckets.map((bucket) => (
               <div
                 key={`${bucket.key}-legend`}
                 className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5"
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
-                  <div className="min-w-0">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }} />
                     <p className="truncate text-sm font-semibold text-gray-900">{bucket.shortLabel}</p>
-                    <p className="truncate text-[11px] text-gray-500">{bucket.label}</p>
+                  </div>
+                  <div className="mt-1">
+                    <AllocationFlowVisual columnKey={bucket.key} />
                   </div>
                 </div>
                 <p className="text-right text-[11px] tabular-nums text-gray-600">{Math.round(bucket.kwh).toLocaleString()} kWh</p>
@@ -1820,22 +1887,26 @@ function DeliveredAllocationCard({
                 <p className="text-right text-[11px] tabular-nums text-gray-600">{units.currencySym}{bucket.totalCostEur.toFixed(0)}</p>
               </div>
             ))}
-            <div className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5">
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full border border-[#67B7D1]"
-                  style={{ background: stripedFill('#67B7D1') }}
-                />
+            {showExportBucket ? (
+              <div className="grid grid-cols-[minmax(0,1.3fr)_92px_70px_92px_92px] items-center gap-3 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2.5">
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-gray-900">Export</p>
-                  <p className="truncate text-[11px] text-gray-500">Outside household total</p>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full border border-[#67B7D1]"
+                      style={{ background: stripedFill('#67B7D1') }}
+                    />
+                    <p className="truncate text-sm font-semibold text-slate-700">Export</p>
+                  </div>
+                  <div className="mt-1">
+                    <AllocationFlowVisual columnKey="export" muted />
+                  </div>
                 </div>
+                <p className="text-right text-[11px] tabular-nums text-slate-500">{Math.round(stats.exportKwh).toLocaleString()} kWh</p>
+                <p className="text-right text-[11px] tabular-nums text-slate-500">{((stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100).toFixed(1)}%</p>
+                <p className="text-right text-[11px] tabular-nums text-slate-500">{stats.exportAvgCt.toFixed(2)} {units.priceUnit}</p>
+                <p className="text-right text-[11px] tabular-nums text-slate-500">+{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
               </div>
-              <p className="text-right text-[11px] tabular-nums text-gray-600">{Math.round(stats.exportKwh).toLocaleString()} kWh</p>
-              <p className="text-right text-[11px] tabular-nums text-gray-600">{((stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100).toFixed(1)}%</p>
-              <p className="text-right text-[11px] tabular-nums text-gray-600">{stats.exportAvgCt.toFixed(2)} {units.priceUnit}</p>
-              <p className="text-right text-[11px] tabular-nums text-gray-600">+{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
-            </div>
+            ) : null}
           </div>
         </div>
       </CardContent>
@@ -1859,11 +1930,15 @@ function normalizeCalculatorState(
   const year = availableYears.length === 0 || availableYears.includes(state.year)
     ? state.year
     : availableYears[0]
+  const usableKwh = clamp(state.usableKwh, 0, 20)
+  const initialSocKwh = clamp(state.initialSocKwh, 0, usableKwh)
 
   if (
     year === state.year &&
     loadProfileId === state.loadProfileId &&
-    tariffId === state.tariffId
+    tariffId === state.tariffId &&
+    usableKwh === state.usableKwh &&
+    initialSocKwh === state.initialSocKwh
   ) {
     return state
   }
@@ -1873,6 +1948,8 @@ function normalizeCalculatorState(
     year,
     loadProfileId,
     tariffId,
+    usableKwh,
+    initialSocKwh,
   }
 }
 
@@ -1962,6 +2039,156 @@ function MutedNote({ children }: { children: ReactNode }) {
   )
 }
 
+function PlanningModelCard({
+  planningModel,
+  onChange,
+}: {
+  planningModel: PvBatteryPlanningModel
+  onChange: (planningModel: PvBatteryPlanningModel) => void
+}) {
+  return (
+    <Card className="border-gray-200/80 bg-white shadow-sm">
+      <CardContent className="p-6">
+        <SectionHeading
+          eyebrow="Planning model"
+          title="Replay basis"
+          help="Deterministic replay keeps the current full-year hindsight baseline. Rolling day-ahead planner restitches the year from publication-time runs so every selected slot can be traced back to a specific plan."
+          icon={<Gauge className="h-5 w-5 text-gray-400" />}
+        />
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          {[
+            {
+              id: 'deterministic' as const,
+              title: 'Deterministic replay',
+              detail: 'One annual solve over the full selected year. Best for today’s baseline and side-by-side chart continuity.',
+              chips: ['Full-year hindsight', 'Selected load profile', 'Free terminal SoC'],
+            },
+            {
+              id: 'rolling' as const,
+              title: 'Rolling day-ahead planner',
+              detail: 'A stitched chain of runs. Each run only knows the remaining day plus the next day, then commits until the next 12:00 replan.',
+              chips: ['H25 locked', '12:00 replans', 'SoC returns to start'],
+            },
+          ].map((option) => {
+            const active = planningModel === option.id
+            return (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => onChange(option.id)}
+                className={cn(
+                  'rounded-2xl border p-4 text-left transition-all',
+                  active
+                    ? 'border-slate-900 bg-slate-900 text-white shadow-[0_18px_40px_rgba(15,23,42,0.16)]'
+                    : 'border-gray-200 bg-[#FAF8F1] text-slate-900 hover:border-gray-300 hover:bg-white',
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[15px] font-semibold tracking-tight">{option.title}</p>
+                  <span className={cn(
+                    'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em]',
+                    active ? 'bg-white/12 text-white' : 'bg-white text-slate-500',
+                  )}>
+                    {active ? 'Active' : 'Available'}
+                  </span>
+                </div>
+                <p className={cn('mt-2 text-[12px] leading-5', active ? 'text-slate-200' : 'text-slate-600')}>
+                  {option.detail}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {option.chips.map((chip) => (
+                    <span
+                      key={chip}
+                      className={cn(
+                        'rounded-full px-2 py-1 text-[10px] font-semibold tracking-wide',
+                        active ? 'bg-white/10 text-white' : 'bg-white text-slate-600',
+                      )}
+                    >
+                      {chip}
+                    </span>
+                  ))}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-[#E4DDC9] bg-[#FBF6E8] px-4 py-3">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7A6E52]">How to read it</p>
+          <p className="mt-1 text-[12px] leading-6 text-[#5D5547]">
+            {getPlanningModelSummary(planningModel)}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PlannerAssumptionsCard({
+  planningModel,
+  assumptions,
+  initialSocKwh,
+}: {
+  planningModel: PvBatteryPlanningModel
+  assumptions: PvBatteryPlannerAssumptions
+  initialSocKwh: number
+}) {
+  const rows = [
+    { label: 'Objective', value: assumptions.objective },
+    { label: 'Household basis', value: assumptions.loadForecastSource },
+    { label: 'PV basis', value: assumptions.pvForecastSource },
+    { label: 'Price basis', value: assumptions.priceSource },
+    { label: 'Tariff basis', value: assumptions.tariffBasis },
+    { label: 'Cadence', value: assumptions.replanCadence },
+    { label: 'Terminal rule', value: assumptions.terminalRule },
+    ...(planningModel === 'rolling'
+      ? [{ label: 'Initial SoC', value: `${initialSocKwh.toFixed(1)} kWh at replay start` }]
+      : []),
+  ]
+
+  return (
+    <Card className="border-gray-200/80 bg-white shadow-sm">
+      <CardContent className="p-6">
+        <SectionHeading
+          eyebrow="Explainability"
+          title="How this model works"
+          help="This card makes the active claim boundaries explicit: what the solver optimizes, what it is allowed to know, and which assumptions drive the visible quarter-hour routing."
+          icon={<LineChart className="h-5 w-5 text-gray-400" />}
+        />
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)]">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 px-5 py-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Narrative</p>
+            <p className="mt-2 text-[14px] leading-7 text-slate-700">
+              {planningModel === 'rolling'
+                ? 'The rolling planner behaves like a planning desk instead of a clairvoyant annual replay. It solves on publication cadence, commits only the visible stitched chain, and keeps every day selectable so quarter-hour decisions remain inspectable without pretending the solver knew the full year ahead.'
+                : 'The deterministic replay remains the current audit baseline. It solves the full selected year in one pass, then lets you inspect any day on that chain to understand where value came from before introducing publication-time uncertainty.'}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Any day stays selectable</span>
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Quarter-hour flows remain auditable</span>
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Tariff economics drive routing</span>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#E8E3D7] bg-[#FCFBF7] px-4 py-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#857865]">Planner assumptions</p>
+            <div className="mt-3 space-y-2">
+              {rows.map((row) => (
+                <div key={row.label} className="grid gap-1 rounded-xl border border-white bg-white/90 px-3 py-2 shadow-[0_1px_0_rgba(255,255,255,0.8)]">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#8B816F]">{row.label}</p>
+                  <p className="text-[12px] leading-5 text-slate-700">{row.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 function PvBatteryCalculatorInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -2003,11 +2230,14 @@ function PvBatteryCalculatorInner() {
     () => DE_BATTERY_LOAD_PROFILES.filter((profile) => isAllowedDeLoadProfile(profile.id)),
     [],
   )
+  const activeLoadProfileId: BatteryLoadProfileId = state.planningModel === 'rolling' ? 'H25' : state.loadProfileId
+  const activeLoadProfileLabel = loadProfileOptions.find((profile) => profile.id === activeLoadProfileId)?.label ?? activeLoadProfileId
+  const selectedTariff = tariffs.find((tariff) => tariff.id === state.tariffId)
   const isPvSelected = state.pvCapacityWp > 0
   const isBatterySelected = state.usableKwh > 0
   const { loadProfile, pvProfile, loading: profilesLoading, error: profilesError } = useBatteryProfiles(
     CALCULATOR_COUNTRY,
-    state.loadProfileId,
+    activeLoadProfileId,
     effectiveYear,
   )
   const { data: radiationData, loading: radiationLoading } = usePvRadiation(
@@ -2032,6 +2262,7 @@ function PvBatteryCalculatorInner() {
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('tariff', state.tariffId)
+    params.set('model', state.planningModel)
     if (state.year) params.set('year', String(state.year))
     params.set('resolution', state.resolution)
     params.set('hours', String(state.viewHours))
@@ -2041,6 +2272,7 @@ function PvBatteryCalculatorInner() {
     params.set('pv', String(Math.round(state.pvCapacityWp)))
     if (state.pvZipCode) params.set('pvzip', state.pvZipCode)
     params.set('battery', String(state.usableKwh))
+    params.set('soc', String(Number(state.initialSocKwh.toFixed(2))))
     params.set('charge', String(state.maxChargeKw))
     params.set('discharge', String(state.maxDischargeKw))
     params.set('eff', String(Number(state.roundTripEff.toFixed(2))))
@@ -2091,14 +2323,49 @@ function PvBatteryCalculatorInner() {
     )
     return { monthlyFactors }
   }, [radiationData])
+  const planningModelLabel = getPlanningModelLabel(state.planningModel)
+  const plannerAssumptions = useMemo(
+    () => buildPlannerAssumptions({
+      planningModel: state.planningModel,
+      loadProfileLabel: activeLoadProfileLabel,
+      tariffLabel: selectedTariff?.label ?? 'Selected dynamic tariff',
+      pvZipCode: state.pvZipCode,
+    }),
+    [activeLoadProfileLabel, selectedTariff?.label, state.planningModel, state.pvZipCode],
+  )
 
   const annualResult = useMemo(() => {
     if (!loadProfile || !pvProfile || annualPrices.length === 0) return null
-    return optimizePvBattery(
-      buildPvBatteryInputs(annualPrices, loadProfile, pvProfile, scenario, radiationAdjustment),
-      scenario,
-    )
-  }, [annualPrices, loadProfile, pvProfile, scenario, radiationAdjustment])
+    const inputs = buildPvBatteryInputs(annualPrices, loadProfile, pvProfile, scenario, radiationAdjustment)
+
+    if (state.planningModel === 'rolling') {
+      return optimizePvBatteryRollingReplay(inputs, scenario, {
+        initialSocKwh: state.initialSocKwh,
+        modelLabel: planningModelLabel,
+        assumptions: plannerAssumptions,
+      })
+    }
+
+    return optimizePvBatteryWithOptions(inputs, scenario, {
+      planningModel: 'deterministic',
+      modelLabel: planningModelLabel,
+      assumptions: plannerAssumptions,
+      run: {
+        runId: 'deterministic-annual-replay',
+        runLabel: 'Annual deterministic replay',
+      },
+    })
+  }, [
+    annualPrices,
+    loadProfile,
+    plannerAssumptions,
+    planningModelLabel,
+    pvProfile,
+    radiationAdjustment,
+    scenario,
+    state.initialSocKwh,
+    state.planningModel,
+  ])
 
   const dayResult = useMemo(() => {
     if (!annualResult || !prices.selectedDate) return null
@@ -2156,6 +2423,43 @@ function PvBatteryCalculatorInner() {
   ]
   const replayWindowControls = <SegmentedPillGroup options={viewWindowOptions} />
   const replayResolutionControls = <SegmentedPillGroup options={replayResolutionOptions} />
+  const priceReplayControls = (
+    <div className="flex flex-wrap gap-2">
+      <SegmentedPillGroup
+        options={[
+          {
+            label: 'Spot',
+            active: state.flowPriceMode === 'spot',
+            onClick: () => setDraftState((current) => ({ ...current, flowPriceMode: 'spot' })),
+          },
+          {
+            label: 'End',
+            active: state.flowPriceMode === 'end',
+            onClick: () => setDraftState((current) => ({ ...current, flowPriceMode: 'end' })),
+          },
+        ]}
+      />
+      {replayWindowControls}
+      {replayResolutionControls}
+    </div>
+  )
+  const selectedDayControls = (
+    <div className="space-y-3">
+      <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white">
+        <div className="px-4 py-3">
+          <DateStrip
+            daily={yearDates}
+            selectedDate={prices.selectedDate}
+            onSelect={prices.setSelectedDate}
+            latestDate={yearDates[yearDates.length - 1]?.date}
+            requireNextDay={false}
+            forecastAfter={prices.lastRealDate || undefined}
+            country={CALCULATOR_COUNTRY}
+          />
+        </div>
+      </div>
+    </div>
+  )
   const activeFlowKeys = FLOW_PERMISSION_OPTIONS
     .filter(({ key }) => state.flowPermissions[key])
     .map(({ key }) => key)
@@ -2247,12 +2551,16 @@ function PvBatteryCalculatorInner() {
                         <span className="text-[10px] text-gray-400">H25 / P25 / S25</span>
                       </div>
                       <select
-                        value={state.loadProfileId}
+                        value={state.planningModel === 'rolling' ? 'H25' : state.loadProfileId}
+                        disabled={state.planningModel === 'rolling'}
                         onChange={(event) => setDraftState((current) => ({
                           ...current,
                           loadProfileId: event.target.value as BatteryLoadProfileId,
                         }))}
-                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+                        className={cn(
+                          'w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400',
+                          state.planningModel === 'rolling' && 'cursor-not-allowed bg-gray-50 text-gray-500',
+                        )}
                       >
                         {loadProfileOptions.map((profile) => (
                           <option key={profile.id} value={profile.id}>
@@ -2260,6 +2568,11 @@ function PvBatteryCalculatorInner() {
                           </option>
                         ))}
                       </select>
+                      {state.planningModel === 'rolling' ? (
+                        <p className="text-[10px] leading-4 text-amber-700">
+                          Rolling mode locks the household forecast basis to H25 so every stitched run uses the same published-load assumption.
+                        </p>
+                      ) : null}
                     </div>
 
                     {/* Horizontal line + Assets toggles */}
@@ -2469,6 +2782,28 @@ function PvBatteryCalculatorInner() {
                       maxLabel="20 kWh"
                     />
 
+                    <div className="space-y-2">
+                      <RangeControl
+                        label="Initial SoC"
+                        value={`${state.initialSocKwh.toFixed(1)} kWh`}
+                        min={0}
+                        max={Math.max(state.usableKwh, 0)}
+                        step={0.5}
+                        sliderValue={Math.min(state.initialSocKwh, state.usableKwh)}
+                        onChange={(value) => setDraftState((current) => ({ ...current, initialSocKwh: value }))}
+                        minLabel="0"
+                        maxLabel={`${state.usableKwh.toFixed(1)} kWh`}
+                      />
+                      <p className={cn(
+                        'text-[10px] leading-4',
+                        state.planningModel === 'rolling' ? 'text-emerald-700' : 'text-gray-500',
+                      )}>
+                        {state.planningModel === 'rolling'
+                          ? 'Used as the starting battery state for the stitched rolling chain and as the terminal anchor for each run.'
+                          : 'Saved for the rolling planner. The current deterministic replay still keeps its original empty-start, free-terminal behavior.'}
+                      </p>
+                    </div>
+
                     <div className="grid gap-4 sm:grid-cols-2">
                       <RangeControl
                         label="Charge power"
@@ -2576,59 +2911,46 @@ function PvBatteryCalculatorInner() {
                 />
               ) : annualResult ? (
                 <>
+                  <PlanningModelCard
+                    planningModel={state.planningModel}
+                    onChange={(planningModel) => setDraftState((current) => ({ ...current, planningModel }))}
+                  />
+                  <PlannerAssumptionsCard
+                    planningModel={state.planningModel}
+                    assumptions={annualResult.assumptions}
+                    initialSocKwh={state.initialSocKwh}
+                  />
                   <AnnualHero annual={annualResult} units={units} />
-                  <DeliveredAllocationCard annual={annualResult} units={units} />
+                  <DeliveredAllocationCard
+                    annual={annualResult}
+                    units={units}
+                    flowPermissions={state.flowPermissions}
+                    isPvSelected={isPvSelected}
+                    isBatterySelected={isBatterySelected}
+                  />
                   <MonthlyBars annual={annualResult} units={units} />
+                  <ConsumptionPriceBlockCard
+                    annualResult={dayResult}
+                    dayLabel={formatDayLabel(prices.selectedDate)}
+                    units={units}
+                    loading={prices.loading}
+                    priceCurveMode={state.flowPriceMode}
+                    controls={priceReplayControls}
+                  />
                   <PvBatteryDayChart
                     annualResult={dayResult}
                     dayLabel={formatDayLabel(prices.selectedDate)}
                     units={units}
                     priceCurveMode={state.flowPriceMode}
                     loading={prices.loading}
-                    controls={(
-                      <div className="space-y-3">
-                        <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white">
-                          <div className="px-4 py-3">
-                            <DateStrip
-                              daily={yearDates}
-                              selectedDate={prices.selectedDate}
-                              onSelect={prices.setSelectedDate}
-                              latestDate={yearDates[yearDates.length - 1]?.date}
-                              requireNextDay={false}
-                              forecastAfter={prices.lastRealDate || undefined}
-                              country={CALCULATOR_COUNTRY}
-                            />
-                          </div>
-                        </div>
-
-                      </div>
-                    )}
+                    controls={selectedDayControls}
                     householdControls={(
                       <div className="flex flex-wrap gap-2">
                         {replayWindowControls}
                         {replayResolutionControls}
                       </div>
                     )}
-                    priceControls={(
-                      <div className="flex flex-wrap gap-2">
-                        <SegmentedPillGroup
-                          options={[
-                            {
-                              label: 'Spot',
-                              active: state.flowPriceMode === 'spot',
-                              onClick: () => setDraftState((current) => ({ ...current, flowPriceMode: 'spot' })),
-                            },
-                            {
-                              label: 'End',
-                              active: state.flowPriceMode === 'end',
-                              onClick: () => setDraftState((current) => ({ ...current, flowPriceMode: 'end' })),
-                            },
-                          ]}
-                        />
-                        {replayWindowControls}
-                        {replayResolutionControls}
-                      </div>
-                    )}
+                    priceControls={priceReplayControls}
                   />
 
                 </>

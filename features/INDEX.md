@@ -43,6 +43,7 @@
 | PROJ-42 | EV Flex Value Calculator | In Review | [spec](PROJ-42-ev-flex-value-calculator.md) | `src/app/v2/calculator/`, `src/components/v2/calculator/`, `src/lib/flex-calculator.ts` |
 | PROJ-43 | PV + Battery Dynamic Tariff Calculator | In Progress | [spec](PROJ-43-pv-battery-dynamic-calculator.md) | `src/app/battery/calculator/`, `src/components/battery/calculator/`, `src/lib/pv-battery-calculator.ts` |
 | PROJ-44 | Azure Deployment & Review Hardening | Deployed | [spec](PROJ-44-azure-deployment-and-review-hardening.md) | `README.md`, `Dockerfile`, `azure-pipelines.yml`, `docs/review/`, `docs/deployment/` |
+| PROJ-45 | PV + Battery Rolling Replay Planner | In Review | [spec](PROJ-45-pv-battery-rolling-replay-planner.md) | `src/app/battery/calculator/`, `src/components/battery/calculator/`, `src/lib/pv-battery-calculator.ts`, `src/lib/pv-battery-rolling-replay.ts`, `docs/battery/` |
 
 ## Archived Features
 
@@ -64,4 +65,4 @@
 ## Notes
 
 - `PROJ-28` was backfilled on 2026-04-21 to close the inventory gap for an already-deployed layout refresh.
-- Next available ID: `PROJ-45`
+- Next available ID: `PROJ-46`

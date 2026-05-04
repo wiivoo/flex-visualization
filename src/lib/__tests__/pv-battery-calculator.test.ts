@@ -4,6 +4,7 @@ import {
   buildPvBatteryInputs,
   getAvailablePvBatteryYears,
   optimizePvBattery,
+  optimizePvBatteryWithOptions,
   type OptimizerSlotInput,
   type PvBatteryCalculatorScenario,
   type PvBatterySlotResult,
@@ -439,6 +440,28 @@ describe('optimizePvBattery', () => {
     for (const slot of result.slots) {
       expectSlotConservation(slot)
     }
+  })
+
+  it('can pin terminal SoC to the initial state to avoid horizon dumping', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(0, 10, 0) },
+      { ...mkPrice(1, 10, 50) },
+    ]
+
+    const freeTerminal = optimizePvBatteryWithOptions(slots, BASE_SCENARIO, {
+      initialSocKwh: 2,
+      terminalSocKwh: null,
+    })
+    const pinnedTerminal = optimizePvBatteryWithOptions(slots, BASE_SCENARIO, {
+      initialSocKwh: 2,
+      terminalSocKwh: 2,
+      planningModel: 'rolling',
+    })
+
+    expect(freeTerminal.batteryExportKwh).toBeCloseTo(2, 3)
+    expect(pinnedTerminal.batteryExportKwh).toBeCloseTo(0, 3)
+    expect(pinnedTerminal.slots[1].socKwhEnd).toBeCloseTo(2, 3)
+    expect(pinnedTerminal.runs[0].terminalSocKwh).toBeCloseTo(2, 3)
   })
 
   it('only returns replay years with a complete, non-projected year of data', () => {

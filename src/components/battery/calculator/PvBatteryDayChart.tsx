@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Battery, BatteryCharging, Home, SunMedium, Zap } from 'lucide-react'
 import {
   Area,
@@ -204,6 +204,54 @@ function formatBlockWh(value: number): string {
   return `${Math.round(value * 1000)}`
 }
 
+function formatTimestampLabel(timestamp: number): string {
+  const value = new Date(timestamp)
+  return `${value.toISOString().slice(0, 10)} ${value.toISOString().slice(11, 16)}`
+}
+
+function formatMetricKwh(value: number): string {
+  return `${value.toFixed(3)} kWh`
+}
+
+function formatMoney(value: number, units: PriceUnits): string {
+  return `${value >= 0 ? '+' : '-'}${units.currencySym}${Math.abs(value).toFixed(2)}`
+}
+
+function buildSlotWhyLines(
+  slot: PvBatterySlotResult,
+  units: PriceUnits,
+  planningModel: 'deterministic' | 'rolling',
+): string[] {
+  const lines: string[] = []
+
+  if (slot.gridToBatteryKwh > 0) {
+    lines.push(`Grid charging happened because ${slot.importPriceCtKwh.toFixed(2)} ${units.priceUnit} was cheap enough to justify storing energy for a later slot in the same optimization horizon.`)
+  }
+  if (slot.pvToBatteryKwh > 0) {
+    lines.push('PV surplus was stored because later household use or export was more valuable than giving all surplus away immediately.')
+  }
+  if (slot.batteryToLoadKwh > 0) {
+    lines.push(`Battery discharge covered household demand because avoiding import at ${slot.importPriceCtKwh.toFixed(2)} ${units.priceUnit} beat holding that energy longer.`)
+  }
+  if (slot.batteryExportKwh > 0) {
+    lines.push(`Battery export happened because the slot paid ${slot.exportPriceCtKwh.toFixed(2)} ${units.priceUnit} on the export side and the run valued export above waiting.`)
+  }
+  if (slot.pvToGridKwh > 0) {
+    lines.push('PV exported after load and storage options were satisfied or blocked by the active constraints and value trade-offs.')
+  }
+  if (slot.curtailedKwh > 0) {
+    lines.push('Some PV was curtailed because export limits, routing permissions, or battery limits left surplus with nowhere feasible to go.')
+  }
+  if (lines.length === 0 && planningModel === 'rolling') {
+    lines.push('The planner largely held its position in this slot. In rolling mode that often means the current run saw more value in waiting for later slots while still respecting the terminal SoC rule.')
+  }
+  if (lines.length === 0) {
+    lines.push('No exceptional routing was needed here: direct PV covered what it could and the remaining demand stayed on the simplest feasible path.')
+  }
+
+  return lines
+}
+
 interface SegmentedBarShapeProps {
   dataKey?: string
   fill?: string
@@ -311,8 +359,71 @@ export function PvBatteryDayChart({
     gridDirect: true,
     demand: true,
   })
+
+  useEffect(() => {
+    setSelectedIndex(0)
+  }, [slots.length, slots[0]?.timestamp])
+
   const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(slots.length - 1, 0))
   const selectedSlot = slots[effectiveSelectedIndex]
+  const runMap = useMemo(
+    () => new Map((annualResult?.runs ?? []).map((run) => [run.runId, run])),
+    [annualResult],
+  )
+  const selectedRun = selectedSlot ? runMap.get(selectedSlot.runId) ?? null : null
+  const visibleRunSegments = useMemo(() => {
+    const segments = new Map<string, {
+      runId: string
+      runLabel: string
+      firstIndex: number
+      lastIndex: number
+      firstSlot: PvBatterySlotResult
+      lastSlot: PvBatterySlotResult
+      initialSocKwh: number
+      knownHorizonEnd: number
+      committedUntil: number
+      terminalRule: string
+      loadForecastSource: string
+      pvForecastSource: string
+      priceSource: string
+      tariffBasis: string
+    }>()
+
+    slots.forEach((slot, index) => {
+      const existing = segments.get(slot.runId)
+      if (existing) {
+        existing.lastIndex = index
+        existing.lastSlot = slot
+        return
+      }
+
+      const run = runMap.get(slot.runId)
+      segments.set(slot.runId, {
+        runId: slot.runId,
+        runLabel: slot.runLabel,
+        firstIndex: index,
+        lastIndex: index,
+        firstSlot: slot,
+        lastSlot: slot,
+        initialSocKwh: run?.initialSocKwh ?? slot.runInitialSocKwh,
+        knownHorizonEnd: run?.knownHorizonEnd ?? slot.knownHorizonEnd,
+        committedUntil: run?.committedUntil ?? slot.committedUntil,
+        terminalRule: run?.terminalRule ?? slot.terminalRule,
+        loadForecastSource: run?.loadForecastSource ?? slot.loadForecastSource,
+        pvForecastSource: run?.pvForecastSource ?? slot.pvForecastSource,
+        priceSource: run?.priceSource ?? slot.priceSource,
+        tariffBasis: run?.tariffBasis ?? slot.tariffBasis,
+      })
+    })
+
+    return [...segments.values()].sort((a, b) => a.firstIndex - b.firstIndex)
+  }, [runMap, slots])
+  const slotWhyLines = useMemo(
+    () => selectedSlot
+      ? buildSlotWhyLines(selectedSlot, units, annualResult?.planningModel ?? 'deterministic')
+      : [],
+    [annualResult?.planningModel, selectedSlot, units],
+  )
   const flowChartLayout = {
     height: 420,
     marginTop: 24,
@@ -785,6 +896,11 @@ export function PvBatteryDayChart({
   const toggleFlowLayer = (key: 'charge' | 'discharge' | 'pvExport') => {
     setVisibleFlowLayers((prev) => ({ ...prev, [key]: !prev[key] }))
   }
+  const syncSelectedIndex = useCallback((value: number | string | undefined | null) => {
+    const nextIndex = typeof value === 'number' ? value : Number(value)
+    if (!Number.isFinite(nextIndex)) return
+    setSelectedIndex(Math.max(0, Math.min(slots.length - 1, nextIndex)))
+  }, [slots.length])
 
   if (loading || slots.length === 0 || !selectedSlot) {
     return (
@@ -809,6 +925,20 @@ export function PvBatteryDayChart({
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Household</p>
                 <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Consumption Profile</p>
                 <p className="mt-1 text-[13px] font-medium text-slate-500">{dayLabel}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-600">
+                    Selected slot {selectedSlot.label}
+                  </span>
+                  {annualResult?.planningModel === 'rolling' ? (
+                    <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-amber-800">
+                      Produced by {selectedSlot.runLabel}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-500">
+                      One full-year deterministic run
+                    </span>
+                  )}
+                </div>
               </div>
               <div className="min-w-0">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -881,7 +1011,14 @@ export function PvBatteryDayChart({
                 style={timelineMinWidthPx > 0 ? { minWidth: `${timelineMinWidthPx}px` } : undefined}
               >
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={householdData} margin={{ top: 8, right: 26, bottom: 20, left: 10 }} barCategoryGap={1} barGap={0}>
+                  <ComposedChart
+                    data={householdData}
+                    margin={{ top: 8, right: 26, bottom: 20, left: 10 }}
+                    barCategoryGap={1}
+                    barGap={0}
+                    onMouseMove={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
+                    onClick={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
+                  >
                   <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
 
                   <XAxis
@@ -907,9 +1044,7 @@ export function PvBatteryDayChart({
                     tickFormatter={(value: number) => formatKwhAxisTick(value, homeAxis.step)}
                     label={{ value: 'kWh', angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 11 }}
                   />
-                  {!selectedSlot.label.endsWith('00:00') ? (
-                    <ReferenceLine x={effectiveSelectedIndex} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
-                  ) : null}
+                  <ReferenceLine x={effectiveSelectedIndex} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
 
                   <Tooltip
                     contentStyle={{ borderRadius: 18, borderColor: COLORS.border, boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
@@ -926,7 +1061,8 @@ export function PvBatteryDayChart({
                         slot.isGridChargingBattery ? 'Grid charge' : null,
                         slot.isBatteryDischarging ? 'Battery discharge' : null,
                       ].filter(Boolean).join(' · ')
-                      return `${dayLabel} · ${slot.label}${actions ? ` · ${actions}` : ''}`
+                      const runLabel = annualResult?.planningModel === 'rolling' ? ` · ${slot.runLabel}` : ''
+                      return `${dayLabel} · ${slot.label}${actions ? ` · ${actions}` : ''}${runLabel}`
                     }}
                   />
 
@@ -1192,6 +1328,8 @@ export function PvBatteryDayChart({
                     margin={{ top: flowChartLayout.marginTop, right: 8, bottom: flowChartLayout.marginBottom, left: 6 }}
                     barCategoryGap={1}
                     barGap={0}
+                    onMouseMove={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
+                    onClick={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                   >
                   <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
 
@@ -1233,6 +1371,7 @@ export function PvBatteryDayChart({
                     label={{ value: units.priceUnit, angle: 90, position: 'insideRight', fill: COLORS.axis, fontSize: 10 }}
                   />
                   <ReferenceLine yAxisId="flow" y={0} stroke={COLORS.textSoft} strokeDasharray="3 3" />
+                  <ReferenceLine x={effectiveSelectedIndex} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
 
                   <Tooltip
                     contentStyle={{ borderRadius: 18, borderColor: COLORS.border, boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
@@ -1244,7 +1383,9 @@ export function PvBatteryDayChart({
                     labelFormatter={(value) => {
                       const index = typeof value === 'number' ? value : Number(value)
                       const slot = Number.isFinite(index) ? batteryFlowDataByIndex.get(index) : null
-                      return slot ? `${dayLabel} · ${slot.label}` : dayLabel
+                      if (!slot) return dayLabel
+                      const runLabel = annualResult?.planningModel === 'rolling' ? ` · ${slot.runLabel}` : ''
+                      return `${dayLabel} · ${slot.label}${runLabel}`
                     }}
                   />
 
@@ -1387,6 +1528,287 @@ export function PvBatteryDayChart({
                 </ResponsiveContainer>
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Run provenance</p>
+            <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Visible timeline segments</p>
+            <p className="mt-1 text-[13px] font-medium text-slate-500">
+              {annualResult?.planningModel === 'rolling'
+                ? 'Every selected slot points back to the run that produced it.'
+                : 'The deterministic model still shows a single replay run so you can compare the stitched planner against one annual baseline.'}
+            </p>
+          </div>
+          <div className="grid gap-3 px-4 py-4 sm:px-5 lg:grid-cols-2">
+            {visibleRunSegments.map((segment) => {
+              const isSelectedRun = selectedRun?.runId === segment.runId
+              return (
+                <div
+                  key={segment.runId}
+                  className={cn(
+                    'rounded-2xl border px-4 py-4 transition-colors',
+                    isSelectedRun ? 'border-amber-300 bg-amber-50/80' : 'border-gray-200 bg-[#FBFAF6]',
+                  )}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[13px] font-semibold tracking-tight text-slate-900">{segment.runLabel}</p>
+                    <span className={cn(
+                      'rounded-full px-2 py-1 text-[10px] font-semibold tracking-[0.12em]',
+                      isSelectedRun ? 'bg-amber-200/70 text-amber-900' : 'bg-white text-slate-500',
+                    )}>
+                      {isSelectedRun ? 'Selected slot run' : `${segment.lastIndex - segment.firstIndex + 1} visible slots`}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid gap-2 text-[11px] leading-5 text-slate-600">
+                    <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
+                      <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Visible chain</span>
+                      <span>{segment.firstSlot.date} {segment.firstSlot.label} {'->'} {segment.lastSlot.date} {segment.lastSlot.label}</span>
+                    </div>
+                    <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
+                      <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Known horizon</span>
+                      <span>Until {formatTimestampLabel(segment.knownHorizonEnd)}</span>
+                    </div>
+                    <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
+                      <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Committed until</span>
+                      <span>{formatTimestampLabel(segment.committedUntil)}</span>
+                    </div>
+                    <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
+                      <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Starting SoC</span>
+                      <span>{segment.initialSocKwh.toFixed(1)} kWh</span>
+                    </div>
+                    <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
+                      <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Terminal rule</span>
+                      <span>{segment.terminalRule}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Quarter-hour inspector</p>
+                <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Selected slot {selectedSlot.label}</p>
+                <p className="mt-1 text-[13px] font-medium text-slate-500">
+                  {selectedSlot.date} · {annualResult?.planningModel === 'rolling' ? selectedSlot.runLabel : 'Deterministic replay'}
+                </p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Slot economics</p>
+                <p className="mt-1 text-[22px] font-semibold tracking-tight text-slate-900">
+                  {formatMoney(-selectedSlot.slotNetCostEur, units)}
+                </p>
+                <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                  Import {formatMoney(selectedSlot.slotImportCostEur, units)} · Export {formatMoney(selectedSlot.slotExportRevenueEur, units)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 px-4 py-4 sm:px-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]">
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {[
+                  { label: 'Load forecast', value: formatMetricKwh(selectedSlot.loadForecastKwh) },
+                  { label: 'PV forecast', value: formatMetricKwh(selectedSlot.pvForecastKwh) },
+                  { label: 'SoC', value: `${selectedSlot.socKwhStart.toFixed(2)} -> ${selectedSlot.socKwhEnd.toFixed(2)} kWh` },
+                  { label: 'Import tariff', value: `${selectedSlot.importPriceCtKwh.toFixed(2)} ${units.priceUnit}` },
+                  { label: 'Export value', value: `${selectedSlot.exportPriceCtKwh.toFixed(2)} ${units.priceUnit}` },
+                  { label: 'Household price view', value: `${selectedSlot.householdImportPriceCtKwh.toFixed(2)} ${units.priceUnit}` },
+                ].map((metric) => (
+                  <div key={metric.label} className="rounded-xl border border-gray-200 bg-[#FBFAF6] px-3 py-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{metric.label}</p>
+                    <p className="mt-1 text-[13px] font-semibold text-slate-900">{metric.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white p-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Routing flows in this slot</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                  {[
+                    { label: 'PV -> load', value: selectedSlot.pvToLoadKwh },
+                    { label: 'PV -> battery', value: selectedSlot.pvToBatteryKwh },
+                    { label: 'PV -> grid', value: selectedSlot.pvToGridKwh },
+                    { label: 'Grid -> battery', value: selectedSlot.gridToBatteryKwh },
+                    { label: 'Grid -> load', value: selectedSlot.gridToLoadKwh },
+                    { label: 'Battery -> load', value: selectedSlot.batteryToLoadKwh },
+                    { label: 'Battery -> grid', value: selectedSlot.batteryExportKwh },
+                    { label: 'Curtailment', value: selectedSlot.curtailedKwh },
+                    { label: 'Direct self-use', value: selectedSlot.directSelfKwh },
+                  ].map((flow) => (
+                    <div key={flow.label} className="rounded-xl border border-[#EEE8D8] bg-[#FCF8ED] px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#82755F]">{flow.label}</p>
+                      <p className="mt-1 text-[13px] font-semibold tabular-nums text-slate-900">{formatMetricKwh(flow.value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-amber-200 bg-amber-50/70 px-4 py-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-800">Why this happened</p>
+                <div className="mt-3 space-y-2">
+                  {slotWhyLines.map((line, index) => (
+                    <p key={index} className="text-[12px] leading-6 text-amber-950/80">
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Selected slot provenance</p>
+                <div className="mt-3 space-y-2 text-[11px] leading-5 text-slate-600">
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Run</span>
+                    <span>{selectedSlot.runLabel}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Known horizon</span>
+                    <span>Until {formatTimestampLabel(selectedSlot.knownHorizonEnd)}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Committed until</span>
+                    <span>{formatTimestampLabel(selectedSlot.committedUntil)}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Run start SoC</span>
+                    <span>{selectedSlot.runInitialSocKwh.toFixed(1)} kWh</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Terminal rule</span>
+                    <span>{selectedSlot.terminalRule}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Load source</span>
+                    <span>{selectedSlot.loadForecastSource}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">PV source</span>
+                    <span>{selectedSlot.pvForecastSource}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Price source</span>
+                    <span>{selectedSlot.priceSource}</span>
+                  </div>
+                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-2">
+                    <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Tariff basis</span>
+                    <span>{selectedSlot.tariffBasis}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-gray-200 bg-white px-4 py-4">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Battery discharge split</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {[
+                    { label: 'PV -> battery -> load', value: selectedSlot.batteryPvToLoadKwh },
+                    { label: 'Grid -> battery -> load', value: selectedSlot.batteryGridToLoadKwh },
+                    { label: 'PV -> battery -> grid', value: selectedSlot.batteryPvExportKwh },
+                    { label: 'Grid -> battery -> grid', value: selectedSlot.batteryGridExportKwh },
+                  ].map((row) => (
+                    <div key={row.label} className="rounded-xl border border-gray-200 bg-[#FAFBFC] px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{row.label}</p>
+                      <p className="mt-1 text-[13px] font-semibold tabular-nums text-slate-900">{formatMetricKwh(row.value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Audit trail</p>
+            <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Per-slot reconstruction table</p>
+            <p className="mt-1 text-[13px] font-medium text-slate-500">
+              Click any row to sync the inspector and both charts to that quarter-hour.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto px-4 py-4 sm:px-5">
+            <table className="min-w-[1480px] border-separate border-spacing-0 text-left text-[11px]">
+              <thead>
+                <tr>
+                  {[
+                    'Time',
+                    'Run',
+                    'SoC start',
+                    'SoC end',
+                    'Load fcst',
+                    'PV fcst',
+                    `Import ${units.priceSym}`,
+                    `Export ${units.priceSym}`,
+                    'PV->Load',
+                    'PV->Batt',
+                    'Grid->Batt',
+                    'Batt->Load',
+                    'Batt->Grid',
+                    'Grid->Load',
+                    'PV->Grid',
+                    'Curtail',
+                    `Import ${units.currencySym}`,
+                    `Export ${units.currencySym}`,
+                    `Net ${units.currencySym}`,
+                  ].map((label) => (
+                    <th key={label} className="sticky top-0 border-b border-slate-200 bg-[#F8FAFC] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      {label}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {slots.map((slot, index) => {
+                  const active = index === effectiveSelectedIndex
+                  return (
+                    <tr
+                      key={`${slot.timestamp}-${slot.runId}`}
+                      onClick={() => setSelectedIndex(index)}
+                      className={cn(
+                        'cursor-pointer transition-colors',
+                        active ? 'bg-amber-50/80' : 'hover:bg-slate-50',
+                      )}
+                    >
+                      <td className="border-b border-slate-100 px-3 py-2 font-semibold text-slate-800">{slot.date} {slot.label}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 text-slate-600">{slot.runLabel}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.socKwhStart.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.socKwhEnd.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.loadForecastKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.pvForecastKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.importPriceCtKwh.toFixed(2)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.exportPriceCtKwh.toFixed(2)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.pvToLoadKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.pvToBatteryKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.gridToBatteryKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.batteryToLoadKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.batteryExportKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.gridToLoadKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.pvToGridKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.curtailedKwh.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.slotImportCostEur.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-700">{slot.slotExportRevenueEur.toFixed(3)}</td>
+                      <td className="border-b border-slate-100 px-3 py-2 tabular-nums text-slate-900">{slot.slotNetCostEur.toFixed(3)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
         </CardContent>
       </Card>
