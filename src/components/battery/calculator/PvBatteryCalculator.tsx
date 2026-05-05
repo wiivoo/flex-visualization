@@ -117,6 +117,48 @@ const FLOW_PERMISSION_OPTIONS: Array<{
 
 type FlowNodeKey = 'pv' | 'battery' | 'home' | 'grid'
 
+const ALLOCATION_FLOW_COLORS = {
+  gridDirect: '#7D8797',
+  pvDirect: '#E9B94A',
+  pvStored: '#D9B24E',
+  gridStored: '#2F6FB3',
+  pvExport: '#67B7D1',
+  batteryExport: '#2F6FB3',
+  household: '#111827',
+} as const
+
+type AllocationNodeMetric = {
+  label: string
+  value: string
+  color: string
+  tooltip?: ReactNode
+}
+
+type AllocationSceneLaneSpec = {
+  key: string
+  path: string
+  color: string
+  width: number
+  striped?: boolean
+  label?: string
+  labelDetail?: string
+  labelX?: number
+  labelY?: number
+  labelAnchor?: 'start' | 'middle' | 'end'
+}
+
+type AllocationMobileEntry = {
+  key: string
+  title: string
+  route: string
+  sharePct: number
+  kwh: number
+  color: string
+  badge: string
+  tooltip: string
+  striped?: boolean
+}
+
 const FLOW_NODE_META: Record<FlowNodeKey, {
   label: string
   icon: LucideIcon
@@ -127,25 +169,25 @@ const FLOW_NODE_META: Record<FlowNodeKey, {
     label: 'PV',
     icon: SunMedium,
     background: '#FFF4D6',
-    text: '#8A5A00',
+    text: ALLOCATION_FLOW_COLORS.pvDirect,
   },
   battery: {
     label: 'Battery',
     icon: BatteryCharging,
-    background: '#FFE8D9',
-    text: '#8F4312',
+    background: '#EAF2FF',
+    text: ALLOCATION_FLOW_COLORS.gridStored,
   },
   home: {
     label: 'Home',
     icon: Home,
-    background: '#EAF3FF',
-    text: '#1E4F88',
+    background: '#F1F5F9',
+    text: ALLOCATION_FLOW_COLORS.household,
   },
   grid: {
     label: 'Grid',
     icon: Zap,
     background: '#E9EEF5',
-    text: '#31465F',
+    text: ALLOCATION_FLOW_COLORS.gridDirect,
   },
 }
 
@@ -961,6 +1003,14 @@ interface WaterfallChartColumn {
   priceCtKwh: number
   braceLabel?: string
   braceDetailLabel?: string
+  topBadgeLabel?: string
+  topBadgeTone?: 'neutral' | 'slate' | 'emerald' | 'sky'
+  segmentBraces?: Array<{
+    color: string
+    label: string
+    detailLabel?: string
+    ratio: number
+  }>
   fillSegments?: Array<{ color: string; ratio: number; striped?: boolean }>
   footerLines?: string[]
   separatorBefore?: boolean
@@ -1044,6 +1094,10 @@ function stripedFill(color: string): string {
   return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 12px)`
 }
 
+function formatSetupSize(value: number): string {
+  return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(1)
+}
+
 const ALLOCATION_SCENE_NODE_LAYOUT: Record<FlowNodeKey, {
   left: string
   top: string
@@ -1052,26 +1106,26 @@ const ALLOCATION_SCENE_NODE_LAYOUT: Record<FlowNodeKey, {
   emphasis?: 'normal' | 'hero'
 }> = {
   grid: {
-    left: '12%',
-    top: '46%',
+    left: '15%',
+    top: '52%',
     label: 'Grid',
-    eyebrow: 'Import + export',
+    eyebrow: 'Market connection',
   },
   pv: {
     left: '50%',
-    top: '16%',
+    top: '21%',
     label: 'PV',
     eyebrow: 'On-site generation',
   },
   battery: {
     left: '50%',
-    top: '82%',
+    top: '79%',
     label: 'Battery',
     eyebrow: 'Shifted energy',
   },
   home: {
-    left: '84%',
-    top: '50%',
+    left: '82%',
+    top: '52%',
     label: 'Household load',
     eyebrow: 'Delivered destination',
     emphasis: 'hero',
@@ -1080,7 +1134,7 @@ const ALLOCATION_SCENE_NODE_LAYOUT: Record<FlowNodeKey, {
 
 function getAllocationSceneWidth(sharePct: number, maxSharePct: number): number {
   const normalized = maxSharePct > 0 ? sharePct / maxSharePct : 0
-  return 8 + (normalized * 12)
+  return 4 + (normalized * 8)
 }
 
 function formatScenePriceBadge(
@@ -1091,52 +1145,87 @@ function formatScenePriceBadge(
   return `${entry.bucket.unitCostCtKwh.toFixed(2)} ${units.priceUnit}`
 }
 
-function formatSceneStats(kwh: number, sharePct: number): string {
-  return `${Math.round(kwh).toLocaleString()} kWh · ${sharePct.toFixed(1)}%`
-}
-
 function AllocationSceneNode({
   node,
+  muted = false,
+  metrics = [],
 }: {
   node: FlowNodeKey
+  muted?: boolean
+  metrics?: AllocationNodeMetric[]
 }) {
   const meta = ALLOCATION_SCENE_NODE_LAYOUT[node]
   const iconMeta = FLOW_NODE_META[node]
   const Icon = iconMeta.icon
-  const iconSize = meta.emphasis === 'hero' ? 'h-6 w-6' : 'h-5 w-5'
-  const shellSize = meta.emphasis === 'hero' ? 'h-18 w-18' : 'h-14 w-14'
+  const isHero = meta.emphasis === 'hero'
+  const iconSize = isHero ? 'h-6 w-6' : 'h-5 w-5'
+  const shellSize = isHero ? 'h-[96px] w-[96px]' : 'h-[86px] w-[86px]'
+  const primaryMetric = metrics[0]
+  const secondaryMetrics = metrics.slice(1, isHero ? 5 : 3)
 
   return (
     <div
-      className="absolute -translate-x-1/2 -translate-y-1/2"
+      className={cn('absolute z-20 -translate-x-1/2 -translate-y-1/2 transition-opacity', muted && 'opacity-45')}
       style={{ left: meta.left, top: meta.top }}
     >
       <div className="flex flex-col items-center">
+        {meta.eyebrow ? (
+          <p className="mb-1 text-center text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-400">{meta.eyebrow}</p>
+        ) : null}
+        <p className={cn(
+          'mb-1.5 whitespace-nowrap text-center text-[13px] font-semibold tracking-[0.01em] text-slate-900',
+          isHero && 'text-[14px]',
+        )}>
+          {meta.label}
+        </p>
         <div
           className={cn(
-            'relative flex items-center justify-center rounded-full border border-white/80 bg-white/82 backdrop-blur-md shadow-[0_20px_40px_rgba(15,23,42,0.14)]',
+            'relative flex flex-col items-center justify-center rounded-full border border-white/80 bg-white/86 text-center backdrop-blur-md shadow-[0_20px_40px_rgba(15,23,42,0.14)]',
             shellSize,
           )}
           style={{
             boxShadow: `0 20px 40px rgba(15,23,42,0.14), inset 0 1px 0 rgba(255,255,255,0.85)`,
           }}
         >
-          <div
-            className={cn('flex items-center justify-center rounded-full', meta.emphasis === 'hero' ? 'h-14 w-14' : 'h-12 w-12')}
-            style={{ backgroundColor: iconMeta.background, color: iconMeta.text }}
-          >
+          <div className="flex items-center justify-center" style={{ color: iconMeta.text }}>
             <Icon className={iconSize} />
           </div>
+          {primaryMetric ? (
+            <p className="mt-1 max-w-[84%] truncate text-[13px] font-bold tabular-nums text-slate-900">
+              {primaryMetric.value}
+            </p>
+          ) : null}
         </div>
-        {meta.eyebrow ? (
-          <p className="mt-2.5 text-[8px] font-semibold uppercase tracking-[0.18em] text-slate-400">{meta.eyebrow}</p>
+        {secondaryMetrics.length > 0 ? (
+          <div className={cn('mt-1.5 space-y-0.5 text-center', isHero ? 'w-[180px]' : 'w-[150px]')}>
+            {secondaryMetrics.map((metric) => {
+              const row = (
+                <div className="flex items-center justify-center gap-1.5">
+                  <span className="flex min-w-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.10em] text-slate-400">
+                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: metric.color }} />
+                    <span className="truncate">{metric.label}</span>
+                  </span>
+                  <span className="shrink-0 text-[11px] font-bold tabular-nums text-slate-900">{metric.value}</span>
+                </div>
+              )
+
+              if (!metric.tooltip) return <div key={`${node}-${metric.label}`}>{row}</div>
+
+              return (
+                <Tooltip key={`${node}-${metric.label}`}>
+                  <TooltipTrigger asChild>
+                    <button type="button" className="block w-full rounded-lg transition-colors hover:bg-white/70">
+                      {row}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[280px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
+                    {metric.tooltip}
+                  </TooltipContent>
+                </Tooltip>
+              )
+            })}
+          </div>
         ) : null}
-        <p className={cn(
-          'mt-1 whitespace-nowrap text-[11px] font-semibold tracking-[0.01em] text-slate-900',
-          meta.emphasis === 'hero' && 'text-[12px]',
-        )}>
-          {meta.label}
-        </p>
       </div>
     </div>
   )
@@ -1147,12 +1236,22 @@ function AllocationSceneLane({
   color,
   width,
   striped = false,
+  label,
+  labelDetail,
+  labelX,
+  labelY,
+  labelAnchor = 'middle',
   speedSeconds = 6,
 }: {
   path: string
   color: string
   width: number
   striped?: boolean
+  label?: string
+  labelDetail?: string
+  labelX?: number
+  labelY?: number
+  labelAnchor?: 'start' | 'middle' | 'end'
   speedSeconds?: number
 }) {
   const dotCount = Math.max(2, Math.min(3, Math.round(width / 5)))
@@ -1210,66 +1309,36 @@ function AllocationSceneLane({
           />
         </circle>
       ))}
-    </>
-  )
-}
-
-function AllocationSceneCaption({
-  title,
-  statsLine,
-  badge,
-  accentColor,
-  left,
-  top,
-  tooltip,
-  align = 'left',
-}: {
-  title: string
-  statsLine: string
-  badge: string
-  accentColor: string
-  left: string
-  top: string
-  tooltip: ReactNode
-  align?: 'left' | 'center' | 'right'
-}) {
-  const translateClass = align === 'center'
-    ? '-translate-x-1/2'
-    : align === 'right'
-      ? '-translate-x-full'
-      : ''
-
-  return (
-    <div
-      className={cn('absolute pointer-events-none', translateClass)}
-      style={{ left, top }}
-    >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            className="pointer-events-auto rounded-2xl border border-white/80 bg-white/78 px-2.5 py-2 text-left shadow-[0_16px_32px_rgba(15,23,42,0.10)] backdrop-blur-md transition-transform duration-200 hover:-translate-y-0.5"
+      {label && labelX !== undefined && labelY !== undefined ? (
+        <g>
+          <rect
+            x={labelAnchor === 'end' ? labelX - 112 : labelAnchor === 'middle' ? labelX - 56 : labelX}
+            y={labelY - 15}
+            width="112"
+            height="30"
+            rx="15"
+            fill="rgba(255,255,255,0.94)"
+            stroke="rgba(100,116,139,0.30)"
+          />
+          <circle
+            cx={labelAnchor === 'end' ? labelX - 98 : labelAnchor === 'middle' ? labelX - 42 : labelX + 14}
+            cy={labelY}
+            r="4"
+            fill={color}
+          />
+          <text
+            x={labelAnchor === 'end' ? labelX - 88 : labelAnchor === 'middle' ? labelX - 32 : labelX + 24}
+            y={labelY}
+            textAnchor="start"
+            dominantBaseline="middle"
+            fill="#0F172A"
+            className="select-none text-[14px] font-bold tabular-nums"
           >
-            <div className="flex items-start gap-2.5">
-              <span className="mt-0.5 h-8 w-1.5 rounded-full" style={{ backgroundColor: accentColor }} />
-              <div className="min-w-[124px]">
-                <p className="text-[9px] font-semibold uppercase tracking-[0.16em] text-slate-400">{title}</p>
-                <p className="mt-1 text-[11px] font-semibold tabular-nums text-slate-900">{statsLine}</p>
-                <span
-                  className="mt-2 inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold tabular-nums text-slate-700"
-                  style={{ backgroundColor: `${accentColor}1F` }}
-                >
-                  {badge}
-                </span>
-              </div>
-            </div>
-          </button>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-[280px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
-          {tooltip}
-        </TooltipContent>
-      </Tooltip>
-    </div>
+            {labelDetail ?? label}
+          </text>
+        </g>
+      ) : null}
+    </>
   )
 }
 
@@ -1277,6 +1346,7 @@ function DeliveredAllocationScene({
   visibleBuckets,
   showExportBucket,
   stats,
+  setup,
   units,
 }: {
   visibleBuckets: AllocationBucket[]
@@ -1284,8 +1354,14 @@ function DeliveredAllocationScene({
   stats: {
     deliveredLoadKwh: number
     exportKwh: number
+    directExportKwh: number
+    batteryExportKwh: number
     exportRevenueEur: number
     exportAvgCt: number
+  }
+  setup: {
+    pvCapacityWp: number
+    usableKwh: number
   }
   units: ReturnType<typeof getPriceUnits>
 }) {
@@ -1295,90 +1371,158 @@ function DeliveredAllocationScene({
     showExportBucket ? exportSharePct : 0,
     1,
   )
+  const bucketByKey = new Map(visibleBuckets.map((bucket) => [bucket.key, bucket]))
+  const makeBucketMetric = (bucket: AllocationBucket): AllocationNodeMetric => ({
+    label: bucket.shortLabel,
+    value: `${Math.round(bucket.kwh).toLocaleString()} kWh`,
+    color: bucket.color,
+    tooltip: (
+      <div className="space-y-1.5">
+        <p className="font-medium text-slate-900">{bucket.label}</p>
+        <p>{bucket.sharePct.toFixed(1)}% of delivered load</p>
+        <p>Unit cost: {bucket.unitCostCtKwh.toFixed(2)} {units.priceUnit}</p>
+        <p>Modeled cost: {units.currencySym}{bucket.totalCostEur.toFixed(0)}</p>
+      </div>
+    ),
+  })
+  const pvMetrics: AllocationNodeMetric[] = []
+  if (setup.pvCapacityWp > 0) {
+    pvMetrics.push({
+      label: 'Setup',
+      value: `${formatSetupSize(setup.pvCapacityWp / 1000)} kWp`,
+      color: ALLOCATION_FLOW_COLORS.pvDirect,
+    })
+  }
+  const pvDirectBucket = bucketByKey.get('pvDirect')
+  if (pvDirectBucket) pvMetrics.push(makeBucketMetric(pvDirectBucket))
 
-  const laneSpecs = visibleBuckets.flatMap((bucket) => {
+  const gridExportMetrics: AllocationNodeMetric[] = []
+  if (showExportBucket && stats.directExportKwh > 1e-6) {
+    gridExportMetrics.push({
+      label: 'PV export',
+      value: `${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
+      color: ALLOCATION_FLOW_COLORS.pvExport,
+      tooltip: (
+        <div className="space-y-1.5">
+          <p className="font-medium text-slate-900">Direct PV feed-in at the shared grid connection.</p>
+          <p>Part of total export revenue: +{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
+        </div>
+      ),
+    })
+  }
+  if (showExportBucket && stats.batteryExportKwh > 1e-6) {
+    gridExportMetrics.push({
+      label: 'Battery export',
+      value: `${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
+      color: ALLOCATION_FLOW_COLORS.batteryExport,
+      tooltip: (
+        <div className="space-y-1.5">
+          <p className="font-medium text-slate-900">Battery feed-in at the shared grid connection.</p>
+          <p>Kept distinct from direct PV export because it can occur at different prices.</p>
+        </div>
+      ),
+    })
+  }
+
+  const batteryMetrics: AllocationNodeMetric[] = []
+  if (setup.usableKwh > 0) {
+    batteryMetrics.push({
+      label: 'Setup',
+      value: `${formatSetupSize(setup.usableKwh)} kWh`,
+      color: ALLOCATION_FLOW_COLORS.gridStored,
+    })
+  }
+  const pvStoredBucket = bucketByKey.get('pvStored')
+  const gridStoredBucket = bucketByKey.get('gridStored')
+  if (pvStoredBucket) batteryMetrics.push(makeBucketMetric(pvStoredBucket))
+  if (gridStoredBucket) batteryMetrics.push(makeBucketMetric(gridStoredBucket))
+
+  const nodeMetrics: Record<FlowNodeKey, AllocationNodeMetric[]> = {
+    grid: [
+      ...[
+        bucketByKey.get('gridDirect'),
+        bucketByKey.get('gridStored'),
+      ].filter((bucket): bucket is AllocationBucket => Boolean(bucket)).map(makeBucketMetric),
+      ...gridExportMetrics,
+    ],
+    pv: pvMetrics,
+    battery: batteryMetrics,
+    home: [
+      {
+        label: 'Served load',
+        value: `${Math.round(stats.deliveredLoadKwh).toLocaleString()} kWh`,
+        color: ALLOCATION_FLOW_COLORS.household,
+      },
+      ...visibleBuckets.map((bucket) => ({
+        label: bucket.shortLabel,
+        value: `${bucket.sharePct.toFixed(1)}%`,
+        color: bucket.color,
+        tooltip: (
+          <div className="space-y-1.5">
+            <p className="font-medium text-slate-900">{bucket.label}</p>
+            <p>{Math.round(bucket.kwh).toLocaleString()} kWh delivered to household load.</p>
+            <p>Unit cost: {bucket.unitCostCtKwh.toFixed(2)} {units.priceUnit}</p>
+          </div>
+        ),
+      })),
+    ],
+  }
+
+  const laneSpecs: AllocationSceneLaneSpec[] = visibleBuckets.flatMap((bucket) => {
     const laneWidth = getAllocationSceneWidth(bucket.sharePct, maxSharePct)
+    const laneKwh = `${Math.round(bucket.kwh).toLocaleString()} kWh`
     if (bucket.key === 'gridDirect') {
-      return [{ key: bucket.key, path: 'M192 280 L 748 280', color: bucket.color, width: laneWidth }]
+      return [{
+        key: bucket.key,
+        path: 'M194 292 L742 292',
+        color: bucket.color,
+        width: laneWidth,
+        label: laneKwh,
+        labelX: 458,
+        labelY: 258,
+      }]
     }
     if (bucket.key === 'pvDirect') {
-      return [{ key: bucket.key, path: 'M500 118 L 500 188 Q 500 236 548 236 L 748 236', color: bucket.color, width: laneWidth }]
+      return [{
+        key: bucket.key,
+        path: 'M532 150 C602 230 676 252 742 252',
+        color: bucket.color,
+        width: laneWidth,
+        label: laneKwh,
+        labelX: 646,
+        labelY: 218,
+      }]
     }
     if (bucket.key === 'pvStored') {
       return [
-        { key: `${bucket.key}-charge`, path: 'M484 132 L 484 404', color: bucket.color, width: laneWidth },
-        { key: `${bucket.key}-serve`, path: 'M516 404 Q 560 328 622 312 L 748 312', color: bucket.color, width: laneWidth },
+        {
+          key: `${bucket.key}-charge`,
+          path: 'M500 166 L500 390',
+          color: bucket.color,
+          width: laneWidth,
+          label: laneKwh,
+          labelX: 520,
+          labelY: 285,
+          labelAnchor: 'start',
+        },
+        { key: `${bucket.key}-serve`, path: 'M540 412 C610 350 690 332 742 332', color: bucket.color, width: laneWidth },
       ]
     }
     return [
-      { key: `${bucket.key}-charge`, path: 'M206 320 Q 280 398 460 424', color: bucket.color, width: laneWidth },
-      { key: `${bucket.key}-serve`, path: 'M520 424 Q 608 332 664 328 L 748 328', color: bucket.color, width: laneWidth },
+      { key: `${bucket.key}-charge`, path: 'M194 318 C302 318 356 390 458 414', color: bucket.color, width: laneWidth },
+      {
+        key: `${bucket.key}-serve`,
+        path: 'M540 438 C620 384 704 370 742 370',
+        color: bucket.color,
+        width: laneWidth,
+        label: laneKwh,
+        labelX: 650,
+        labelY: 402,
+      },
     ]
   })
 
-  const captionSpecs = visibleBuckets.map((bucket) => {
-    const tooltip = (
-      <div className="space-y-1.5">
-        <p className="font-medium text-slate-900">{bucket.detail}</p>
-        <p>Modeled cost: {units.currencySym}{bucket.totalCostEur.toFixed(0)}</p>
-        <p>Baseline-equivalent share: {units.currencySym}{bucket.baselineCostShareEur.toFixed(0)}</p>
-        <p>Impact vs baseline: {formatMetricDelta(bucket.impactDeltaCtKwh, 'ct', units)}</p>
-      </div>
-    )
-
-    if (bucket.key === 'gridDirect') {
-      return {
-        key: bucket.key,
-        left: '24%',
-        top: '36%',
-        align: 'left' as const,
-        accentColor: bucket.color,
-        title: bucket.shortLabel,
-        statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
-        badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
-        tooltip,
-      }
-    }
-    if (bucket.key === 'pvDirect') {
-      return {
-        key: bucket.key,
-        left: '50%',
-        top: '26%',
-        align: 'center' as const,
-        accentColor: bucket.color,
-        title: bucket.shortLabel,
-        statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
-        badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
-        tooltip,
-      }
-    }
-    if (bucket.key === 'pvStored') {
-      return {
-        key: bucket.key,
-        left: '34%',
-        top: '64%',
-        align: 'center' as const,
-        accentColor: bucket.color,
-        title: bucket.shortLabel,
-        statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
-        badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
-        tooltip,
-      }
-    }
-    return {
-      key: bucket.key,
-      left: '63%',
-      top: '66%',
-      align: 'left' as const,
-      accentColor: bucket.color,
-      title: bucket.shortLabel,
-      statsLine: formatSceneStats(bucket.kwh, bucket.sharePct),
-      badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
-      tooltip,
-    }
-  })
-
-  const mobileEntries = visibleBuckets.map((bucket) => ({
+  const mobileEntries: AllocationMobileEntry[] = visibleBuckets.map((bucket) => ({
     key: bucket.key,
     title: bucket.shortLabel,
     route: bucket.label,
@@ -1390,42 +1534,39 @@ function DeliveredAllocationScene({
   }))
 
   if (showExportBucket) {
-    laneSpecs.push({
-      key: 'export',
-      path: 'M468 132 Q 430 184 344 214 L 192 214',
-      color: '#67B7D1',
-      width: getAllocationSceneWidth(exportSharePct, maxSharePct),
-      striped: true,
-    })
-    captionSpecs.push({
-      key: 'export',
-      left: '24%',
-      top: '19%',
-      align: 'left' as const,
-      accentColor: '#67B7D1',
-      title: 'Grid export',
-      statsLine: formatSceneStats(stats.exportKwh, exportSharePct),
-      badge: formatScenePriceBadge({
-        kind: 'export',
-        exportRevenueEur: stats.exportRevenueEur,
-        exportAvgCt: stats.exportAvgCt,
-      }, units),
-      tooltip: (
-        <div className="space-y-1.5">
-          <p className="font-medium text-slate-900">Outbound export goes to the grid and stays outside the delivered-load mix so revenue does not read like a household supply path.</p>
-          <p>Export volume: {Math.round(stats.exportKwh).toLocaleString()} kWh</p>
-          <p>Average export value: {stats.exportAvgCt.toFixed(2)} {units.priceUnit}</p>
-          <p>Revenue: +{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
-        </div>
-      ),
-    })
+    const directExportSharePct = (stats.directExportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100
+    const batteryExportSharePct = (stats.batteryExportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100
+    if (stats.directExportKwh > 1e-6) {
+      laneSpecs.push({
+        key: 'pv-export',
+        path: 'M470 150 C432 222 322 250 194 266',
+        color: ALLOCATION_FLOW_COLORS.pvExport,
+        width: getAllocationSceneWidth(directExportSharePct, maxSharePct),
+        striped: true,
+        label: `${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
+        labelX: 330,
+        labelY: 222,
+      })
+    }
+    if (stats.batteryExportKwh > 1e-6) {
+      laneSpecs.push({
+        key: 'battery-export',
+        path: 'M458 438 C354 414 302 338 194 338',
+        color: ALLOCATION_FLOW_COLORS.batteryExport,
+        width: getAllocationSceneWidth(batteryExportSharePct, maxSharePct),
+        striped: true,
+        label: `${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
+        labelX: 326,
+        labelY: 380,
+      })
+    }
     mobileEntries.push({
       key: 'export',
       title: 'Export',
-      route: 'PV -> grid export',
+      route: 'PV / battery -> grid',
       sharePct: exportSharePct,
       kwh: stats.exportKwh,
-      color: '#67B7D1',
+      color: ALLOCATION_FLOW_COLORS.pvExport,
       badge: formatScenePriceBadge({
         kind: 'export',
         exportRevenueEur: stats.exportRevenueEur,
@@ -1441,7 +1582,7 @@ function DeliveredAllocationScene({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Flow allocation scene</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Power map with straighter rails, faster dots on larger flows, and compact frosted cards.</p>
+          <p className="mt-1 text-sm font-semibold text-slate-900">Household intake on the right stays separate from the grid connection that handles both import and export.</p>
         </div>
       </div>
 
@@ -1455,9 +1596,24 @@ function DeliveredAllocationScene({
               </linearGradient>
             </defs>
             <rect x="0" y="0" width="1000" height="560" fill="url(#allocation-scene-sky)" />
-            <path d="M150 280 L 770 280" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
-            <path d="M500 118 L 500 430" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
-            <path d="M770 150 L 770 410" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M150 292 L790 292" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M500 118 L500 442" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M470 150 C432 222 322 250 194 266" fill="none" stroke="rgba(103,183,209,0.12)" strokeWidth="1" />
+            <path d="M532 150 C602 230 676 252 742 252" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M458 438 C354 414 302 338 194 338" fill="none" stroke="rgba(47,111,179,0.10)" strokeWidth="1" />
+            <path d="M540 438 C620 384 704 370 742 370" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <rect x="180" y="244" width="28" height="116" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(148,163,184,0.24)" />
+            {[266, 292, 318, 338].map((portY) => (
+              <circle key={`allocation-grid-port-${portY}`} cx="194" cy={portY} r="4.5" fill="rgba(148,163,184,0.34)" />
+            ))}
+            <path d="M162 292 L180 292" fill="none" stroke="rgba(71,85,105,0.30)" strokeWidth="10" strokeLinecap="round" />
+            <path d="M162 292 L180 292" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2" strokeLinecap="round" />
+            <rect x="728" y="230" width="28" height="162" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(148,163,184,0.24)" />
+            {[252, 292, 332, 370].map((portY) => (
+              <circle key={`allocation-intake-port-${portY}`} cx="742" cy={portY} r="4.5" fill="rgba(148,163,184,0.34)" />
+            ))}
+            <path d="M756 292 L774 292" fill="none" stroke="rgba(71,85,105,0.30)" strokeWidth="10" strokeLinecap="round" />
+            <path d="M756 292 L774 292" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2" strokeLinecap="round" />
             {laneSpecs.map((lane) => (
               <AllocationSceneLane
                 key={lane.key}
@@ -1465,27 +1621,23 @@ function DeliveredAllocationScene({
                 color={lane.color}
                 width={lane.width}
                 striped={lane.striped}
+                label={lane.label}
+                labelX={lane.labelX}
+                labelY={lane.labelY}
+                labelAnchor={lane.labelAnchor}
                 speedSeconds={Math.max(1.8, 6.6 - (lane.width * 0.24))}
               />
             ))}
           </svg>
 
           <div className="absolute inset-0">
-            {(['grid', 'pv', 'battery', 'home'] as const).map((node) => (
-              <AllocationSceneNode key={node} node={node} />
-            ))}
-            {captionSpecs.map((caption) => (
-              <AllocationSceneCaption
-                key={caption.key}
-                title={caption.title}
-                statsLine={caption.statsLine}
-                badge={caption.badge}
-                accentColor={caption.accentColor}
-                left={caption.left}
-                top={caption.top}
-                align={caption.align}
-                tooltip={caption.tooltip}
-              />
+            {([
+              { key: 'grid', muted: false },
+              { key: 'pv', muted: false },
+              { key: 'battery', muted: false },
+              { key: 'home', muted: false },
+            ] satisfies Array<{ key: FlowNodeKey; muted: boolean }>).map((node) => (
+              <AllocationSceneNode key={node.key} node={node.key} muted={node.muted} metrics={nodeMetrics[node.key]} />
             ))}
           </div>
         </div>
@@ -1506,7 +1658,7 @@ function DeliveredAllocationScene({
                   </div>
                   <span
                     className="shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold tabular-nums text-slate-700"
-                    style={{ background: entry.striped ? stripedFill('#67B7D1') : `${entry.color}1F` }}
+                    style={{ background: entry.striped ? stripedFill(entry.color) : `${entry.color}1F` }}
                   >
                     {entry.badge}
                   </span>
@@ -1517,7 +1669,7 @@ function DeliveredAllocationScene({
                       className="h-full rounded-full"
                       style={{
                         width: `${Math.min(Math.max(entry.sharePct, 4), 100)}%`,
-                        background: entry.striped ? stripedFill('#67B7D1') : entry.color,
+                        background: entry.striped ? stripedFill(entry.color) : entry.color,
                       }}
                     />
                   </div>
@@ -1552,12 +1704,16 @@ function DeliveredAllocationCard({
   flowPermissions,
   isPvSelected,
   isBatterySelected,
+  pvCapacityWp,
+  usableKwh,
 }: {
   annual: PvBatteryAnnualResult
   units: ReturnType<typeof getPriceUnits>
   flowPermissions: FlowPermissions
   isPvSelected: boolean
   isBatterySelected: boolean
+  pvCapacityWp: number
+  usableKwh: number
 }) {
   const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>('volume')
   const [volumeMode, setVolumeMode] = useState<AllocationVolumeMode>('abs')
@@ -1571,6 +1727,8 @@ function DeliveredAllocationCard({
       acc.gridStoredKwh += slot.batteryGridToLoadKwh
       acc.baselineCostEur += slot.baselineCostEur
       acc.exportRevenueEur += slot.exportRevenueEur
+      acc.directExportRevenueEur += (slot.directExportKwh * slot.exportPriceCtKwh) / 100
+      acc.batteryExportRevenueEur += (slot.batteryExportKwh * slot.exportPriceCtKwh) / 100
       acc.gridDirectCostEur += (slot.gridToLoadKwh * slot.importPriceCtKwh) / 100
       acc.gridStoredInputCostEur += asFinite(slot.batteryGridLoadInputCostEur, 0)
       return acc
@@ -1581,6 +1739,8 @@ function DeliveredAllocationCard({
       gridStoredKwh: 0,
       baselineCostEur: 0,
       exportRevenueEur: 0,
+      directExportRevenueEur: 0,
+      batteryExportRevenueEur: 0,
       gridDirectCostEur: 0,
       gridStoredInputCostEur: 0,
     })
@@ -1598,6 +1758,8 @@ function DeliveredAllocationCard({
     const grossDeliveredCt = (grossDeliveredCostEur * 100) / safeLoadKwh
     const exportKwh = annual.directExportKwh + annual.batteryExportKwh
     const exportAvgCt = exportKwh > 0 ? (totals.exportRevenueEur * 100) / exportKwh : 0
+    const directExportAvgCt = annual.directExportKwh > 0 ? (totals.directExportRevenueEur * 100) / annual.directExportKwh : 0
+    const batteryExportAvgCt = annual.batteryExportKwh > 0 ? (totals.batteryExportRevenueEur * 100) / annual.batteryExportKwh : 0
 
     const buckets: AllocationBucket[] = [
       {
@@ -1613,7 +1775,7 @@ function DeliveredAllocationCard({
         baselineCostShareEur: (totals.gridDirectKwh * baselineAvgCt) / 100,
         impactDeltaCtKwh: 0,
         impactDeltaEur: 0,
-        color: '#7D8797',
+        color: ALLOCATION_FLOW_COLORS.gridDirect,
       },
       {
         key: 'pvDirect',
@@ -1628,7 +1790,7 @@ function DeliveredAllocationCard({
         baselineCostShareEur: (totals.pvDirectKwh * baselineAvgCt) / 100,
         impactDeltaCtKwh: 0,
         impactDeltaEur: 0,
-        color: '#E9B94A',
+        color: ALLOCATION_FLOW_COLORS.pvDirect,
       },
       {
         key: 'pvStored',
@@ -1643,7 +1805,7 @@ function DeliveredAllocationCard({
         baselineCostShareEur: (totals.pvStoredKwh * baselineAvgCt) / 100,
         impactDeltaCtKwh: 0,
         impactDeltaEur: 0,
-        color: '#D9B24E',
+        color: ALLOCATION_FLOW_COLORS.pvStored,
       },
       {
         key: 'gridStored',
@@ -1658,7 +1820,7 @@ function DeliveredAllocationCard({
         baselineCostShareEur: (totals.gridStoredKwh * baselineAvgCt) / 100,
         impactDeltaCtKwh: 0,
         impactDeltaEur: 0,
-        color: '#2F6FB3',
+        color: ALLOCATION_FLOW_COLORS.gridStored,
       },
     ]
 
@@ -1676,6 +1838,10 @@ function DeliveredAllocationCard({
       grossDeliveredCt,
       exportRevenueEur: totals.exportRevenueEur,
       exportKwh,
+      directExportKwh: annual.directExportKwh,
+      batteryExportKwh: annual.batteryExportKwh,
+      directExportAvgCt,
+      batteryExportAvgCt,
       exportAvgCt,
       exportCreditCtEquivalent: totals.exportRevenueEur > 0 ? (totals.exportRevenueEur * 100) / safeLoadKwh : 0,
       overallNetEquivalentCt: (annual.netCostEur * 100) / safeLoadKwh,
@@ -1753,46 +1919,70 @@ function DeliveredAllocationCard({
         shortLabel: 'Household',
         label: 'Household total',
         type: 'total',
-        color: '#111827',
+        color: ALLOCATION_FLOW_COLORS.household,
         priceCtKwh: stats.grossDeliveredCt,
         braceLabel: formatBracePriceLabel(stats.grossDeliveredCt, units.priceUnit),
         braceDetailLabel: formatBraceDetailLabel(stats.grossDeliveredCostEur, volumeMode === 'share' ? 100 : null, volumeMode, units),
-        fillSegments: [{ color: '#111827', ratio: 1 }],
+        fillSegments: [{ color: ALLOCATION_FLOW_COLORS.household, ratio: 1 }],
         footerLines: [],
         totalValue: running,
       })
 
       if (showExportBucket) {
+        const directExportRatio = stats.exportKwh > 0 ? stats.directExportKwh / stats.exportKwh : 0
+        const batteryExportRatio = stats.exportKwh > 0 ? stats.batteryExportKwh / stats.exportKwh : 0
         columns.push({
           key: 'export',
           shortLabel: 'Export',
           label: 'Export outside household total',
           type: 'total',
-          color: '#67B7D1',
+          color: ALLOCATION_FLOW_COLORS.pvExport,
           priceCtKwh: stats.exportAvgCt,
-          braceLabel: formatBracePriceLabel(stats.exportAvgCt, units.priceUnit),
           braceDetailLabel: volumeMode === 'share'
             ? `${formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)} / ${exportBasisValue.toFixed(1)}%`
             : formatSignedCurrency(-stats.exportRevenueEur, units.currencySym),
-          fillSegments: [{ color: '#67B7D1', ratio: 1, striped: true }],
-          footerLines: [],
+          fillSegments: [
+            { color: ALLOCATION_FLOW_COLORS.pvExport, ratio: directExportRatio },
+            { color: ALLOCATION_FLOW_COLORS.batteryExport, ratio: batteryExportRatio },
+          ],
+          segmentBraces: [
+            {
+              color: ALLOCATION_FLOW_COLORS.pvExport,
+              label: `${stats.directExportAvgCt.toFixed(2)} ${units.priceUnit}`,
+              detailLabel: `PV · ${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
+              ratio: directExportRatio,
+            },
+            {
+              color: ALLOCATION_FLOW_COLORS.batteryExport,
+              label: `${stats.batteryExportAvgCt.toFixed(2)} ${units.priceUnit}`,
+              detailLabel: `Battery · ${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
+              ratio: batteryExportRatio,
+            },
+          ].filter((segment) => segment.ratio > 1e-6),
+          footerLines: [
+            `PV feed-in ${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
+            `Battery feed-in ${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
+          ],
           separatorBefore: true,
           totalValue: exportBasisValue,
         })
       }
     } else {
       const baselineValue = stats.baselineAvgCt
-      title = 'Baseline to final household price in ct/kWh'
+      title = 'Baseline to household price in ct/kWh'
       description = 'Starts from the all-household grid-only baseline, then each delivered bucket reduces or increases the average household price until export credit reaches the final result. Residual grid means only the load still bought directly from the grid after PV and battery routing.'
       totalLabel = formatMetricValue(stats.overallNetEquivalentCt, 'ct', units)
 
       columns = [{
         key: 'baseline',
-        shortLabel: 'Baseline',
+        shortLabel: 'Baseline (Grid only)',
         label: 'All-household grid-only baseline',
         type: 'total',
         color: '#CBD5E1',
         priceCtKwh: stats.baselineAvgCt,
+        braceLabel: formatBracePriceLabel(stats.baselineAvgCt, units.priceUnit),
+        topBadgeLabel: `${formatMetricValue(stats.baselineCostEur, 'eur', units)} · ${Math.round(stats.deliveredLoadKwh).toLocaleString()} kWh`,
+        topBadgeTone: 'slate',
         fillSegments: [{ color: '#CBD5E1', ratio: 1 }],
         totalValue: baselineValue,
       }]
@@ -1837,27 +2027,33 @@ function DeliveredAllocationCard({
         shortLabel: 'Gross household',
         label: 'Household total',
         type: 'total',
-        color: '#111827',
+        color: ALLOCATION_FLOW_COLORS.household,
         priceCtKwh: stats.grossDeliveredCt,
-        fillSegments: [{ color: '#111827', ratio: 1 }],
+        braceLabel: formatBracePriceLabel(stats.grossDeliveredCt, units.priceUnit),
+        topBadgeLabel: `${formatMetricValue(stats.grossDeliveredCostEur, 'eur', units)} · ${Math.round(stats.deliveredLoadKwh).toLocaleString()} kWh`,
+        topBadgeTone: 'neutral',
+        fillSegments: [{ color: ALLOCATION_FLOW_COLORS.household, ratio: 1 }],
         totalValue: running,
       })
       const exportDelta = -stats.exportCreditCtEquivalent
       const finalValue = running + exportDelta
       columns.push({
         key: 'final',
-        shortLabel: 'Final household',
-        label: 'Final household result',
+        shortLabel: 'Household incl. Export',
+        label: 'Household including export credit',
         type: 'total',
         color: '#0F766E',
         priceCtKwh: stats.overallNetEquivalentCt,
+        braceLabel: formatBracePriceLabel(stats.overallNetEquivalentCt, units.priceUnit),
+        topBadgeLabel: `Export credit -${units.currencySym}${stats.exportRevenueEur.toFixed(0)}`,
+        topBadgeTone: 'sky',
         fillSegments: [{ color: '#0F766E', ratio: 1 }],
         separatorBefore: true,
         overlay: {
           fromValue: 0,
           toValue: running,
           label: formatSignedCt(-stats.exportCreditCtEquivalent, units.priceUnit),
-          color: '#67B7D1',
+          color: ALLOCATION_FLOW_COLORS.pvExport,
         },
         totalValue: finalValue,
       })
@@ -1884,43 +2080,21 @@ function DeliveredAllocationCard({
   }, [displayMode, showExportBucket, stats, units, visibleBuckets, volumeMode])
 
   const usesBridgeBraceLabels = displayMode === 'volume'
-  const chartMinWidthPx = chartSeries.columns.length * (usesBridgeBraceLabels ? 132 : 108)
+  const chartHeightPx = 420
 
   return (
     <Card className="border-gray-200/80 bg-white shadow-sm">
       <CardContent className="p-0">
-        <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(220px,0.9fr)_minmax(0,2.1fr)] lg:items-center">
-            <div className="pt-0.5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Cost Allocation</p>
-              <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Delivered allocation</p>
-              <p className="mt-2 max-w-[38rem] text-[12px] leading-5 text-slate-500">
-                Compare delivered household supply paths and their modeled impact without nesting the chart inside a second card surface.
-              </p>
-            </div>
-            <div className="min-w-0">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                {visibleBuckets.map((bucket) => (
-                  <div key={`${bucket.key}-summary`} className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">{bucket.shortLabel}</p>
-                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{Math.round(bucket.kwh).toLocaleString()} kWh</p>
-                    <p className="mt-1 text-[10px] leading-4 text-gray-500">{bucket.sharePct.toFixed(1)}% of delivered load</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="pl-4 pr-2 pb-4 pt-3 sm:pl-5 sm:pr-3">
-          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="border-b border-gray-100 px-5 py-5 sm:px-7">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div>
-              <p className="text-sm font-semibold text-gray-900">{chartSeries.title}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Cost Allocation</p>
+              <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">{chartSeries.title}</p>
               <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
                 {getMetricAxisLabel(chartMetric, units)}
               </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2 pb-1 lg:justify-end">
+            <div className="flex flex-wrap items-center gap-2 pt-1 xl:justify-end">
               <SegmentedPillGroup
                 options={[
                   {
@@ -1929,36 +2103,35 @@ function DeliveredAllocationCard({
                     onClick: () => setDisplayMode('volume'),
                   },
                   {
-                    label: 'Impact',
+                    label: 'Price',
                     active: displayMode === 'impact',
                     onClick: () => setDisplayMode('impact'),
                   },
                 ]}
               />
               {displayMode === 'volume' ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-400">Bar basis</span>
-                  <SegmentedPillGroup
-                    options={[
-                      {
-                        label: 'Abs. kWh',
-                        active: volumeMode === 'abs',
-                        onClick: () => setVolumeMode('abs'),
-                      },
-                      {
-                        label: '%',
-                        active: volumeMode === 'share',
-                        onClick: () => setVolumeMode('share'),
-                      },
-                    ]}
-                  />
-                </div>
+                <SegmentedPillGroup
+                  options={[
+                    {
+                      label: 'Abs. kWh',
+                      active: volumeMode === 'abs',
+                      onClick: () => setVolumeMode('abs'),
+                    },
+                    {
+                      label: '%',
+                      active: volumeMode === 'share',
+                      onClick: () => setVolumeMode('share'),
+                    },
+                  ]}
+                />
               ) : null}
             </div>
           </div>
+        </div>
 
-          <div className="grid grid-cols-[68px_minmax(0,1fr)] items-start gap-3">
-            <div className="relative h-[340px]">
+        <div className="px-4 pb-5 pt-5 sm:px-6">
+          <div className="grid grid-cols-[58px_minmax(0,1fr)] items-start gap-3">
+            <div className="relative" style={{ height: `${chartHeightPx}px` }}>
               {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
                 const value = chartSeries.minValue + ((chartSeries.maxValue - chartSeries.minValue) * ratio)
                 return (
@@ -1975,9 +2148,9 @@ function DeliveredAllocationCard({
               })}
             </div>
 
-            <div className="overflow-x-auto overflow-y-visible pb-1 pt-8 -mt-8">
-              <div className="space-y-2" style={{ minWidth: `${chartMinWidthPx}px` }}>
-                <div className="relative h-[340px]">
+            <div className="min-w-0 overflow-visible pb-1 pt-9 -mt-9">
+              <div className="space-y-3">
+                <div className="relative" style={{ height: `${chartHeightPx}px` }}>
                   {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
                     <div
                       key={`${chartMetric}-grid-${ratio}`}
@@ -1991,7 +2164,7 @@ function DeliveredAllocationCard({
                   />
 
                   <div
-                    className="absolute inset-0 grid gap-3"
+                    className="absolute inset-0 grid gap-2 sm:gap-3"
                     style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
                   >
                     {chartSeries.columns.map((column, index) => {
@@ -2009,7 +2182,9 @@ function DeliveredAllocationCard({
                           const lowPct = chartSeries.valueToPct(lowValue)
                           const highPct = chartSeries.valueToPct(highValue)
                           const barHeightPct = isZeroValue ? 0 : Math.max(highPct - lowPct, 1.8)
-                          const showCenteredPrice = false
+                          const showCenteredPrice = isImpactChart
+                            && column.type === 'total'
+                            && ['baseline', 'gross', 'final'].includes(column.key)
                           const overlayLowValue = column.overlay
                             ? Math.min(column.overlay.fromValue, column.overlay.toValue)
                             : 0
@@ -2047,8 +2222,16 @@ function DeliveredAllocationCard({
                             && column.type === 'total'
                             && ['baseline', 'gross', 'final'].includes(column.key)
                           const impactRunningLabel = showImpactTopLabel
-                            ? formatMetricValue(column.totalValue ?? 0, 'ct', units)
+                            ? column.topBadgeLabel ?? formatMetricValue(column.totalValue ?? 0, 'ct', units)
                             : null
+                          const impactRunningToneClass =
+                            column.topBadgeTone === 'sky'
+                              ? 'border border-sky-100 bg-sky-50 text-sky-800'
+                              : column.topBadgeTone === 'emerald'
+                                ? 'border border-emerald-100 bg-emerald-50 text-emerald-800'
+                                : column.topBadgeTone === 'slate'
+                                  ? 'border border-slate-200 bg-slate-50 text-slate-700'
+                                  : 'bg-white text-gray-900'
                           const impactDeltaInBarLabel = isImpactChart && column.type === 'delta' && Math.abs(column.deltaValue ?? 0) > 1e-6
                             ? formatSignedCt(column.deltaValue ?? 0, units.priceUnit)
                             : null
@@ -2070,15 +2253,18 @@ function DeliveredAllocationCard({
                           const darkLabel = isDarkColumnColor(column.color)
                           const showExternalPrice = false
                           const showBridgeBraceLabel = usesBridgeBraceLabels && Boolean(column.braceLabel)
+                          const segmentBraces = usesBridgeBraceLabels ? column.segmentBraces ?? [] : []
                           const braceHeightPct = Math.min(Math.max(barHeightPct, 5.5), 100)
                           const braceMidPct = (lowPct + highPct) / 2
                           const braceBottomPct = Math.max(Math.min(braceMidPct - (braceHeightPct / 2), 100 - braceHeightPct), 0)
-                          const barLeftInsetPx = 24
-                          const barRightInsetPx = showBridgeBraceLabel ? 58 : 24
+                          const hasRightBraceRail = showBridgeBraceLabel || segmentBraces.length > 0
+                          const barLeftInsetPx = hasRightBraceRail ? 10 : 16
+                          const barRightInsetPx = hasRightBraceRail ? 46 : 16
                           const barFrameStyle = {
                             left: `${barLeftInsetPx}px`,
                             right: `${barRightInsetPx}px`,
                           }
+                          let segmentBraceOffsetPct = 0
 
                       return (
                         <div key={column.key} className="relative">
@@ -2119,7 +2305,7 @@ function DeliveredAllocationCard({
                                 className="absolute inset-x-1 z-20 flex justify-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                                 style={{ bottom: `calc(${Math.min(highPct, 100)}% + 8px)` }}
                               >
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold tabular-nums text-gray-900 shadow-sm">
+                                <span className={cn('whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums shadow-sm', impactRunningToneClass)}>
                                   {impactRunningLabel}
                                 </span>
                               </div>
@@ -2141,19 +2327,19 @@ function DeliveredAllocationCard({
                                   bottom: `${braceBottomPct}%`,
                                   height: `${braceHeightPct}%`,
                                   right: '4px',
-                                  width: '54px',
+                                  width: '44px',
                                 }}
                               >
                                 <div className="absolute left-0 top-[1px] h-px w-3 bg-gray-300" />
                                 <div className="absolute bottom-[1px] left-0 h-px w-3 bg-gray-300" />
                                 <div className="absolute bottom-[1px] left-3 top-[1px] w-px bg-gray-300" />
-                                <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                                <div className="absolute left-3 top-1/2 -translate-y-1/2">
                                   <div className="flex flex-col gap-1">
-                                    <span className="whitespace-nowrap rounded-full border border-gray-200 bg-white/95 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-gray-700 shadow-sm">
+                                    <span className="whitespace-nowrap rounded-full border border-gray-200 bg-white/95 px-1 py-0.5 text-[8px] font-semibold tabular-nums text-gray-700 shadow-sm">
                                       {column.braceLabel}
                                     </span>
                                     {column.braceDetailLabel ? (
-                                      <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50/95 px-1.5 py-0.5 text-[8px] font-medium tabular-nums text-slate-500 shadow-sm">
+                                      <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50/95 px-1 py-0.5 text-[7px] font-medium tabular-nums text-slate-500 shadow-sm">
                                         {column.braceDetailLabel}
                                       </span>
                                     ) : null}
@@ -2161,6 +2347,40 @@ function DeliveredAllocationCard({
                                 </div>
                               </div>
                             ) : null}
+                            {segmentBraces.map((segment, segmentIndex) => {
+                              const segmentHeightPct = Math.max(segment.ratio * barHeightPct, 5.5)
+                              const segmentBottomPct = lowPct + (segmentBraceOffsetPct * barHeightPct)
+                              segmentBraceOffsetPct += segment.ratio
+
+                              return (
+                                <div
+                                  key={`${column.key}-segment-brace-${segmentIndex}`}
+                                  className="pointer-events-none absolute z-20 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                                  style={{
+                                    bottom: `${segmentBottomPct}%`,
+                                    height: `${segmentHeightPct}%`,
+                                    right: '4px',
+                                    width: '44px',
+                                  }}
+                                >
+                                  <div className="absolute left-0 top-[1px] h-px w-3" style={{ backgroundColor: segment.color }} />
+                                  <div className="absolute bottom-[1px] left-0 h-px w-3" style={{ backgroundColor: segment.color }} />
+                                  <div className="absolute bottom-[1px] left-3 top-[1px] w-px" style={{ backgroundColor: segment.color }} />
+                                  <div className="absolute left-3 top-1/2 -translate-y-1/2">
+                                    <div className="flex flex-col gap-1">
+                                      <span className="whitespace-nowrap rounded-full border border-gray-200 bg-white/95 px-1 py-0.5 text-[8px] font-semibold tabular-nums text-gray-700 shadow-sm">
+                                        {segment.label}
+                                      </span>
+                                      {segment.detailLabel ? (
+                                        <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50/95 px-1 py-0.5 text-[7px] font-medium uppercase tracking-[0.08em] text-slate-500 shadow-sm">
+                                          {segment.detailLabel}
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}
                             {column.overlay ? (
                               <div
                                 className="absolute rounded-t-lg rounded-b-lg transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
@@ -2269,28 +2489,36 @@ function DeliveredAllocationCard({
                 </div>
 
                 <div
-                  className="grid gap-3"
+                  className="grid gap-2 sm:gap-3"
                   style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
                 >
                   {chartSeries.columns.map((column) => (
                     <div
                       key={`${column.key}-xlabel`}
-                      className="relative text-center transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      className="relative min-h-[54px] transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
                     >
                       {column.separatorBefore ? (
                         <div className="absolute bottom-0 left-[-8px] top-0 border-l-2 border-dashed border-gray-500" />
                       ) : null}
-                      <p className={cn(
-                        'text-[11px] font-semibold uppercase tracking-[0.12em]',
-                        column.key === 'export' ? 'text-slate-400' : 'text-slate-600',
-                      )}>
-                        {column.shortLabel}
-                      </p>
-                      {column.footerLines?.map((line, lineIndex) => (
-                        <p key={`${column.key}-footer-${lineIndex}`} className="mt-0.5 text-[10px] leading-4 tabular-nums text-gray-500">
-                          {line}
+                      <div
+                        className="absolute top-0 text-center"
+                        style={{
+                          left: `${usesBridgeBraceLabels ? 10 : 16}px`,
+                          right: `${usesBridgeBraceLabels && column.braceLabel ? 46 : 16}px`,
+                        }}
+                      >
+                        <p className={cn(
+                          'text-[10px] font-semibold uppercase tracking-[0.08em] sm:text-[11px]',
+                          column.key === 'export' ? 'text-slate-500' : 'text-slate-600',
+                        )}>
+                          {column.shortLabel}
                         </p>
-                      ))}
+                        {column.footerLines?.map((line, lineIndex) => (
+                          <p key={`${column.key}-footer-${lineIndex}`} className="mt-0.5 truncate text-[9px] leading-4 tabular-nums text-gray-500">
+                            {line}
+                          </p>
+                        ))}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -2298,32 +2526,14 @@ function DeliveredAllocationCard({
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {showExportBucket ? (
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">Export kept separate</p>
-                <p className="mt-1 text-base font-semibold tabular-nums text-slate-700">
-                  {formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)}
-                </p>
-                <p className="mt-1 text-[11px] text-slate-500">
-                  {units.currencySym}{stats.exportRevenueEur.toFixed(0)} export revenue
-                </p>
-              </div>
-            ) : null}
-
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-700">Overall modeled net result</p>
-              <p className="mt-1 text-lg font-bold tabular-nums text-emerald-900">{units.currencySym}{stats.overallNetCostEur.toFixed(0)}</p>
-              <p className="mt-1 text-[11px] text-emerald-800">
-                {stats.overallNetEquivalentCt.toFixed(2)} {units.priceUnit} normalized to annual load
-              </p>
-            </div>
-          </div>
-
           <DeliveredAllocationScene
             visibleBuckets={visibleBuckets}
             showExportBucket={showExportBucket}
             stats={stats}
+            setup={{
+              pvCapacityWp,
+              usableKwh,
+            }}
             units={units}
           />
         </div>
@@ -3345,6 +3555,8 @@ function PvBatteryCalculatorInner() {
                     flowPermissions={state.flowPermissions}
                     isPvSelected={isPvSelected}
                     isBatterySelected={isBatterySelected}
+                    pvCapacityWp={state.pvCapacityWp}
+                    usableKwh={state.usableKwh}
                   />
                   <MonthlyBars annual={annualResult} units={units} />
                   <ConsumptionPriceBlockCard

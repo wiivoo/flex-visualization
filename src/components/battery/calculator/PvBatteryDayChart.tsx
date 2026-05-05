@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Battery, BatteryCharging, Home, SunMedium, Zap } from 'lucide-react'
 import {
   Area,
@@ -347,7 +347,12 @@ export function PvBatteryDayChart({
   priceCurveMode = 'spot',
 }: Props) {
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
-  const [selectedIndex, setSelectedIndex] = useState(0)
+  const slotSelectionKey = `${slots.length}:${slots[0]?.timestamp ?? ''}`
+  const [selectedState, setSelectedState] = useState({ key: '', index: 0 })
+  const selectedIndex = selectedState.key === slotSelectionKey ? selectedState.index : 0
+  const setSelectedIndex = useCallback((index: number) => {
+    setSelectedState({ key: slotSelectionKey, index })
+  }, [slotSelectionKey])
   const [visibleFlowLayers, setVisibleFlowLayers] = useState({
     charge: true,
     discharge: true,
@@ -359,10 +364,6 @@ export function PvBatteryDayChart({
     gridDirect: true,
     demand: true,
   })
-
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [slots.length, slots[0]?.timestamp])
 
   const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(slots.length - 1, 0))
   const selectedSlot = slots[effectiveSelectedIndex]
@@ -900,7 +901,7 @@ export function PvBatteryDayChart({
     const nextIndex = typeof value === 'number' ? value : Number(value)
     if (!Number.isFinite(nextIndex)) return
     setSelectedIndex(Math.max(0, Math.min(slots.length - 1, nextIndex)))
-  }, [slots.length])
+  }, [setSelectedIndex, slots.length])
 
   if (loading || slots.length === 0 || !selectedSlot) {
     return (

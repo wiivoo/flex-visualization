@@ -56,6 +56,7 @@ interface HistogramDatum {
 
 const BLOCK_KWH = 0.025
 const EPSILON = 1e-6
+const TARGET_HISTOGRAM_BINS = 7
 
 const SOURCE_STYLES: Record<DeliveredSourceKey, { label: string; base: string; chip: string }> = {
   gridDirect: {
@@ -147,13 +148,9 @@ function formatBlockCount(kwh: number): string {
   return `${Math.round(kwh / BLOCK_KWH).toLocaleString()} blocks`
 }
 
-function choosePriceBinSize(span: number): number {
-  if (!Number.isFinite(span) || span <= 0) return 0.5
-  if (span <= 3) return 0.5
-  if (span <= 8) return 1
-  if (span <= 18) return 2
-  if (span <= 40) return 4
-  return 8
+function choosePriceBinSize(span: number, targetBins = TARGET_HISTOGRAM_BINS): number {
+  if (!Number.isFinite(span) || span <= EPSILON) return 0.5
+  return span / Math.max(1, targetBins)
 }
 
 function mixColor(startHex: string, endHex: string, ratio: number): string {
@@ -194,7 +191,7 @@ function getBatteryPvEffectivePriceCtKwh(slot: PvBatterySlotResult) {
 }
 
 function buildDeliveredSegments(slot: PvBatterySlotResult) {
-  const segments: Array<Omit<DeliveredSourceSegment, 'priceIntensity'>> = []
+  const segments: DeliveredSourceSegment[] = []
 
   if (slot.gridToLoadKwh > EPSILON) {
     const exactBlocks = slot.gridToLoadKwh / BLOCK_KWH
@@ -207,6 +204,7 @@ function buildDeliveredSegments(slot: PvBatterySlotResult) {
       exactBlocks,
       fullBlocks,
       remainderBlock: Math.max(0, exactBlocks - fullBlocks),
+      priceIntensity: 0,
     })
   }
 
@@ -221,6 +219,7 @@ function buildDeliveredSegments(slot: PvBatterySlotResult) {
       exactBlocks,
       fullBlocks,
       remainderBlock: Math.max(0, exactBlocks - fullBlocks),
+      priceIntensity: 0,
     })
   }
 
@@ -235,6 +234,7 @@ function buildDeliveredSegments(slot: PvBatterySlotResult) {
       exactBlocks,
       fullBlocks,
       remainderBlock: Math.max(0, exactBlocks - fullBlocks),
+      priceIntensity: 0,
     })
   }
 
@@ -252,6 +252,7 @@ function buildDeliveredSegments(slot: PvBatterySlotResult) {
       exactBlocks,
       fullBlocks,
       remainderBlock: Math.max(0, exactBlocks - fullBlocks),
+      priceIntensity: 0,
     })
   }
 
@@ -472,19 +473,23 @@ export function ConsumptionPriceBlockCard({
   }, [priceStats.max, priceStats.min, slotData])
 
   const histogramBinSize = useMemo(
-    () => choosePriceBinSize(priceStats.max - priceStats.min),
+    () => choosePriceBinSize(priceStats.max - priceStats.min, TARGET_HISTOGRAM_BINS),
     [priceStats.max, priceStats.min],
   )
 
   const histogramData = useMemo<HistogramDatum[]>(() => {
     const bins = new Map<number, HistogramDatum>()
-    const precision = histogramBinSize < 1 ? 2 : 1
+    const precision = histogramBinSize < 0.1 ? 3 : histogramBinSize < 1 ? 2 : 1
     const span = Math.max(priceStats.max - priceStats.min, EPSILON)
 
     for (const segment of flatSegments) {
       if (segment.kwh <= EPSILON) continue
 
-      const binStart = Math.floor(segment.priceCtKwh / histogramBinSize) * histogramBinSize
+      const relativeBinIndex = Math.min(
+        TARGET_HISTOGRAM_BINS - 1,
+        Math.max(0, Math.floor((segment.priceCtKwh - priceStats.min) / histogramBinSize)),
+      )
+      const binStart = priceStats.min + (relativeBinIndex * histogramBinSize)
       const existing = bins.get(binStart)
 
       if (existing) {
@@ -496,7 +501,7 @@ export function ConsumptionPriceBlockCard({
         continue
       }
 
-      const binEnd = binStart + histogramBinSize
+      const binEnd = relativeBinIndex === TARGET_HISTOGRAM_BINS - 1 ? priceStats.max : binStart + histogramBinSize
       bins.set(binStart, {
         label: `${binStart.toFixed(precision)}-${binEnd.toFixed(precision)}|${binEnd.toFixed(precision)} ${units.priceUnit}`,
         shortLabel: `${binStart.toFixed(precision)}-${binEnd.toFixed(precision)}`,
@@ -646,7 +651,7 @@ export function ConsumptionPriceBlockCard({
     {
       label: 'Price span',
       value: `${formatPriceCompact(priceStats.min)} to ${formatPriceCompact(priceStats.max)}`,
-      detail: `${histogramData.length} occupied histogram bands`,
+      detail: `${histogramData.length} of ${TARGET_HISTOGRAM_BINS} price bands occupied`,
       icon: BarChart3,
     },
   ], [histogramData.length, priceStats.max, priceStats.min, priceStats.totalKwh, priceStats.weightedAvg, units])
@@ -825,7 +830,7 @@ export function ConsumptionPriceBlockCard({
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-500">
-                    Bin size <span className="font-semibold text-slate-700">{histogramBinSize.toFixed(histogramBinSize < 1 ? 2 : 1)} {units.priceUnit}</span>
+                    Target {TARGET_HISTOGRAM_BINS} bins · size <span className="font-semibold text-slate-700">{histogramBinSize.toFixed(histogramBinSize < 0.1 ? 3 : histogramBinSize < 1 ? 2 : 1)} {units.priceUnit}</span>
                   </div>
                   <InlinePillGroup
                     options={[
@@ -902,7 +907,7 @@ export function ConsumptionPriceBlockCard({
                           return (
                             <Cell
                               key={`${entry.label}-${key}`}
-                              radius={isTopOfStack ? [8, 8, 0, 0] : [0, 0, 0, 0]}
+                              radius={isTopOfStack ? 8 : 0}
                               fill={getHistogramSourceFill(key, entry.priceIntensity)}
                               fillOpacity={entry.sourceKwh[key] > EPSILON ? 1 : 0}
                               strokeOpacity={0}
