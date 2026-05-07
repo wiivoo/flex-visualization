@@ -11,9 +11,10 @@ This is not Entra/SSO and does not identify individual users. It grants access t
 
 ## Runtime Behavior
 
-- When `ACCESS_TOKEN` and `SESSION_SECRET` are both absent, the access gate is disabled and the app behaves as before.
+- In production, missing `ACCESS_TOKEN` or `SESSION_SECRET` fails closed: app and API URLs return an empty `404`.
+- In local development, when both env vars are absent, the gate is disabled so normal development remains open.
 - When both env vars are present, normal app URLs require a valid signed session cookie.
-- Requests without a valid cookie return `404 Not found`.
+- Requests without a valid cookie return an empty `404`.
 - Opening `/access/<ACCESS_TOKEN>` validates the shared token, sets a `Secure`, `HttpOnly`, `SameSite=Lax` session cookie, and redirects to `/v2`.
 - `/access/<ACCESS_TOKEN>?next=/some-path` redirects to the supplied relative path after setting the cookie.
 - The session cookie is stateless and expires after 90 days.
@@ -33,7 +34,8 @@ Do not commit either value to the repo.
 
 ## Acceptance Criteria
 
-- [x] With no access-gate env vars, local/default runtime remains open.
+- [x] With no access-gate env vars, production fails closed with `404`.
+- [x] With no access-gate env vars, local development remains open.
 - [x] With access-gate env vars present, app and API URLs without a valid cookie return `404`.
 - [x] A valid `/access/<ACCESS_TOKEN>` request sets a signed 90-day session cookie and redirects to `/v2`.
 - [x] A valid signed session cookie allows subsequent normal app URLs without the magic link.

@@ -71,7 +71,7 @@ function notFound() {
 }
 
 function misconfigured() {
-  return new NextResponse('Access gate misconfigured', {
+  return new NextResponse(null, {
     status: 500,
     headers: {
       'Cache-Control': 'no-store',
@@ -109,11 +109,11 @@ export async function proxy(request: NextRequest) {
   const sessionSecret = process.env.SESSION_SECRET
 
   if (!accessToken && !sessionSecret) {
-    return NextResponse.next()
+    return process.env.NODE_ENV === 'production' ? notFound() : NextResponse.next()
   }
 
   if (!accessToken || !sessionSecret) {
-    return misconfigured()
+    return process.env.NODE_ENV === 'production' ? notFound() : misconfigured()
   }
 
   const { pathname, searchParams } = request.nextUrl
