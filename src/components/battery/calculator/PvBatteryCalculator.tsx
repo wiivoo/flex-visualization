@@ -15,7 +15,7 @@ import {
   DE_BATTERY_LOAD_PROFILES,
   type BatteryLoadProfileId,
 } from '@/lib/battery-config'
-import { surchargesForYear, totalSurchargesNetto, type Surcharges } from '@/lib/dynamic-tariff'
+import { surchargesForYear, totalSurchargesNetto, VAT_RATE, type Surcharges } from '@/lib/dynamic-tariff'
 import { useBatteryProfiles } from '@/lib/use-battery-profiles'
 import {
   aggregatePvBatteryAnnualResult,
@@ -955,78 +955,809 @@ function buildScenario(
   }
 }
 
-function AnnualHero({
+function AnnualSummaryRow({
+  label,
+  value,
+  tone = 'neutral',
+  detail,
+}: {
+  label: string
+  value: string
+  tone?: 'neutral' | 'positive' | 'muted'
+  detail?: string
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 border-b border-gray-200/80 py-2.5 last:border-b-0">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-700">{label}</p>
+        {detail ? <p className="mt-0.5 text-[11px] leading-4 text-gray-400">{detail}</p> : null}
+      </div>
+      <span
+        className={cn(
+          'max-w-[58%] text-right text-sm font-semibold tabular-nums sm:max-w-none',
+          tone === 'positive' ? 'text-emerald-700' : tone === 'muted' ? 'text-gray-500' : 'text-gray-900',
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  )
+}
+
+interface AnnualAccountingSummary {
+  consumptionImportSavingsEur: number
+  totalGridImportKwh: number
+  totalGridImportCostEur: number
+  totalGridImportAvgCt: number
+  baselineAvgCt: number
+  baselineSpotEnergyCostEur: number
+  baselineRetailAddOnsEur: number
+  baselineRetailAddOnsAvgCt: number
+  optimizedSpotEnergyCostEur: number
+  optimizedRetailAddOnsEur: number
+  optimizedRetailAddOnsAvgCt: number
+  gridToLoadKwh: number
+  gridToLoadCostEur: number
+  gridToLoadSpotCostEur: number
+  gridToLoadRetailAddOnsEur: number
+  gridToLoadAvgCt: number
+  gridToBatteryCostEur: number
+  gridToBatterySpotCostEur: number
+  gridToBatteryRetailAddOnsEur: number
+  gridToBatteryAvgCt: number
+  pvBatteryToLoadKwh: number
+  directPvAvoidedImportEur: number
+  pvBatteryAvoidedImportEur: number
+  pvAvoidedImportEur: number
+  pvAvoidedImportAvgCt: number
+  directExportRevenueEur: number
+  directExportAvgCt: number
+  batteryPvExportKwh: number
+  batteryPvExportRevenueEur: number
+  batteryPvExportAvgCt: number
+  batteryGridExportKwh: number
+  batteryGridExportRevenueEur: number
+  batteryGridExportNetEur: number
+  batteryGridExportGrossAvgCt: number
+  batteryGridExportNetAvgCt: number
+  curtailedAvoidedCostEur: number
+  curtailedAvoidedCostAvgCt: number
+  exportedEnergyKwh: number
+  exportAvgCt: number
+}
+
+function summarizeAnnualAccounting(annual: PvBatteryAnnualResult): AnnualAccountingSummary {
+  const grossSpotFactor = 1 + VAT_RATE / 100
+  const totals = annual.slots.reduce((acc, slot) => {
+    const baselineSpotCostEur = (slot.loadKwh * slot.spotPriceCtKwh * grossSpotFactor) / 100
+    const gridToLoadSpotCostEur = (slot.gridToLoadKwh * slot.spotPriceCtKwh * grossSpotFactor) / 100
+    const gridToLoadCostEur = (slot.gridToLoadKwh * slot.importPriceCtKwh) / 100
+    const gridToBatterySpotCostEur = (slot.gridToBatteryKwh * slot.spotPriceCtKwh * grossSpotFactor) / 100
+    const gridToBatteryCostEur = (slot.gridToBatteryKwh * slot.importPriceCtKwh) / 100
+    const importedKwh = slot.gridToLoadKwh + slot.gridToBatteryKwh
+    const optimizedSpotCostEur = (importedKwh * slot.spotPriceCtKwh * grossSpotFactor) / 100
+
+    acc.baselineSpotEnergyCostEur += baselineSpotCostEur
+    acc.baselineRetailAddOnsEur += slot.baselineCostEur - baselineSpotCostEur
+    acc.optimizedSpotEnergyCostEur += optimizedSpotCostEur
+    acc.optimizedRetailAddOnsEur += slot.gridImportCostEur - optimizedSpotCostEur
+    acc.gridToLoadKwh += slot.gridToLoadKwh
+    acc.gridToLoadCostEur += gridToLoadCostEur
+    acc.gridToLoadSpotCostEur += gridToLoadSpotCostEur
+    acc.gridToLoadRetailAddOnsEur += gridToLoadCostEur - gridToLoadSpotCostEur
+    acc.gridToBatteryCostEur += gridToBatteryCostEur
+    acc.gridToBatterySpotCostEur += gridToBatterySpotCostEur
+    acc.gridToBatteryRetailAddOnsEur += gridToBatteryCostEur - gridToBatterySpotCostEur
+    acc.pvBatteryToLoadKwh += slot.batteryPvToLoadKwh
+    acc.directPvAvoidedImportEur += (slot.pvToLoadKwh * slot.importPriceCtKwh) / 100
+    acc.pvBatteryAvoidedImportEur += (slot.batteryPvToLoadKwh * slot.importPriceCtKwh) / 100
+    acc.directExportRevenueEur += (slot.directExportKwh * slot.exportPriceCtKwh) / 100
+    acc.batteryPvExportKwh += slot.batteryPvExportKwh
+    acc.batteryPvExportRevenueEur += (slot.batteryPvExportKwh * slot.exportPriceCtKwh) / 100
+    acc.batteryGridExportKwh += slot.batteryGridExportKwh
+    acc.batteryGridExportRevenueEur += (slot.batteryGridExportKwh * slot.exportPriceCtKwh) / 100
+    acc.batteryGridExportNetEur += slot.batteryGridExportSavingsEur
+    acc.curtailedAvoidedCostEur += (slot.curtailedKwh * Math.max(0, -slot.exportPriceCtKwh)) / 100
+    return acc
+  }, {
+    baselineSpotEnergyCostEur: 0,
+    baselineRetailAddOnsEur: 0,
+    optimizedSpotEnergyCostEur: 0,
+    optimizedRetailAddOnsEur: 0,
+    gridToLoadKwh: 0,
+    gridToLoadCostEur: 0,
+    gridToLoadSpotCostEur: 0,
+    gridToLoadRetailAddOnsEur: 0,
+    gridToBatteryCostEur: 0,
+    gridToBatterySpotCostEur: 0,
+    gridToBatteryRetailAddOnsEur: 0,
+    pvBatteryToLoadKwh: 0,
+    directPvAvoidedImportEur: 0,
+    pvBatteryAvoidedImportEur: 0,
+    directExportRevenueEur: 0,
+    batteryPvExportKwh: 0,
+    batteryPvExportRevenueEur: 0,
+    batteryGridExportKwh: 0,
+    batteryGridExportRevenueEur: 0,
+    batteryGridExportNetEur: 0,
+    curtailedAvoidedCostEur: 0,
+  })
+
+  const totalGridImportKwh = annual.gridImportKwh + annual.gridToBatteryKwh
+  const exportedEnergyKwh = annual.directExportKwh + annual.batteryExportKwh
+  const pvToHouseholdKwh = annual.directSelfConsumedKwh + totals.pvBatteryToLoadKwh
+  const pvAvoidedImportEur = totals.directPvAvoidedImportEur + totals.pvBatteryAvoidedImportEur
+
+  return {
+    consumptionImportSavingsEur: annual.baselineCostEur - annual.gridImportCostEur,
+    totalGridImportKwh,
+    totalGridImportCostEur: annual.gridImportCostEur,
+    totalGridImportAvgCt: totalGridImportKwh > 0 ? (annual.gridImportCostEur * 100) / totalGridImportKwh : 0,
+    baselineAvgCt: annual.loadKwh > 0 ? (annual.baselineCostEur * 100) / annual.loadKwh : 0,
+    baselineSpotEnergyCostEur: totals.baselineSpotEnergyCostEur,
+    baselineRetailAddOnsEur: totals.baselineRetailAddOnsEur,
+    baselineRetailAddOnsAvgCt: annual.loadKwh > 0 ? (totals.baselineRetailAddOnsEur * 100) / annual.loadKwh : 0,
+    optimizedSpotEnergyCostEur: totals.optimizedSpotEnergyCostEur,
+    optimizedRetailAddOnsEur: totals.optimizedRetailAddOnsEur,
+    optimizedRetailAddOnsAvgCt: totalGridImportKwh > 0 ? (totals.optimizedRetailAddOnsEur * 100) / totalGridImportKwh : 0,
+    gridToLoadKwh: totals.gridToLoadKwh,
+    gridToLoadCostEur: totals.gridToLoadCostEur,
+    gridToLoadSpotCostEur: totals.gridToLoadSpotCostEur,
+    gridToLoadRetailAddOnsEur: totals.gridToLoadRetailAddOnsEur,
+    gridToLoadAvgCt: totals.gridToLoadKwh > 0 ? (totals.gridToLoadCostEur * 100) / totals.gridToLoadKwh : 0,
+    gridToBatteryCostEur: totals.gridToBatteryCostEur,
+    gridToBatterySpotCostEur: totals.gridToBatterySpotCostEur,
+    gridToBatteryRetailAddOnsEur: totals.gridToBatteryRetailAddOnsEur,
+    gridToBatteryAvgCt: annual.gridToBatteryKwh > 0 ? (totals.gridToBatteryCostEur * 100) / annual.gridToBatteryKwh : 0,
+    pvBatteryToLoadKwh: totals.pvBatteryToLoadKwh,
+    directPvAvoidedImportEur: totals.directPvAvoidedImportEur,
+    pvBatteryAvoidedImportEur: totals.pvBatteryAvoidedImportEur,
+    pvAvoidedImportEur,
+    pvAvoidedImportAvgCt: pvToHouseholdKwh > 0 ? (pvAvoidedImportEur * 100) / pvToHouseholdKwh : 0,
+    directExportRevenueEur: totals.directExportRevenueEur,
+    directExportAvgCt: annual.directExportKwh > 0 ? (totals.directExportRevenueEur * 100) / annual.directExportKwh : 0,
+    batteryPvExportKwh: totals.batteryPvExportKwh,
+    batteryPvExportRevenueEur: totals.batteryPvExportRevenueEur,
+    batteryPvExportAvgCt: totals.batteryPvExportKwh > 0 ? (totals.batteryPvExportRevenueEur * 100) / totals.batteryPvExportKwh : 0,
+    batteryGridExportKwh: totals.batteryGridExportKwh,
+    batteryGridExportRevenueEur: totals.batteryGridExportRevenueEur,
+    batteryGridExportNetEur: totals.batteryGridExportNetEur,
+    batteryGridExportGrossAvgCt: totals.batteryGridExportKwh > 0 ? (totals.batteryGridExportRevenueEur * 100) / totals.batteryGridExportKwh : 0,
+    batteryGridExportNetAvgCt: totals.batteryGridExportKwh > 0 ? (totals.batteryGridExportNetEur * 100) / totals.batteryGridExportKwh : 0,
+    curtailedAvoidedCostEur: totals.curtailedAvoidedCostEur,
+    curtailedAvoidedCostAvgCt: annual.curtailedKwh > 0 ? (totals.curtailedAvoidedCostEur * 100) / annual.curtailedKwh : 0,
+    exportedEnergyKwh,
+    exportAvgCt: exportedEnergyKwh > 0 ? (annual.exportRevenueEur * 100) / exportedEnergyKwh : 0,
+  }
+}
+
+function formatCurrencyAmount(value: number, units: ReturnType<typeof getPriceUnits>, options?: { signed?: boolean }) {
+  const sign = options?.signed && value > 0 ? '+' : value < 0 ? '-' : ''
+  return `${sign}${units.currencySym}${Math.round(Math.abs(value)).toLocaleString()}`
+}
+
+function formatPriceAmount(value: number, units: ReturnType<typeof getPriceUnits>) {
+  if (!Number.isFinite(value)) return 'n/a'
+  return `${value.toFixed(2)} ${units.priceUnit}`
+}
+
+function formatKwhWithShare(kwh: number, basisKwh: number) {
+  const share = basisKwh > 0 ? (kwh / basisKwh) * 100 : 0
+  return `${formatKwh(kwh)} / ${share.toFixed(0)}%`
+}
+
+function mutedDash(label = '—') {
+  return <span className="text-gray-300">{label}</span>
+}
+
+function AnnualRowIcon({ icon: Icon, tone = 'neutral' }: { icon: LucideIcon; tone?: 'neutral' | 'home' | 'pv' | 'battery' | 'grid' | 'total' }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border',
+        tone === 'home' && 'border-slate-200 bg-slate-50 text-slate-600',
+        tone === 'pv' && 'border-amber-200 bg-amber-50 text-amber-600',
+        tone === 'battery' && 'border-sky-200 bg-sky-50 text-sky-600',
+        tone === 'grid' && 'border-violet-200 bg-violet-50 text-violet-600',
+        tone === 'total' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
+        tone === 'neutral' && 'border-gray-200 bg-gray-50 text-gray-500',
+      )}
+    >
+      <Icon className="h-3.5 w-3.5" />
+    </span>
+  )
+}
+
+function AnnualBreakdownSectionRow({
+  label,
+  icon,
+  open,
+  onToggle,
+  summary,
+  tone = 'neutral',
+}: {
+  label: string
+  icon: LucideIcon
+  open: boolean
+  onToggle: () => void
+  summary?: ReactNode
+  tone?: 'neutral' | 'home' | 'pv' | 'battery' | 'grid' | 'total'
+}) {
+  const Icon = icon
+
+  return (
+    <tr>
+      <th
+        scope="rowgroup"
+        colSpan={4}
+        className={cn(
+          'border-t px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] first:border-t-0',
+          tone === 'home' && 'border-slate-200 bg-slate-50 text-slate-500',
+          tone === 'pv' && 'border-amber-200 bg-amber-50/80 text-amber-700',
+          tone === 'battery' && 'border-sky-200 bg-sky-50/80 text-sky-700',
+          tone === 'grid' && 'border-violet-200 bg-violet-50/80 text-violet-700',
+          tone === 'total' && 'border-emerald-200 bg-emerald-50/90 text-emerald-700',
+          tone === 'neutral' && 'border-gray-200 bg-gray-50 text-gray-400',
+        )}
+      >
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left"
+          aria-expanded={open}
+          onClick={onToggle}
+        >
+          <span className="inline-flex items-center gap-2">
+            <AnnualRowIcon icon={Icon} tone={tone} />
+            <span>{label}</span>
+          </span>
+          <span className="inline-flex items-center gap-3 text-[13px] font-semibold normal-case tracking-normal opacity-70">
+            {summary ? <span className="hidden tabular-nums sm:inline">{summary}</span> : null}
+            <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+          </span>
+        </button>
+      </th>
+    </tr>
+  )
+}
+
+function AnnualBreakdownRow({
+  label,
+  detail,
+  energy,
+  cost,
+  avg,
+  indent = false,
+  total = false,
+  tone = 'neutral',
+}: {
+  label: string
+  detail?: string
+  energy: ReactNode
+  cost?: ReactNode
+  avg?: ReactNode
+  indent?: boolean
+  total?: boolean
+  tone?: 'neutral' | 'optimized' | 'muted'
+}) {
+  return (
+    <tr className={cn('border-t border-gray-200', total && 'border-t-gray-300')}>
+      <th scope="row" className={cn('px-4 py-3 text-left align-top', indent && 'pl-8')}>
+        <span className="flex items-start gap-2">
+          {indent ? <span className="mt-0.5 text-gray-300">↳</span> : null}
+          <span className="min-w-0">
+            <span className={cn('block text-sm text-gray-800', total ? 'font-semibold' : 'font-medium')}>{label}</span>
+            {detail ? <span className="mt-1 block text-[11px] font-normal leading-4 text-gray-400">{detail}</span> : null}
+          </span>
+        </span>
+      </th>
+      <td className={cn('px-4 py-3 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'muted' && 'text-gray-500')}>
+        {energy}
+      </td>
+      <td className={cn('px-4 py-3 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
+        {cost ?? mutedDash()}
+      </td>
+      <td className={cn('px-4 py-3 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
+        {avg ?? mutedDash()}
+      </td>
+    </tr>
+  )
+}
+
+function AnnualSummaryCard({
   annual,
   units,
 }: {
   annual: PvBatteryAnnualResult
   units: ReturnType<typeof getPriceUnits>
 }) {
+  const accounting = summarizeAnnualAccounting(annual)
+
   return (
     <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
-      <CardContent className="grid gap-0 p-0 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="border-b border-gray-200 bg-white p-6 xl:border-b-0 xl:border-r">
-          <div className="flex items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Annual snapshot</p>
-            <HelpTooltip label="Annual snapshot help">
-              Baseline means the household buys every kWh from the tariff-adjusted grid import curve. The optimized case
-              minimizes modeled net household energy cost using the selected tariff, market-priced export curve, and active flow permissions.
-              Self-sufficiency is reported as an outcome metric, not as the dispatch objective.
-            </HelpTooltip>
-          </div>
-          <div className="mt-5 flex items-end gap-3">
-            <span className="text-4xl font-semibold tracking-tight text-gray-900">
-              {units.currencySym}{Math.round(annual.savingsEur).toLocaleString()}
-            </span>
-            <span className="pb-1.5 text-sm font-medium text-emerald-700">per year</span>
+      <CardContent className="p-5 sm:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Annual summary</p>
+              <HelpTooltip label="Annual summary help">
+                Total annual benefit equals consumption/import savings plus export credit. Battery grid charging is included in optimized retail import cost, so export credit is added separately without double-counting.
+              </HelpTooltip>
+            </div>
+            <div className="mt-3 flex flex-wrap items-end gap-x-3 gap-y-1">
+              <span className="text-4xl font-semibold tracking-tight text-gray-900">
+                {formatCurrencyAmount(annual.savingsEur, units)}
+              </span>
+              <span className="pb-1.5 text-sm font-medium text-emerald-700">total annual benefit</span>
+            </div>
+            <p className="mt-1 text-sm text-gray-500">
+              {formatCurrencyAmount(accounting.consumptionImportSavingsEur, units)} consumption savings + {formatCurrencyAmount(annual.exportRevenueEur, units)} export credit.
+            </p>
           </div>
 
-          <div className="mt-7 grid gap-4 sm:grid-cols-3">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:w-[48%]">
             <MetricTile
-              label="Self-sufficiency"
-              value={`${annual.selfSufficiencyPct}%`}
-              hint="Outcome metric, not the optimizer target."
+              label="Household demand"
+              value={formatKwh(annual.loadKwh)}
+              hint="Annual load served by all sources."
             />
             <MetricTile
-              label="Self-consumption"
-              value={`${annual.selfConsumptionPct}%`}
-              hint="Shows how much PV stays on site after dispatch."
+              label="Net grid import"
+              value={formatKwh(accounting.totalGridImportKwh)}
+              hint="Retail grid import after PV and battery dispatch, including grid-to-battery charging."
             />
             <MetricTile
-              label="Grid import left"
-              value={`${Math.round(annual.gridImportKwh).toLocaleString()} kWh`}
-              hint="Residual annual grid draw after PV and battery routing."
+              label="Exported energy"
+              value={formatKwh(accounting.exportedEnergyKwh)}
+              hint="Direct PV export plus battery export."
+            />
+            <MetricTile
+              label="PV self-consumption"
+              value={`${annual.selfConsumptionPct.toFixed(0)}%`}
+              hint="Share of PV generation used by the household directly or through the battery."
             />
           </div>
         </div>
+      </CardContent>
+    </Card>
+  )
+}
 
-        <div className="bg-[#F8F8F5] p-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Value stack</p>
-          <div className="mt-5 space-y-4 text-sm text-gray-600">
-            <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-4">
-              <span>Baseline annual import cost</span>
-              <span className="font-semibold text-gray-900">{units.currencySym}{Math.round(annual.baselineCostEur)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-4">
-              <span>Residual grid import cost</span>
-              <span className="font-semibold text-gray-900">{units.currencySym}{Math.round(annual.gridImportCostEur)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-4">
-              <span>Spot-priced export revenue</span>
-              <span className="font-semibold text-blue-700">+{units.currencySym}{Math.round(annual.exportRevenueEur)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4 border-b border-gray-200 pb-4">
-              <span>Net annual energy cost</span>
-              <span className="font-semibold text-gray-900">{units.currencySym}{Math.round(annual.netCostEur)}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span>Stored-then-exported PV</span>
-              <span className="font-semibold text-gray-900">{Math.round(annual.batteryExportKwh).toLocaleString()} kWh</span>
-            </div>
+function AnnualBillCard({
+  annual,
+  units,
+  pvCapacityWp,
+  usableKwh,
+}: {
+  annual: PvBatteryAnnualResult
+  units: ReturnType<typeof getPriceUnits>
+  pvCapacityWp: number
+  usableKwh: number
+}) {
+  const accounting = summarizeAnnualAccounting(annual)
+  const batteryGridToLoadKwh = annual.slots.reduce((sum, slot) => sum + slot.batteryGridToLoadKwh, 0)
+  const batteryGridLoadInputCostEur = annual.slots.reduce((sum, slot) => sum + slot.batteryGridLoadInputCostEur, 0)
+  const batteryToLoadValueEur = accounting.pvBatteryAvoidedImportEur + batteryGridLoadInputCostEur
+  const [openSections, setOpenSections] = useState({
+    setup: true,
+    pv: true,
+    battery: true,
+    grid: true,
+    total: true,
+  })
+  const toggleSection = (key: keyof typeof openSections) => {
+    setOpenSections((current) => ({ ...current, [key]: !current[key] }))
+  }
+  const pvToGridKwh = annual.directExportKwh + accounting.batteryPvExportKwh
+  const pvExportRevenueEur = accounting.directExportRevenueEur + accounting.batteryPvExportRevenueEur
+  const pvSubtotalValueEur = accounting.pvAvoidedImportEur + pvExportRevenueEur + accounting.curtailedAvoidedCostEur
+  const batteryExportRevenueEur = accounting.batteryPvExportRevenueEur + accounting.batteryGridExportRevenueEur
+  const batterySubtotalValueEur = batteryToLoadValueEur + batteryExportRevenueEur
+
+  return (
+    <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
+      <CardContent className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Baseline vs optimized bill</p>
+            <h3 className="mt-1 text-lg font-semibold text-gray-900">Retail import accounting</h3>
           </div>
-          <p className="mt-5 text-[12px] leading-6 text-gray-500">
-            Import costs follow the selected retail tariff. Export revenue follows the replayed market price curve. Dispatch stays within the active routing permissions.
+          <p className="max-w-2xl text-xs leading-5 text-gray-500">
+            Energy flows are shown first. Costs appear only on imported grid energy, split into spot energy and retail add-ons for each use.
           </p>
+        </div>
+
+        <div className="mt-5 overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <div className="grid gap-0 divide-y divide-gray-200">
+            <button
+              type="button"
+              className="flex flex-col gap-2 bg-gray-50/80 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
+              aria-expanded={openSections.setup}
+              onClick={() => toggleSection('setup')}
+            >
+              <div className="flex items-center gap-3">
+                <AnnualRowIcon icon={Home} tone="home" />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Baseline</p>
+                  <p className="mt-0.5 text-xs text-gray-500">All household demand imported from grid.</p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-3 text-2xl font-semibold tabular-nums text-gray-900">
+                {formatCurrencyAmount(annual.baselineCostEur, units)}
+                <span className="text-base text-gray-400" aria-hidden="true">{openSections.setup ? '▾' : '▸'}</span>
+              </span>
+            </button>
+
+            <button
+              type="button"
+              className="flex flex-col gap-2 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
+              aria-expanded={openSections.grid}
+              onClick={() => setOpenSections((current) => ({
+                ...current,
+                pv: !current.pv || !current.battery || !current.grid ? true : false,
+                battery: !current.pv || !current.battery || !current.grid ? true : false,
+                grid: !current.pv || !current.battery || !current.grid ? true : false,
+              }))}
+            >
+              <div className="flex items-center gap-3">
+                <AnnualRowIcon icon={Gauge} tone="grid" />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700">Optimized household</p>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {formatCurrencyAmount(accounting.totalGridImportCostEur, units)} import - {formatCurrencyAmount(annual.exportRevenueEur, units)} export credit.
+                  </p>
+                </div>
+              </div>
+              <div className="text-left sm:text-right">
+                <p className="text-2xl font-semibold tabular-nums text-gray-900">{formatCurrencyAmount(annual.netCostEur, units)}</p>
+                <p className="mt-0.5 text-xs tabular-nums text-gray-500">
+                  net after export <span className="text-gray-400" aria-hidden="true">{openSections.pv && openSections.battery && openSections.grid ? '▾' : '▸'}</span>
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className="flex flex-col gap-2 bg-emerald-50/70 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
+              aria-expanded={openSections.total}
+              onClick={() => toggleSection('total')}
+            >
+              <div className="flex items-center gap-3">
+                <AnnualRowIcon icon={Zap} tone="total" />
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Difference</p>
+                  <p className="mt-0.5 text-xs text-emerald-700/75">Baseline minus optimized net cost.</p>
+                </div>
+              </div>
+              <span className="inline-flex items-center gap-3 text-2xl font-semibold tabular-nums text-emerald-800">
+                {formatCurrencyAmount(annual.savingsEur, units)}
+                <span className="text-base text-emerald-700/60" aria-hidden="true">{openSections.total ? '▾' : '▸'}</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-5 overflow-x-auto rounded-lg border border-gray-200">
+          <table className="min-w-[760px] w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 bg-white">
+                <th scope="col" className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Category and flow</th>
+                <th scope="col" className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy / size</th>
+                <th scope="col" className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Value</th>
+                <th scope="col" className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Avg value</th>
+              </tr>
+            </thead>
+            <tbody>
+              <AnnualBreakdownSectionRow label="Household setup" icon={Home} open={openSections.setup} onToggle={() => toggleSection('setup')} tone="home" summary={formatCurrencyAmount(annual.baselineCostEur, units)} />
+              {openSections.setup ? (
+                <>
+                  <AnnualBreakdownRow
+                    label="Consumption"
+                    energy={formatKwh(annual.loadKwh)}
+                    cost={`${formatCurrencyAmount(annual.baselineCostEur, units)} baseline`}
+                    avg={formatPriceAmount(accounting.baselineAvgCt, units)}
+                  />
+                  <AnnualBreakdownRow
+                    label="PV size"
+                    energy={`${formatSetupSize(pvCapacityWp / 1000)} kWp`}
+                    cost={mutedDash()}
+                    avg={`${formatKwh(annual.pvGenerationKwh)} generation`}
+                  />
+                  <AnnualBreakdownRow
+                    label="Battery storage"
+                    energy={`${formatSetupSize(usableKwh)} kWh`}
+                    cost={mutedDash()}
+                    avg="configured usable capacity"
+                  />
+                </>
+              ) : null}
+
+              <AnnualBreakdownSectionRow label="PV usage" icon={SunMedium} open={openSections.pv} onToggle={() => toggleSection('pv')} tone="pv" summary={formatCurrencyAmount(pvSubtotalValueEur, units)} />
+              {openSections.pv ? (
+                <>
+                  <AnnualBreakdownRow
+                    label="To household"
+                    detail="PV consumed by the home directly or after battery storage."
+                    energy={formatKwh(annual.directSelfConsumedKwh + accounting.pvBatteryToLoadKwh)}
+                    cost={`${formatCurrencyAmount(accounting.pvAvoidedImportEur, units)} avoided grid cost`}
+                    avg={`${formatPriceAmount(accounting.pvAvoidedImportAvgCt, units)} / ${annual.selfConsumptionPct.toFixed(0)}% self-consumed`}
+                    tone="optimized"
+                    total
+                  />
+                  <AnnualBreakdownRow
+                    label="Direct"
+                    energy={formatKwh(annual.directSelfConsumedKwh)}
+                    cost={formatCurrencyAmount(accounting.directPvAvoidedImportEur, units)}
+                    avg={formatPriceAmount(annual.directSelfConsumedKwh > 0 ? (accounting.directPvAvoidedImportEur * 100) / annual.directSelfConsumedKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Via battery"
+                    detail="Only appears when storing PV for later load beats direct PV use or export after battery losses."
+                    energy={formatKwh(accounting.pvBatteryToLoadKwh)}
+                    cost={formatCurrencyAmount(accounting.pvBatteryAvoidedImportEur, units)}
+                    avg={formatPriceAmount(accounting.pvBatteryToLoadKwh > 0 ? (accounting.pvBatteryAvoidedImportEur * 100) / accounting.pvBatteryToLoadKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="To grid"
+                    detail="PV exported directly or after battery storage."
+                    energy={formatKwh(pvToGridKwh)}
+                    cost={formatCurrencyAmount(pvExportRevenueEur, units)}
+                    avg={formatPriceAmount(pvToGridKwh > 0 ? (pvExportRevenueEur * 100) / pvToGridKwh : 0, units)}
+                    tone="optimized"
+                    total
+                  />
+                  <AnnualBreakdownRow
+                    label="Direct"
+                    energy={formatKwh(annual.directExportKwh)}
+                    cost={formatCurrencyAmount(accounting.directExportRevenueEur, units)}
+                    avg={formatPriceAmount(accounting.directExportAvgCt, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Via battery"
+                    energy={formatKwh(accounting.batteryPvExportKwh)}
+                    cost={formatCurrencyAmount(accounting.batteryPvExportRevenueEur, units)}
+                    avg={formatPriceAmount(accounting.batteryPvExportAvgCt, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Curtailed"
+                    detail="Avoided value from not exporting PV during negative export-price intervals. Informational, not export credit."
+                    energy={formatKwh(annual.curtailedKwh)}
+                    cost={`${formatCurrencyAmount(accounting.curtailedAvoidedCostEur, units)} avoided negative export cost`}
+                    avg={formatPriceAmount(accounting.curtailedAvoidedCostAvgCt, units)}
+                    tone="muted"
+                  />
+                  <AnnualBreakdownRow
+                    label="PV value subtotal"
+                    detail="Avoided grid import, PV export credit, and avoided negative export cost."
+                    energy={`${formatKwh(annual.directSelfConsumedKwh + accounting.pvBatteryToLoadKwh)} local / ${formatKwh(pvToGridKwh)} export`}
+                    cost={formatCurrencyAmount(pvSubtotalValueEur, units)}
+                    avg={`${formatCurrencyAmount(accounting.pvAvoidedImportEur, units)} local + ${formatCurrencyAmount(pvExportRevenueEur, units)} export + ${formatCurrencyAmount(accounting.curtailedAvoidedCostEur, units)} curtailed`}
+                    total
+                    tone="optimized"
+                  />
+                </>
+              ) : null}
+
+              <AnnualBreakdownSectionRow label="Battery usage" icon={Battery} open={openSections.battery} onToggle={() => toggleSection('battery')} tone="battery" summary={formatCurrencyAmount(batterySubtotalValueEur, units)} />
+              {openSections.battery ? (
+                <>
+                  <AnnualBreakdownRow
+                    label="To household"
+                    detail="Battery output serving household load, split by original charge source."
+                    energy={formatKwh(annual.batteryToLoadKwh)}
+                    cost={formatCurrencyAmount(batteryToLoadValueEur, units)}
+                    avg={formatPriceAmount(annual.batteryToLoadKwh > 0 ? (batteryToLoadValueEur * 100) / annual.batteryToLoadKwh : 0, units)}
+                    total
+                  />
+                  <AnnualBreakdownRow
+                    label="PV-charged"
+                    energy={formatKwh(accounting.pvBatteryToLoadKwh)}
+                    cost={`${formatCurrencyAmount(accounting.pvBatteryAvoidedImportEur, units)} avoided grid cost`}
+                    avg={formatPriceAmount(accounting.pvBatteryToLoadKwh > 0 ? (accounting.pvBatteryAvoidedImportEur * 100) / accounting.pvBatteryToLoadKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Grid-charged"
+                    energy={formatKwh(batteryGridToLoadKwh)}
+                    cost="included in grid import"
+                    avg={formatPriceAmount(batteryGridToLoadKwh > 0 ? (batteryGridLoadInputCostEur * 100) / batteryGridToLoadKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="To grid"
+                    energy={formatKwh(annual.batteryExportKwh)}
+                    cost={formatCurrencyAmount(batteryExportRevenueEur, units)}
+                    avg={formatPriceAmount(annual.batteryExportKwh > 0 ? (batteryExportRevenueEur * 100) / annual.batteryExportKwh : 0, units)}
+                    total
+                  />
+                  <AnnualBreakdownRow
+                    label="PV-charged export"
+                    energy={formatKwh(accounting.batteryPvExportKwh)}
+                    cost={formatCurrencyAmount(accounting.batteryPvExportRevenueEur, units)}
+                    avg={formatPriceAmount(accounting.batteryPvExportAvgCt, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Grid-charged export"
+                    energy={formatKwh(accounting.batteryGridExportKwh)}
+                    cost={formatCurrencyAmount(accounting.batteryGridExportRevenueEur, units)}
+                    avg={formatPriceAmount(accounting.batteryGridExportGrossAvgCt, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Battery value subtotal"
+                    detail="Battery load value plus gross battery export credit. Grid-charge input cost is still shown under grid import."
+                    energy={`${formatKwh(annual.batteryToLoadKwh)} load / ${formatKwh(annual.batteryExportKwh)} export`}
+                    cost={formatCurrencyAmount(batterySubtotalValueEur, units)}
+                    avg={`${formatCurrencyAmount(batteryToLoadValueEur, units)} load + ${formatCurrencyAmount(batteryExportRevenueEur, units)} export`}
+                    total
+                    tone="optimized"
+                  />
+                </>
+              ) : null}
+
+              <AnnualBreakdownSectionRow label="Grid import" icon={Zap} open={openSections.grid} onToggle={() => toggleSection('grid')} tone="grid" summary={formatCurrencyAmount(accounting.totalGridImportCostEur, units)} />
+              {openSections.grid ? (
+                <>
+                  <AnnualBreakdownRow
+                    label="To household"
+                    detail="Imported kWh serving household demand directly."
+                    energy={formatKwhWithShare(accounting.gridToLoadKwh, annual.loadKwh)}
+                    cost={formatCurrencyAmount(accounting.gridToLoadCostEur, units)}
+                    avg={formatPriceAmount(accounting.gridToLoadAvgCt, units)}
+                    total
+                  />
+                  <AnnualBreakdownRow
+                    label="Spot energy"
+                    energy={formatKwh(accounting.gridToLoadKwh)}
+                    cost={formatCurrencyAmount(accounting.gridToLoadSpotCostEur, units)}
+                    avg={formatPriceAmount(accounting.gridToLoadKwh > 0 ? (accounting.gridToLoadSpotCostEur * 100) / accounting.gridToLoadKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Retail add-ons"
+                    detail="Grid fees, levies, supplier margin, and VAT uplift."
+                    energy={formatKwh(accounting.gridToLoadKwh)}
+                    cost={formatCurrencyAmount(accounting.gridToLoadRetailAddOnsEur, units)}
+                    avg={formatPriceAmount(accounting.gridToLoadKwh > 0 ? (accounting.gridToLoadRetailAddOnsEur * 100) / accounting.gridToLoadKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="To battery"
+                    detail="Grid-charged battery kWh on the same retail tariff basis."
+                    energy={formatKwh(annual.gridToBatteryKwh)}
+                    cost={formatCurrencyAmount(accounting.gridToBatteryCostEur, units)}
+                    avg={formatPriceAmount(accounting.gridToBatteryAvgCt, units)}
+                    total
+                  />
+                  <AnnualBreakdownRow
+                    label="Spot energy"
+                    energy={formatKwh(annual.gridToBatteryKwh)}
+                    cost={formatCurrencyAmount(accounting.gridToBatterySpotCostEur, units)}
+                    avg={formatPriceAmount(annual.gridToBatteryKwh > 0 ? (accounting.gridToBatterySpotCostEur * 100) / annual.gridToBatteryKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Retail add-ons"
+                    detail="Same retail add-on stack as household grid import."
+                    energy={formatKwh(annual.gridToBatteryKwh)}
+                    cost={formatCurrencyAmount(accounting.gridToBatteryRetailAddOnsEur, units)}
+                    avg={formatPriceAmount(annual.gridToBatteryKwh > 0 ? (accounting.gridToBatteryRetailAddOnsEur * 100) / annual.gridToBatteryKwh : 0, units)}
+                    indent
+                  />
+                  <AnnualBreakdownRow
+                    label="Total grid import"
+                    energy={formatKwh(accounting.totalGridImportKwh)}
+                    cost={formatCurrencyAmount(accounting.totalGridImportCostEur, units)}
+                    avg={formatPriceAmount(accounting.totalGridImportAvgCt, units)}
+                    total
+                    tone="optimized"
+                  />
+                </>
+              ) : null}
+
+              <AnnualBreakdownSectionRow label="Annual total" icon={Gauge} open={openSections.total} onToggle={() => toggleSection('total')} tone="total" summary={formatCurrencyAmount(annual.savingsEur, units)} />
+              {openSections.total ? (
+                <AnnualBreakdownRow
+                  label="Total annual benefit"
+                  detail="Consumption/import savings plus export credit. Curtailed PV avoided negative export cost remains informational."
+                  energy={`${formatKwh(accounting.totalGridImportKwh)} import / ${formatKwh(accounting.exportedEnergyKwh)} export`}
+                  cost={formatCurrencyAmount(annual.savingsEur, units)}
+                  avg={`${formatCurrencyAmount(accounting.consumptionImportSavingsEur, units)} savings + ${formatCurrencyAmount(annual.exportRevenueEur, units)} export`}
+                  total
+                  tone="optimized"
+                />
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function AnnualExportCreditCard({
+  annual,
+  units,
+}: {
+  annual: PvBatteryAnnualResult
+  units: ReturnType<typeof getPriceUnits>
+}) {
+  const accounting = summarizeAnnualAccounting(annual)
+
+  return (
+    <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
+      <CardContent className="p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Export credit</p>
+            <h3 className="mt-1 text-lg font-semibold text-gray-900">Export kept separate from household consumption</h3>
+          </div>
+          <p className="max-w-xl text-xs leading-5 text-gray-500">
+            Grid-charged battery export shows gross revenue and net result. The total export credit remains gross export revenue because grid charging cost is already inside optimized import cost.
+          </p>
+        </div>
+
+        <div className="mt-5 overflow-x-auto rounded-lg border border-gray-200">
+          <table className="min-w-[760px] w-full border-collapse text-sm">
+            <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
+              <tr>
+                <th scope="col" className="px-4 py-3 text-left">Flow</th>
+                <th scope="col" className="px-4 py-3 text-right">Energy</th>
+                <th scope="col" className="px-4 py-3 text-right">Gross credit</th>
+                <th scope="col" className="px-4 py-3 text-right">Net result</th>
+                <th scope="col" className="px-4 py-3 text-right">Avg value</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200 bg-white">
+              <tr>
+                <th scope="row" className="px-4 py-3 text-left font-medium text-gray-800">Direct PV export</th>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatKwh(annual.directExportKwh)}</td>
+                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.directExportRevenueEur, units)}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-500">same as gross</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatPriceAmount(accounting.directExportAvgCt, units)}</td>
+              </tr>
+              <tr>
+                <th scope="row" className="px-4 py-3 text-left font-medium text-gray-800">PV battery export</th>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatKwh(accounting.batteryPvExportKwh)}</td>
+                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.batteryPvExportRevenueEur, units)}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-500">same as gross</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatPriceAmount(accounting.batteryPvExportAvgCt, units)}</td>
+              </tr>
+              <tr>
+                <th scope="row" className="px-4 py-3 text-left align-top font-medium text-gray-800">
+                  Grid battery export
+                  <p className="mt-1 max-w-[240px] text-[11px] font-normal leading-4 text-gray-400">Net result subtracts attributed grid charge cost already included in optimized import cost.</p>
+                </th>
+                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-700">{formatKwh(accounting.batteryGridExportKwh)}</td>
+                <td className="px-4 py-3 text-right align-top tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.batteryGridExportRevenueEur, units)}</td>
+                <td className="px-4 py-3 text-right align-top tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.batteryGridExportNetEur, units, { signed: true })}</td>
+                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-700">{formatPriceAmount(accounting.batteryGridExportNetAvgCt, units)}</td>
+              </tr>
+              <tr className="bg-gray-50/70">
+                <th scope="row" className="px-4 py-3 text-left align-top font-medium text-gray-600">
+                  Curtailed PV
+                  <p className="mt-1 max-w-[280px] text-[11px] font-normal leading-4 text-gray-400">Avoided cost is summed per interval from curtailed kWh and that interval&apos;s negative export price. Not export credit.</p>
+                </th>
+                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-600">{formatKwh(annual.curtailedKwh)}</td>
+                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-400">{mutedDash('not applicable')}</td>
+                <td className="px-4 py-3 text-right align-top tabular-nums font-semibold text-gray-600">{formatCurrencyAmount(accounting.curtailedAvoidedCostEur, units)} avoided</td>
+                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-600">{formatPriceAmount(accounting.curtailedAvoidedCostAvgCt, units)}</td>
+              </tr>
+            </tbody>
+            <tfoot className="border-t border-gray-300 bg-white">
+              <tr>
+                <th scope="row" className="px-4 py-3 text-left font-semibold text-gray-900">Total export credit</th>
+                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatKwh(accounting.exportedEnergyKwh)}</td>
+                <td className="px-4 py-3 text-right tabular-nums font-semibold text-emerald-700">{formatCurrencyAmount(annual.exportRevenueEur, units)}</td>
+                <td className="px-4 py-3 text-right tabular-nums text-gray-500">before import-cost offset</td>
+                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatPriceAmount(accounting.exportAvgCt, units)}</td>
+              </tr>
+            </tfoot>
+          </table>
         </div>
       </CardContent>
     </Card>
@@ -3052,6 +3783,8 @@ function PvBatteryCalculatorInner() {
   const rollingInitialSocKwh = state.usableKwh * 0.5
 
   useEffect(() => {
+    // External URL changes need to replace the local ZIP draft.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setZipInput(state.pvZipCode)
   }, [state.pvZipCode])
 
@@ -3092,6 +3825,8 @@ function PvBatteryCalculatorInner() {
 
   useEffect(() => {
     if (!/^\d{5}$/.test(state.pvZipCode)) {
+      // Reset regional lookup state when the ZIP input is no longer complete.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTariffComponents(null)
       setTariffComponentsLoading(false)
       setTariffComponentsError(null)
@@ -4138,19 +4873,14 @@ function PvBatteryCalculatorInner() {
                 />
               ) : annualResult ? (
                 <>
-                  {showPlannerCards ? (
-                    <>
-                      <PlanningModelCard
-                        planningModel={state.planningModel}
-                        onChange={(planningModel) => setDraftState((current) => ({ ...current, planningModel }))}
-                      />
-                      <PlannerAssumptionsCard
-                        planningModel={state.planningModel}
-                        assumptions={annualResult.assumptions}
-                        initialSocKwh={rollingInitialSocKwh}
-                      />
-                    </>
-                  ) : null}
+                  <AnnualSummaryCard annual={annualResult} units={units} />
+                  <AnnualBillCard
+                    annual={annualResult}
+                    units={units}
+                    pvCapacityWp={state.pvCapacityWp}
+                    usableKwh={state.usableKwh}
+                  />
+                  <AnnualExportCreditCard annual={annualResult} units={units} />
                   {allocationResult ? (
                     <DeliveredAllocationCard
                       annual={allocationResult}
@@ -4196,6 +4926,19 @@ function PvBatteryCalculatorInner() {
                     windowControls={consumptionWindowControls}
                     mode="optimizationFlow"
                   />
+                  {showPlannerCards ? (
+                    <>
+                      <PlanningModelCard
+                        planningModel={state.planningModel}
+                        onChange={(planningModel) => setDraftState((current) => ({ ...current, planningModel }))}
+                      />
+                      <PlannerAssumptionsCard
+                        planningModel={state.planningModel}
+                        assumptions={annualResult.assumptions}
+                        initialSocKwh={rollingInitialSocKwh}
+                      />
+                    </>
+                  ) : null}
 
                 </>
               ) : (

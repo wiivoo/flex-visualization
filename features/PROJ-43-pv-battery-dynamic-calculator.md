@@ -1,7 +1,7 @@
 # PROJ-43 - PV + Battery Dynamic Tariff Calculator
 
 ## Status: In Progress
-**Last Updated:** 2026-05-05
+**Last Updated:** 2026-05-07
 
 ## Dependencies
 - None
@@ -59,6 +59,24 @@ The annual savings result must compare:
 
 - A baseline household with the same tariff, year, and household demand assumptions but without PV and without battery dispatch value
 - Against the optimized PV + battery case under the active permissions and constraints
+
+Annual benefit must be presented as:
+
+`Total annual benefit = Consumption/import savings + Export credit`
+
+Where:
+
+- `Consumption/import savings = baseline grid import cost - optimized gross import cost`
+- `Export credit = export revenue`
+- `Optimized net energy cost = optimized gross import cost - export revenue`
+
+Rules:
+
+- Grid-to-battery charging remains part of optimized gross import cost and carries the same retail import tariff basis as household grid import.
+- Export credit must stay separate from consumption/import savings so grid-charged battery export cannot be double-counted.
+- Do not label this value stream as peak shaving unless the model adds a demand-charge, capacity-tariff, import-cap, or contracted-power term.
+- Use `Exported energy` and `Net grid import` labels instead of ambiguous `net export` wording.
+- Curtailed PV is physical information only unless a modeled market rule creates an avoided negative export cost; any avoided cost must be calculated interval by interval from curtailed kWh and that interval's export price, then summed.
 
 ### 3. Allowed Energy Flow Controls
 
@@ -259,6 +277,9 @@ Rules:
 - [ ] The annual optimization minimizes modeled net household electricity cost rather than maximizing self-sufficiency.
 - [ ] Self-sufficiency and self-consumption remain visible as KPIs but are described as outcome metrics, not as the optimization target.
 - [ ] The result compares a no-PV / no-battery baseline against the optimized case using the same tariff, year, and household-demand assumptions.
+- [ ] The annual summary presents total annual benefit as consumption/import savings plus export credit, with grid-to-battery charging included in optimized gross import cost.
+- [ ] The baseline-vs-optimized bill view separates imported-kWh retail add-ons from export credit and makes clear that add-ons apply to grid-to-battery charging.
+- [ ] The export credit view separates direct PV export, PV battery export, grid battery export gross/net, and curtailed PV as informational only.
 - [ ] The UI exposes explicit controls for `PV -> load`, `PV -> battery`, `grid -> battery`, `battery -> load`, `PV -> grid`, and `battery -> grid`.
 - [ ] Disabling any allowed flow changes the feasible routing set in both the annual replay and the selected-day chart.
 - [ ] `Grid -> household` remains available regardless of the other flow-permission settings.

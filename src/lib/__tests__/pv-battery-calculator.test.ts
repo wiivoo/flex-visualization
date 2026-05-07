@@ -274,6 +274,28 @@ describe('optimizePvBattery', () => {
     expect(result.gridImportCostEur).toBeCloseTo(0.6, 3)
   })
 
+  it('still stores PV for later household load when grid charging and battery export are disabled', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(12, 10, 0), pvKwh: 2 },
+      { ...mkPrice(20, 40, 0), loadKwh: 2 },
+    ]
+
+    const result = optimizePvBattery(slots, {
+      ...BASE_SCENARIO,
+      flowPermissions: {
+        ...BASE_SCENARIO.flowPermissions,
+        gridToBattery: false,
+        batteryToGrid: false,
+      },
+    })
+
+    expect(result.gridToBatteryKwh).toBeCloseTo(0, 3)
+    expect(result.batteryExportKwh).toBeCloseTo(0, 3)
+    expect(result.batteryToLoadKwh).toBeCloseTo(2, 3)
+    expect(result.slots[1].batteryPvToLoadKwh).toBeCloseTo(2, 3)
+    expect(result.selfConsumptionPct).toBeCloseTo(100, 3)
+  })
+
   it('settles baseline and import costs on the household tariff instead of the raw spot price', () => {
     const slots: OptimizerSlotInput[] = [
       { ...mkPrice(18, 10, 0), importPriceCtKwh: 30, loadKwh: 2 },
