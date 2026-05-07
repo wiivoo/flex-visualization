@@ -62,7 +62,7 @@ async function verifySessionCookie(cookieValue: string | undefined, secret: stri
 }
 
 function notFound() {
-  return new NextResponse('Not found', {
+  return new NextResponse(null, {
     status: 404,
     headers: {
       'Cache-Control': 'no-store',
