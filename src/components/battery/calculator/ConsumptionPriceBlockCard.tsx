@@ -1,7 +1,6 @@
 'use client'
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { BarChart3, Blocks, Zap } from 'lucide-react'
 import {
   Bar,
   BarChart,
@@ -19,7 +18,6 @@ import { cn } from '@/lib/utils'
 import type { PriceUnits } from '@/lib/v2-config'
 
 type DistributionView = 'chronological' | 'histogram'
-type HistogramSort = 'price' | 'load'
 type DeliveredSourceKey = 'gridDirect' | 'pvDirect' | 'batteryPv' | 'batteryGrid'
 
 interface DeliveredSourceSegment {
@@ -54,30 +52,27 @@ interface HistogramDatum {
   sourceBlocks: Record<DeliveredSourceKey, number>
 }
 
-const BLOCK_KWH = 0.025
+const BLOCK_KWH = 0.05
 const EPSILON = 1e-6
-const TARGET_HISTOGRAM_BINS = 7
 
-const SOURCE_STYLES: Record<DeliveredSourceKey, { label: string; base: string; chip: string }> = {
+const SOURCE_STYLES: Record<DeliveredSourceKey, { label: string; base: string; stripe?: string }> = {
   gridDirect: {
     label: 'Grid -> load',
-    base: '#4D7FB8',
-    chip: '#E6F0FB',
+    base: '#7D8797',
   },
   pvDirect: {
     label: 'PV -> load',
-    base: '#D6B04B',
-    chip: '#F8F1D8',
+    base: '#E9B94A',
   },
   batteryPv: {
     label: 'PV -> battery -> load',
-    base: '#6E9C62',
-    chip: '#E8F2E4',
+    base: '#D9B24E',
+    stripe: 'rgba(47,111,179,0.42)',
   },
   batteryGrid: {
     label: 'Grid -> battery -> load',
-    base: '#29435C',
-    chip: '#DEE6EE',
+    base: '#8A93A3',
+    stripe: 'rgba(47,111,179,0.58)',
   },
 }
 
@@ -140,41 +135,13 @@ function formatPrice(value: number, units: PriceUnits): string {
   return `${value.toFixed(2)} ${units.priceUnit}`
 }
 
-function formatPriceCompact(value: number): string {
-  return `${value.toFixed(value >= 10 ? 1 : 2)} ct/kWh`
+function formatBlockWh(): string {
+  return `${BLOCK_KWH.toFixed(2)} kWh`
 }
 
-function formatBlockCount(kwh: number): string {
-  return `${Math.round(kwh / BLOCK_KWH).toLocaleString()} blocks`
-}
-
-function choosePriceBinSize(span: number, targetBins = TARGET_HISTOGRAM_BINS): number {
+function choosePriceBinSize(span: number, targetBins: number): number {
   if (!Number.isFinite(span) || span <= EPSILON) return 0.5
   return span / Math.max(1, targetBins)
-}
-
-function mixColor(startHex: string, endHex: string, ratio: number): string {
-  const start = startHex.replace('#', '')
-  const end = endHex.replace('#', '')
-  const r = Math.max(0, Math.min(1, ratio))
-  const sr = Number.parseInt(start.slice(0, 2), 16)
-  const sg = Number.parseInt(start.slice(2, 4), 16)
-  const sb = Number.parseInt(start.slice(4, 6), 16)
-  const er = Number.parseInt(end.slice(0, 2), 16)
-  const eg = Number.parseInt(end.slice(2, 4), 16)
-  const eb = Number.parseInt(end.slice(4, 6), 16)
-  const rr = Math.round(sr + ((er - sr) * r))
-  const rg = Math.round(sg + ((eg - sg) * r))
-  const rb = Math.round(sb + ((eb - sb) * r))
-  return `rgb(${rr}, ${rg}, ${rb})`
-}
-
-function getChronologicalPriceFill(segment: DeliveredSourceSegment) {
-  return mixColor('#D8E7F7', '#1D4ED8', 0.18 + (segment.priceIntensity * 0.72))
-}
-
-function getHistogramSourceFill(source: DeliveredSourceKey, priceIntensity: number) {
-  return mixColor('#FFFFFF', SOURCE_STYLES[source].base, 0.24 + (priceIntensity * 0.66))
 }
 
 function getBatteryPvEffectivePriceCtKwh(slot: PvBatterySlotResult) {
@@ -265,15 +232,15 @@ function InlinePillGroup({
   options: Array<{ label: string; active: boolean; onClick: () => void }>
 }) {
   return (
-    <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100/80 p-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)]">
+    <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
       {options.map((option) => (
         <button
           key={option.label}
           type="button"
           onClick={option.onClick}
           className={cn(
-            'rounded-full px-3 py-1.5 text-[11px] font-semibold transition-colors whitespace-nowrap',
-            option.active ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700',
+            'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors whitespace-nowrap',
+            option.active ? 'bg-white text-[#313131] shadow-sm ring-1 ring-gray-200' : 'text-gray-400 hover:text-gray-600',
           )}
         >
           {option.label}
@@ -283,43 +250,31 @@ function InlinePillGroup({
   )
 }
 
-function SummaryTile({
-  label,
-  value,
-  detail,
-  icon: Icon,
-}: {
-  label: string
-  value: string
-  detail: string
-  icon: typeof Blocks
-}) {
-  return (
-    <div className="rounded-[20px] border border-slate-200/80 bg-[linear-gradient(180deg,#FCFDFF_0%,#FFFFFF_100%)] px-3.5 py-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-      <div className="flex items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-600">
-          <Icon className="h-3.5 w-3.5" />
-        </span>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
-      </div>
-      <p className="mt-2 text-[14px] font-semibold tracking-tight text-slate-950">{value}</p>
-      <p className="mt-1 text-[11px] leading-4 text-slate-500">{detail}</p>
-    </div>
-  )
+function getSourceFill(source: DeliveredSourceKey): string {
+  return SOURCE_STYLES[source].stripe ? `url(#consumption-${source}-stripe)` : SOURCE_STYLES[source].base
 }
 
-function LegendChip({
-  label,
-  tone,
-}: {
-  label: string
-  tone: string
-}) {
+function getTooltipSwatch(source: DeliveredSourceKey): string {
+  const style = SOURCE_STYLES[source]
+  if (!style.stripe) return style.base
+  return `repeating-linear-gradient(135deg, ${style.base} 0 4px, ${style.stripe} 4px 7px)`
+}
+
+function SourceFillDefs() {
   return (
-    <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 shadow-[0_6px_16px_rgba(15,23,42,0.04)]">
-      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tone }} />
-      <span className="text-[11px] font-medium text-slate-600">{label}</span>
-    </div>
+    <defs>
+      {(Object.keys(SOURCE_STYLES) as DeliveredSourceKey[]).map((key) => {
+        const style = SOURCE_STYLES[key]
+        if (!style.stripe) return null
+
+        return (
+          <pattern key={key} id={`consumption-${key}-stripe`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+            <rect width="8" height="8" fill={style.base} />
+            <rect x="0" y="0" width="3" height="8" fill={style.stripe} />
+          </pattern>
+        )
+      })}
+    </defs>
   )
 }
 
@@ -369,7 +324,7 @@ function DeliveredCompositionBarShape({
               height={blockHeight}
               rx={Math.min(1.6, blockHeight / 3)}
               ry={Math.min(1.6, blockHeight / 3)}
-              fill={getChronologicalPriceFill(segment)}
+              fill={getSourceFill(segment.key)}
               stroke="#FFFFFF"
               strokeOpacity={0.88}
               strokeWidth={0.85}
@@ -407,23 +362,94 @@ function HistogramTick({
   )
 }
 
+function ChronologicalTooltip({
+  active,
+  payload,
+  dayLabel,
+  units,
+}: {
+  active?: boolean
+  payload?: Array<{ payload?: ChartSlotDatum }>
+  dayLabel: string
+  units: PriceUnits
+}) {
+  if (!active || !payload?.length) return null
+
+  const slot = payload[0]?.payload
+  if (!slot) return null
+
+  return (
+    <div className="min-w-[240px] rounded-2xl border border-slate-200 bg-white p-3 text-[11px] text-slate-600 shadow-[0_14px_34px_rgba(15,23,42,0.14)]">
+      <div className="border-b border-slate-100 pb-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{dayLabel}</p>
+        <p className="mt-0.5 text-sm font-semibold text-slate-900">{slot.label}</p>
+        <p className="mt-0.5 font-semibold tabular-nums text-slate-700">{formatKwh(slot.loadKwh)} delivered</p>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {slot.segments.map((segment) => (
+          <div key={segment.key} className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: getTooltipSwatch(segment.key) }} />
+            <span className="truncate">{segment.label}</span>
+            <span className="font-semibold tabular-nums text-slate-900">
+              {formatKwh(segment.kwh)} · {formatPrice(segment.priceCtKwh, units)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function HistogramTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: Array<{ payload?: HistogramDatum }>
+}) {
+  if (!active || !payload?.length) return null
+
+  const bin = payload[0]?.payload
+  if (!bin) return null
+  const sources = (Object.keys(SOURCE_STYLES) as DeliveredSourceKey[])
+    .filter((key) => bin.sourceKwh[key] > EPSILON)
+    .sort((a, b) => bin.sourceKwh[b] - bin.sourceKwh[a])
+
+  return (
+    <div className="min-w-[240px] rounded-2xl border border-slate-200 bg-white p-3 text-[11px] text-slate-600 shadow-[0_14px_34px_rgba(15,23,42,0.14)]">
+      <div className="border-b border-slate-100 pb-2">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Price band</p>
+        <p className="mt-0.5 text-sm font-semibold text-slate-900">{bin.shortLabel}</p>
+        <p className="mt-0.5 font-semibold tabular-nums text-slate-700">{formatKwh(bin.kwh)} delivered</p>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {sources.map((key) => (
+          <div key={key} className="grid grid-cols-[10px_minmax(0,1fr)_auto] items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: getTooltipSwatch(key) }} />
+            <span className="truncate">{SOURCE_STYLES[key].label}</span>
+            <span className="font-semibold tabular-nums text-slate-900">{formatKwh(bin.sourceKwh[key])}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function ConsumptionPriceBlockCard({
   annualResult,
   dayLabel,
   units,
   loading = false,
-  controls,
-  priceCurveMode = 'spot',
+  windowControls,
 }: {
   annualResult: PvBatteryAnnualResult | null
   dayLabel: string
   units: PriceUnits
   loading?: boolean
-  controls?: ReactNode
-  priceCurveMode?: 'spot' | 'end'
+  windowControls?: ReactNode
 }) {
   const [distributionView, setDistributionView] = useState<DistributionView>('chronological')
-  const [histogramSort, setHistogramSort] = useState<HistogramSort>('price')
+  const [histogramBinCount, setHistogramBinCount] = useState(8)
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
 
   const slotData = useMemo<ChartSlotDatum[]>(() => slots.map((slot, index) => ({
@@ -473,8 +499,8 @@ export function ConsumptionPriceBlockCard({
   }, [priceStats.max, priceStats.min, slotData])
 
   const histogramBinSize = useMemo(
-    () => choosePriceBinSize(priceStats.max - priceStats.min, TARGET_HISTOGRAM_BINS),
-    [priceStats.max, priceStats.min],
+    () => choosePriceBinSize(priceStats.max - priceStats.min, histogramBinCount),
+    [histogramBinCount, priceStats.max, priceStats.min],
   )
 
   const histogramData = useMemo<HistogramDatum[]>(() => {
@@ -486,7 +512,7 @@ export function ConsumptionPriceBlockCard({
       if (segment.kwh <= EPSILON) continue
 
       const relativeBinIndex = Math.min(
-        TARGET_HISTOGRAM_BINS - 1,
+        histogramBinCount - 1,
         Math.max(0, Math.floor((segment.priceCtKwh - priceStats.min) / histogramBinSize)),
       )
       const binStart = priceStats.min + (relativeBinIndex * histogramBinSize)
@@ -501,7 +527,7 @@ export function ConsumptionPriceBlockCard({
         continue
       }
 
-      const binEnd = relativeBinIndex === TARGET_HISTOGRAM_BINS - 1 ? priceStats.max : binStart + histogramBinSize
+      const binEnd = relativeBinIndex === histogramBinCount - 1 ? priceStats.max : binStart + histogramBinSize
       bins.set(binStart, {
         label: `${binStart.toFixed(precision)}-${binEnd.toFixed(precision)}|${binEnd.toFixed(precision)} ${units.priceUnit}`,
         shortLabel: `${binStart.toFixed(precision)}-${binEnd.toFixed(precision)}`,
@@ -544,20 +570,13 @@ export function ConsumptionPriceBlockCard({
           batteryGrid: Number(bin.sourceBlocks.batteryGrid.toFixed(6)),
         },
       }))
-  }, [flatSegments, histogramBinSize, priceStats.max, priceStats.min, units.priceUnit])
+  }, [flatSegments, histogramBinCount, histogramBinSize, priceStats.max, priceStats.min, units.priceUnit])
 
   const sortedHistogramData = useMemo(() => {
     const bins = [...histogramData]
-    if (histogramSort === 'load') {
-      bins.sort((a, b) => {
-        if (Math.abs(b.kwh - a.kwh) > EPSILON) return b.kwh - a.kwh
-        return a.binStart - b.binStart
-      })
-      return bins
-    }
     bins.sort((a, b) => a.binStart - b.binStart)
     return bins
-  }, [histogramData, histogramSort])
+  }, [histogramData])
 
   const loadAxis = useMemo(
     () => buildPositiveAxis(Math.max(...slotData.map((slot) => slot.loadKwh), 0.1), 5),
@@ -575,11 +594,6 @@ export function ConsumptionPriceBlockCard({
     if (visibleHours <= 48) return 4
     return 6
   }, [visibleHours])
-
-  const timelineMinWidthPx = useMemo(() => {
-    const pxPerSlot = slotsPerHour >= 4 ? (slotData.length > 96 ? 6 : 8) : 16
-    return Math.max(760, Math.round(slotData.length * pxPerSlot))
-  }, [slotData.length, slotsPerHour])
 
   const xTicks = useMemo(
     () => slotData
@@ -620,7 +634,7 @@ export function ConsumptionPriceBlockCard({
     )
   }
 
-  const sourceTotals = useMemo(() => {
+  const activeSources = useMemo(() => {
     const totals: Record<DeliveredSourceKey, number> = {
       gridDirect: 0,
       pvDirect: 0,
@@ -632,34 +646,9 @@ export function ConsumptionPriceBlockCard({
       totals[segment.key] += segment.kwh
     }
 
-    return totals
+    return (Object.keys(SOURCE_STYLES) as DeliveredSourceKey[])
+      .filter((key) => totals[key] > EPSILON)
   }, [flatSegments])
-
-  const summaryCards = useMemo(() => [
-    {
-      label: 'Visible delivered load',
-      value: formatKwh(priceStats.totalKwh),
-      detail: formatBlockCount(priceStats.totalKwh),
-      icon: Blocks,
-    },
-    {
-      label: 'Effective delivered price',
-      value: formatPrice(priceStats.weightedAvg, units),
-      detail: 'weighted across delivered source blocks',
-      icon: Zap,
-    },
-    {
-      label: 'Price span',
-      value: `${formatPriceCompact(priceStats.min)} to ${formatPriceCompact(priceStats.max)}`,
-      detail: `${histogramData.length} of ${TARGET_HISTOGRAM_BINS} price bands occupied`,
-      icon: BarChart3,
-    },
-  ], [histogramData.length, priceStats.max, priceStats.min, priceStats.totalKwh, priceStats.weightedAvg, units])
-
-  const sourceLegend = (Object.keys(SOURCE_STYLES) as DeliveredSourceKey[])
-    .filter((key) => sourceTotals[key] > EPSILON)
-
-  const referenceLabel = priceCurveMode === 'end' ? 'Shared controls: end-price context' : 'Shared controls: spot-price context'
 
   if (loading || slotData.length === 0) {
     return (
@@ -671,81 +660,44 @@ export function ConsumptionPriceBlockCard({
     )
   }
 
+  const viewControls = (
+    <InlinePillGroup
+      options={[
+        {
+          label: 'Chronological',
+          active: distributionView === 'chronological',
+          onClick: () => setDistributionView('chronological'),
+        },
+        {
+          label: 'Histogram',
+          active: distributionView === 'histogram',
+          onClick: () => setDistributionView('histogram'),
+        },
+      ]}
+    />
+  )
+
   return (
     <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
       <CardContent className="p-0">
-        <div className="border-b border-slate-100 px-5 py-4 sm:px-7 sm:py-5">
-          <div className="grid gap-5 lg:grid-cols-[minmax(250px,0.95fr)_minmax(0,2.05fr)] lg:items-center">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-[#D6E5F7] bg-[#EEF5FC] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#214F90]">
-                  Load x Price
-                </span>
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
-                  Source-true delivered mix
-                </span>
-              </div>
-              <p className="mt-3 text-[26px] font-semibold tracking-[-0.03em] text-slate-950">Consumption blocks by delivered source</p>
-              <p className="mt-1 text-[13px] font-medium text-slate-500">{dayLabel}</p>
-              <p className="mt-3 max-w-[35rem] text-[12px] leading-5 text-slate-500">
-                Each interval is rebuilt from the actual load-serving sources in the slot. Direct grid, direct PV, PV-stored battery discharge, and grid-stored battery discharge each keep their own effective delivered price.
-              </p>
-            </div>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-              {summaryCards.map((card) => (
-                <SummaryTile key={card.label} {...card} />
-              ))}
+        <div className="border-b border-slate-100 px-5 py-4 sm:px-7">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <p className="text-[20px] font-semibold tracking-tight text-slate-950">Hourly consumption breakdown</p>
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+              <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-500 shadow-sm whitespace-nowrap">
+                1 box = {formatBlockWh()}
+              </span>
+              {viewControls}
+              {windowControls}
             </div>
           </div>
         </div>
 
-        <div className="pl-4 pr-2 pb-3 pt-3 sm:pl-5 sm:pr-3">
-          <div className="mb-3 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <InlinePillGroup
-                options={[
-                  {
-                    label: 'Chronological',
-                    active: distributionView === 'chronological',
-                    onClick: () => setDistributionView('chronological'),
-                  },
-                  {
-                    label: 'Price histogram',
-                    active: distributionView === 'histogram',
-                    onClick: () => setDistributionView('histogram'),
-                  },
-                ]}
-              />
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-600 whitespace-nowrap">
-                1 block = 25 Wh
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-slate-500 whitespace-nowrap">
-                {referenceLabel}
-              </span>
-              {sourceLegend.map((key) => (
-                <LegendChip key={key} label={`${SOURCE_STYLES[key].label} · ${formatKwh(sourceTotals[key])}`} tone={SOURCE_STYLES[key].base} />
-              ))}
-            </div>
-            <div className="flex min-w-0 flex-wrap items-center gap-2 xl:justify-end">
-              {controls}
-            </div>
-          </div>
-
+        <div className="px-4 pb-3 pt-4 sm:px-5">
           {distributionView === 'chronological' ? (
             <>
-              <div className="mb-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between px-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <LegendChip label="Bar height = delivered load per interval" tone="#CBD5E1" />
-                  <LegendChip label="Color = effective delivered price" tone="#2563EB" />
-                  <LegendChip label="Source split stays in tooltip and histogram" tone="#94A3B8" />
-                </div>
-                <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-500">
-                  Effective price range <span className="font-semibold text-slate-700">{formatPriceCompact(priceStats.min)} to {formatPriceCompact(priceStats.max)}</span>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <div className="h-[390px]" style={{ minWidth: `${timelineMinWidthPx}px` }}>
+              <div>
+                <div className="h-[390px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={slotDataWithIntensity}
@@ -753,6 +705,7 @@ export function ConsumptionPriceBlockCard({
                       barCategoryGap={1}
                       barGap={0}
                     >
+                      <SourceFillDefs />
                       <CartesianGrid stroke="#DBE4EF" strokeDasharray="3 3" />
                       <XAxis
                         dataKey="idx"
@@ -777,27 +730,15 @@ export function ConsumptionPriceBlockCard({
                         label={{ value: 'Delivered load per interval (kWh)', angle: -90, position: 'insideLeft', fill: '#64748B', fontSize: 11, offset: 2 }}
                       />
                       <Tooltip
-                        contentStyle={{ borderRadius: 18, borderColor: '#E5E7EB', boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
-                        labelFormatter={(value) => {
-                          const index = typeof value === 'number' ? value : Number(value)
-                          const slot = Number.isFinite(index) ? slotDataWithIntensity[index] : null
-                          return slot ? `${dayLabel} · ${slot.label}` : dayLabel
-                        }}
-                        formatter={(_value, _name, item) => {
-                          const slot = item.payload as ChartSlotDatum
-                          return [
-                            <div key="tooltip" className="space-y-1">
-                              <div className="font-semibold text-slate-800">{formatKwh(slot.loadKwh)}</div>
-                              {slot.segments.map((segment) => (
-                                <div key={segment.key} className="flex items-center justify-between gap-3">
-                                  <span>{segment.label}</span>
-                                  <span className="tabular-nums">{formatKwh(segment.kwh)} @ {formatPrice(segment.priceCtKwh, units)}</span>
-                                </div>
-                              ))}
-                            </div>,
-                            'Delivered mix / effective price',
-                          ]
-                        }}
+                        cursor={{ fill: 'rgba(148,163,184,0.12)' }}
+                        content={(props) => (
+                          <ChronologicalTooltip
+                            active={props.active}
+                            payload={props.payload as Array<{ payload?: ChartSlotDatum }> | undefined}
+                            dayLabel={dayLabel}
+                            units={units}
+                          />
+                        )}
                       />
                       <Bar
                         dataKey="loadKwh"
@@ -810,43 +751,22 @@ export function ConsumptionPriceBlockCard({
                   </ResponsiveContainer>
                 </div>
               </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
-                <p className="text-[11px] text-slate-500">
-                  Midnight boundaries stay marked so 24h, 48h, and 72h windows remain readable.
-                </p>
-                <p className="text-[11px] font-medium text-slate-500">
-                  Weighted delivered price <span className="font-semibold text-slate-700">{formatPrice(priceStats.weightedAvg, units)}</span>
-                </p>
-              </div>
             </>
           ) : (
             <>
-              <div className="mb-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between px-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <LegendChip label="X axis = effective price bins" tone="#94A3B8" />
-                  <LegendChip label="Y axis = represented delivered load" tone="#CBD5E1" />
-                  <LegendChip label="Stack colors = source path, shade = price level" tone="#475569" />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-500">
-                    Target {TARGET_HISTOGRAM_BINS} bins · size <span className="font-semibold text-slate-700">{histogramBinSize.toFixed(histogramBinSize < 0.1 ? 3 : histogramBinSize < 1 ? 2 : 1)} {units.priceUnit}</span>
-                  </div>
-                  <InlinePillGroup
-                    options={[
-                      {
-                        label: 'Price order',
-                        active: histogramSort === 'price',
-                        onClick: () => setHistogramSort('price'),
-                      },
-                      {
-                        label: 'Largest first',
-                        active: histogramSort === 'load',
-                        onClick: () => setHistogramSort('load'),
-                      },
-                    ]}
-                  />
-                </div>
+              <div className="mb-3 flex items-center justify-end gap-3 px-1">
+                <label className="text-[11px] font-semibold text-slate-500">Bins</label>
+                <input
+                  type="range"
+                  min={4}
+                  max={16}
+                  step={1}
+                  value={histogramBinCount}
+                  onChange={(event) => setHistogramBinCount(Number(event.target.value))}
+                  className="h-1.5 w-36 cursor-pointer appearance-none rounded-full bg-slate-200 accent-slate-900"
+                  aria-label="Histogram bin count"
+                />
+                <span className="w-6 text-right text-[11px] font-semibold tabular-nums text-slate-700">{histogramBinCount}</span>
               </div>
 
               <div className="h-[390px]">
@@ -855,6 +775,7 @@ export function ConsumptionPriceBlockCard({
                     data={sortedHistogramData}
                     margin={{ top: 14, right: 10, bottom: 24, left: 0 }}
                   >
+                    <SourceFillDefs />
                     <CartesianGrid stroke="#DBE4EF" strokeDasharray="3 3" vertical={false} />
                     <XAxis
                       type="category"
@@ -874,41 +795,26 @@ export function ConsumptionPriceBlockCard({
                       tickLine={{ stroke: '#94A3B8' }}
                       axisLine={{ stroke: '#94A3B8' }}
                       tickFormatter={(value: number) => formatKwhAxisTick(value, histogramAxis.step)}
-                      label={{ value: 'Represented delivered load (kWh)', angle: -90, position: 'insideLeft', fill: '#64748B', fontSize: 11, offset: 2 }}
+                      label={{ value: 'Delivered load (kWh)', angle: -90, position: 'insideLeft', fill: '#64748B', fontSize: 11, offset: 2 }}
                     />
                     <Tooltip
-                      contentStyle={{ borderRadius: 18, borderColor: '#E5E7EB', boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
-                      labelFormatter={(value) => `${String(value).replace('|', ' ')}`}
-                      formatter={(_value, _name, item) => {
-                        const bin = item.payload as HistogramDatum
-                        return [
-                          <div key="tooltip" className="space-y-1">
-                            <div>{formatKwh(bin.kwh)}</div>
-                            <div>{Math.round(bin.blocks).toLocaleString()} blocks</div>
-                            <div>{bin.segmentCount} delivered source segments</div>
-                            {(Object.keys(SOURCE_STYLES) as DeliveredSourceKey[])
-                              .filter((key) => bin.sourceKwh[key] > EPSILON)
-                              .sort((a, b) => bin.sourceKwh[b] - bin.sourceKwh[a])
-                              .map((key) => (
-                                <div key={key} className="flex items-center justify-between gap-3">
-                                  <span>{SOURCE_STYLES[key].label}</span>
-                                  <span className="tabular-nums">{formatKwh(bin.sourceKwh[key])}</span>
-                                </div>
-                              ))}
-                          </div>,
-                          'Delivered load in price band',
-                        ]
-                      }}
+                      cursor={{ fill: 'rgba(148,163,184,0.12)' }}
+                      content={(props) => (
+                        <HistogramTooltip
+                          active={props.active}
+                          payload={props.payload as Array<{ payload?: HistogramDatum }> | undefined}
+                        />
+                      )}
                     />
                     {(Object.keys(SOURCE_STYLES) as DeliveredSourceKey[]).map((key) => (
                       <Bar key={key} dataKey={`sourceKwh.${key}`} stackId="histogram" radius={[0, 0, 0, 0]} isAnimationActive={false}>
                         {sortedHistogramData.map((entry) => {
-                          const isTopOfStack = sourceLegend.filter((sourceKey) => entry.sourceKwh[sourceKey] > EPSILON).at(-1) === key
+                          const isTopOfStack = activeSources.filter((sourceKey) => entry.sourceKwh[sourceKey] > EPSILON).at(-1) === key
                           return (
                             <Cell
                               key={`${entry.label}-${key}`}
                               radius={isTopOfStack ? 8 : 0}
-                              fill={getHistogramSourceFill(key, entry.priceIntensity)}
+                              fill={getSourceFill(key)}
                               fillOpacity={entry.sourceKwh[key] > EPSILON ? 1 : 0}
                               strokeOpacity={0}
                             />
@@ -918,15 +824,6 @@ export function ConsumptionPriceBlockCard({
                     ))}
                   </BarChart>
                 </ResponsiveContainer>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 px-1">
-                <p className="text-[11px] text-slate-500">
-                  The histogram groups individual delivered source segments into wider price bands and can be ranked by price or by represented load.
-                </p>
-                <p className="text-[11px] font-medium text-slate-500">
-                  Peak band load <span className="font-semibold text-slate-700">{formatKwh(Math.max(...sortedHistogramData.map((bin) => bin.kwh), 0))}</span>
-                </p>
               </div>
             </>
           )}

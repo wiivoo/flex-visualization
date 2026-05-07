@@ -498,3 +498,53 @@ Tradeoff: less interactive experimentation at day level, but strong consistency 
 
 Decision: completeness-aware result labeling.  
 Tradeoff: reduced apparent coverage in sparse data years, but materially stronger trust and auditability.
+
+---
+
+## QA Test Results
+
+**Tested:** 2026-05-06
+**App URL:** http://localhost:3000/battery/calculator
+**Tester:** QA Engineer (AI)
+
+### Acceptance Criteria Status
+
+#### Calculation And Optimization Logic
+- [x] Existing optimizer regression suite passes for net-cost objective, tariff-based settlement, disabled flow permissions, provenance fields, terminal SoC, complete-year filtering, and rolling replay stitching.
+- [x] Added invariant matrix coverage for mixed prices, negative export prices, tariff/import asymmetry, shared export cap, charge/discharge power limits, SoC bounds, no same-interval battery charge/discharge, hard permission gates, and aggregate ledger consistency.
+- [x] Negative export-price behavior is covered: export prices remain signed, and the active curtailment flag blocks direct PV export during negative-price slots.
+- [x] Browser smoke confirms `/battery/calculator` renders without console/page errors at 375px, 768px, and 1440px viewports.
+- [x] Export chart cleanup verified: the `SoC path` overlay label is absent after switching chart views.
+
+### Edge Cases Status
+
+- [x] `PV -> load`, `PV -> battery`, `grid -> battery`, `battery -> load`, `PV -> grid`, and `battery -> grid` disabled states are enforced in tested dispatch outputs.
+- [x] Shared export cap is enforced for combined direct PV export and battery export in the invariant matrix.
+- [x] Negative and near-zero price periods preserve objective and routing constraints without same-slot battery charge/discharge.
+- [x] Rolling replay carries committed SoC and inventory into the next run and stamps committed slots with run provenance.
+
+### Security Audit Results
+
+- [x] No authentication or authorization surface applies to this local calculator route.
+- [x] Browser smoke reported no runtime console errors or exposed exception traces.
+- [x] No new backend mutation or user-data access path was introduced by this QA pass.
+
+### Bugs Found
+
+#### BUG-1: Repository lint gate fails on synchronous state updates in effects
+- **Severity:** Medium
+- **Steps to Reproduce:**
+  1. Run `npm run lint`.
+  2. Observe `react-hooks/set-state-in-effect` errors in `src/components/battery/calculator/PvBatteryCalculator.tsx`.
+- **Expected:** Lint passes cleanly.
+- **Actual:** Lint fails at `setZipInput(state.pvZipCode)` and `setTariffComponents(null)`.
+- **Priority:** Fix before deployment if lint is a required CI gate.
+
+### Summary
+
+- **Calculation/optimization checks:** Passed
+- **Automated tests:** 37/37 passed
+- **Browser smoke:** Passed at mobile, tablet, and desktop widths
+- **Bugs Found:** 1 total (0 critical, 0 high, 1 medium, 0 low)
+- **Security:** Pass for applicable local-route scope
+- **Production Ready:** NO if lint is required; YES for calculation/optimization logic after resolving the lint gate.

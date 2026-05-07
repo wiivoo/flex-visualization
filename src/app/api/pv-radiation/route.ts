@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 
 /**
  * PVGIS API for monthly PV radiation data
- * Documentation: https://re.jrc.ec.europa.eu/api/v5_2/
+ * Documentation: https://re.jrc.ec.europa.eu/api/v5_3/
  *
- * For German zip codes, we use a simple lat/lon approximation based on
- * the first digit of the zip code (postal region).
+ * For German zip codes, we first resolve approximate coordinates from the
+ * postal code and then fetch PVGIS yield for those coordinates.
  */
 
 // German postal code regions to approximate lat/lon
@@ -32,6 +32,32 @@ function zipCodeToLatLon(zipCode: string): { lat: number; lon: number; region: s
   return DE_POSTAL_REGIONS[firstDigit] || null
 }
 
+async function fetchZipCodeLocation(zipCode: string): Promise<{ lat: number; lon: number; region: string } | null> {
+  try {
+    const response = await fetch(`https://api.zippopotam.us/de/${zipCode}`, {
+      headers: { Accept: 'application/json' },
+      next: { revalidate: 30 * 86400 },
+    })
+    if (!response.ok) return null
+
+    const data = await response.json()
+    const place = data?.places?.[0]
+    const lat = Number(place?.latitude)
+    const lon = Number(place?.longitude)
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+
+    const placeName = place?.['place name'] ?? 'Germany'
+    const state = place?.state
+    return {
+      lat,
+      lon,
+      region: state ? `${placeName}, ${state}` : placeName,
+    }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Fetch monthly radiation data from PVGIS API
  */
@@ -41,17 +67,16 @@ async function fetchPvgisData(lat: number, lon: number, peakPowerKwp: number): P
   error?: string
 } | null> {
   try {
-    // PVGIS API: https://re.jrc.ec.europa.eu/api/v5_2/monthlydata
+    // PVGIS API: https://re.jrc.ec.europa.eu/api/v5_3/PVcalc
     const params = new URLSearchParams({
       lat: lat.toFixed(4),
       lon: lon.toFixed(4),
       peakpower: peakPowerKwp.toString(),
       loss: '14', // Default system losses (14%)
-      raddatabase: 'PVGIS-SARAH3', // Satellite-based radiation database
       outputformat: 'json',
     })
 
-    const url = `https://re.jrc.ec.europa.eu/api/v5_2/monthlydata?${params}`
+    const url = `https://re.jrc.ec.europa.eu/api/v5_3/PVcalc?${params}`
     const response = await fetch(url, {
       headers: {
         'Accept': 'application/json',
@@ -67,10 +92,11 @@ async function fetchPvgisData(lat: number, lon: number, peakPowerKwp: number): P
 
     const data = await response.json()
 
-    // Parse PVGIS response
-    if (data.inputs && data.outputs && data.outputs.monthly) {
-      const monthlyRadiation = data.outputs.monthly.map(
-        (month: { Irradiation: number }) => month.Irradiation
+    // Parse PVGIS response. E_m is monthly energy for the configured system,
+    // so normalize back to kWh/kWp to keep the calculator scale consistent.
+    if (data.inputs && data.outputs?.monthly?.fixed) {
+      const monthlyRadiation = data.outputs.monthly.fixed.map(
+        (month: { E_m: number }) => month.E_m / peakPowerKwp
       )
       const annualTotal = monthlyRadiation.reduce((sum: number, val: number) => sum + val, 0)
 
@@ -109,7 +135,7 @@ export async function GET(request: NextRequest) {
   }
 
   // Convert zip code to lat/lon
-  const location = zipCodeToLatLon(zipCode)
+  const location = await fetchZipCodeLocation(zipCode) ?? zipCodeToLatLon(zipCode)
   if (!location) {
     return NextResponse.json(
       { error: 'Could not determine location from zip code' },

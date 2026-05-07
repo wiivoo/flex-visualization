@@ -15,6 +15,7 @@ const BASE_SCENARIO: PvBatteryCalculatorScenario = {
   roundTripEff: 1,
   feedInCapKw: 4,
   exportCompensationPct: 100,
+  curtailPvAtNegativePrices: true,
   flowPermissions: {
     pvToLoad: true,
     pvToBattery: true,
@@ -46,6 +47,7 @@ function buildHourlyInputs(
       price,
       importPriceCtKwh: 20,
       exportPriceCtKwh: 0,
+      curtailPvAtNegativePrice: false,
       loadKwh: 0,
       pvKwh: 0,
     }

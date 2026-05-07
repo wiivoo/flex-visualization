@@ -1,4 +1,4 @@
-import { endCustomerPrice, surchargesForYear } from '@/lib/dynamic-tariff'
+import { endCustomerPrice, surchargesForYear, type Surcharges } from '@/lib/dynamic-tariff'
 import type { HourlyPrice } from '@/lib/v2-config'
 
 export interface RetailTariff {
@@ -116,12 +116,14 @@ export function transformSpotPriceForTariff(
   tariffId: string,
   country: 'DE' | 'NL',
   year: number,
+  surchargeOverride?: Surcharges | null,
 ) {
   if (country !== 'DE') return spotCtKwh
   const tariff = getTariff(tariffId, country)
   const supplierMarginCtKwh = tariff?.supplierFeeModel === 'margin' ? tariff.supplierMarginCtKwh : 0
+  const baseSurcharges = surchargeOverride ?? surchargesForYear(year)
   return endCustomerPrice(spotCtKwh, {
-    ...surchargesForYear(year),
+    ...baseSurcharges,
     margin: supplierMarginCtKwh,
   })
 }
@@ -130,14 +132,16 @@ export function mapPricesToRetailTariff(
   prices: HourlyPrice[],
   tariffId: string,
   country: 'DE' | 'NL',
+  surchargeOverride?: Surcharges | null,
 ): HourlyPrice[] {
   if (country !== 'DE') return prices
   return prices.map((price) => {
     const year = Number(price.date.slice(0, 4)) || new Date(price.timestamp).getUTCFullYear()
+    const priceCtKwh = transformSpotPriceForTariff(price.priceCtKwh, tariffId, country, year, surchargeOverride)
     return {
       ...price,
-      priceCtKwh: transformSpotPriceForTariff(price.priceCtKwh, tariffId, country, year),
-      priceEurMwh: transformSpotPriceForTariff(price.priceCtKwh, tariffId, country, year) * 10,
+      priceCtKwh,
+      priceEurMwh: priceCtKwh * 10,
     }
   })
 }

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { Suspense, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, SunMedium, Zap, type LucideIcon } from 'lucide-react'
+import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, Pause, Play, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 
 import { ConsumptionPriceBlockCard } from '@/components/battery/calculator/ConsumptionPriceBlockCard'
 import { PvBatteryDayChart } from '@/components/battery/calculator/PvBatteryDayChart'
@@ -15,8 +15,10 @@ import {
   DE_BATTERY_LOAD_PROFILES,
   type BatteryLoadProfileId,
 } from '@/lib/battery-config'
+import { surchargesForYear, totalSurchargesNetto, type Surcharges } from '@/lib/dynamic-tariff'
 import { useBatteryProfiles } from '@/lib/use-battery-profiles'
 import {
+  aggregatePvBatteryAnnualResult,
   buildPvBatteryInputs,
   getAvailablePvBatteryYears,
   optimizePvBatteryWithOptions,
@@ -43,6 +45,7 @@ type FlowPermissionKey =
   | 'batteryToGrid'
 
 type FlowPermissions = PvBatteryFlowPermissions
+type BatteryConnectionMode = 'plugin' | 'wired'
 type DayFlowByRoute = Record<FlowPermissionKey | 'gridToHome', number>
 const CALCULATOR_COUNTRY: PvBatteryCountry = 'DE'
 
@@ -64,12 +67,13 @@ const DEFAULT_FLOW_PERMISSIONS: FlowPermissions = {
   batteryToGrid: true,
 }
 
-const ALLOWED_DE_LOAD_PROFILES = ['H25', 'P25', 'S25'] as const
-type AllowedDeLoadProfile = typeof ALLOWED_DE_LOAD_PROFILES[number]
-
-function isAllowedDeLoadProfile(value: string): value is AllowedDeLoadProfile {
-  return (ALLOWED_DE_LOAD_PROFILES as readonly string[]).includes(value)
-}
+const PLUGIN_DISCHARGE_LIMIT_KW = 0.8
+const DEFAULT_BATTERY_C_RATE = 0.5
+const BATTERY_POWER_MIN_KW = 0.1
+const BATTERY_POWER_MAX_KW = 15
+const BATTERY_POWER_STEP_KW = 0.1
+const PLUGIN_ROUND_TRIP_EFF = 0.88
+const WIRED_ROUND_TRIP_EFF = 0.9
 
 const FLOW_PERMISSION_OPTIONS: Array<{
   key: FlowPermissionKey
@@ -122,7 +126,9 @@ const ALLOCATION_FLOW_COLORS = {
   pvDirect: '#E9B94A',
   pvStored: '#D9B24E',
   gridStored: '#2F6FB3',
-  pvExport: '#67B7D1',
+  pvExport: '#D6B04B',
+  batteryPvExport: '#D9B24E',
+  batteryGridExport: '#8A93A3',
   batteryExport: '#2F6FB3',
   household: '#111827',
 } as const
@@ -211,20 +217,32 @@ interface CalculatorState {
   tariffId: string
   planningModel: PvBatteryPlanningModel
   year: number
-  viewHours: 24 | 48 | 72
+  viewHours: 24 | 36 | 48
   resolution: PvBatteryResolution
   flowPriceMode: 'spot' | 'end'
   loadProfileId: BatteryLoadProfileId
   annualLoadKwh: number
   pvCapacityWp: number
   pvZipCode: string
+  batteryConnectionMode: BatteryConnectionMode
   usableKwh: number
   initialSocKwh: number
   maxChargeKw: number
   maxDischargeKw: number
   roundTripEff: number
   feedInCapKw: number
+  curtailPvAtNegativePrices: boolean
   flowPermissions: FlowPermissions
+}
+
+interface TariffComponentsLookup {
+  plz: string
+  location: string
+  dso?: string | null
+  gridFeeNetto: number
+  taxesNetto: number
+  defaultSupplier?: string
+  cached?: boolean
 }
 
 function sameState(a: CalculatorState, b: CalculatorState): boolean {
@@ -239,18 +257,20 @@ function sameState(a: CalculatorState, b: CalculatorState): boolean {
     && a.annualLoadKwh === b.annualLoadKwh
     && a.pvCapacityWp === b.pvCapacityWp
     && a.pvZipCode === b.pvZipCode
+    && a.batteryConnectionMode === b.batteryConnectionMode
     && a.usableKwh === b.usableKwh
     && a.initialSocKwh === b.initialSocKwh
     && a.maxChargeKw === b.maxChargeKw
     && a.maxDischargeKw === b.maxDischargeKw
     && a.roundTripEff === b.roundTripEff
     && a.feedInCapKw === b.feedInCapKw
+    && a.curtailPvAtNegativePrices === b.curtailPvAtNegativePrices
     && FLOW_PERMISSION_OPTIONS.every(({ key }) => a.flowPermissions[key] === b.flowPermissions[key])
 }
 
 const DEFAULT_STATE: CalculatorState = {
   country: CALCULATOR_COUNTRY,
-  tariffId: 'enviam-vision',
+  tariffId: 'tibber-de',
   planningModel: 'deterministic',
   year: 0,
   viewHours: 24,
@@ -260,12 +280,14 @@ const DEFAULT_STATE: CalculatorState = {
   annualLoadKwh: 4500,
   pvCapacityWp: 8000,
   pvZipCode: '',
+  batteryConnectionMode: 'wired',
   usableKwh: 10,
   initialSocKwh: 5,
   maxChargeKw: 5,
   maxDischargeKw: 5,
-  roundTripEff: 0.9,
+  roundTripEff: WIRED_ROUND_TRIP_EFF,
   feedInCapKw: 5,
+  curtailPvAtNegativePrices: true,
   flowPermissions: DEFAULT_FLOW_PERMISSIONS,
 }
 
@@ -275,8 +297,35 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))
 }
 
+function roundToStep(value: number, step: number): number {
+  return Number((Math.round(value / step) * step).toFixed(3))
+}
+
+function defaultBatteryChargeKw(usableKwh: number): number {
+  return clamp(roundToStep(usableKwh * DEFAULT_BATTERY_C_RATE, BATTERY_POWER_STEP_KW), BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW)
+}
+
+function defaultBatteryDischargeKw(mode: BatteryConnectionMode, usableKwh: number): number {
+  if (mode === 'plugin') return PLUGIN_DISCHARGE_LIMIT_KW
+  return defaultBatteryChargeKw(usableKwh)
+}
+
+function defaultBatteryEfficiency(mode: BatteryConnectionMode): number {
+  return mode === 'plugin' ? PLUGIN_ROUND_TRIP_EFF : WIRED_ROUND_TRIP_EFF
+}
+
+function applyBatteryConnectionDefaults(state: CalculatorState, mode: BatteryConnectionMode): CalculatorState {
+  return {
+    ...state,
+    batteryConnectionMode: mode,
+    maxChargeKw: defaultBatteryChargeKw(state.usableKwh),
+    maxDischargeKw: defaultBatteryDischargeKw(mode, state.usableKwh),
+    roundTripEff: defaultBatteryEfficiency(mode),
+  }
+}
+
 function getDefaultTariffForCountry(country: PvBatteryCountry): string {
-  return country === 'DE' ? 'enviam-vision' : getDefaultTariffId(country)
+  return getDefaultTariffId(country)
 }
 
 function getAutomaticExportLabel(
@@ -319,6 +368,10 @@ function formatCompactFlowKwh(value: number): string {
   if (Math.abs(value) >= 100) return `${value.toFixed(0)}`
   if (Math.abs(value) >= 10) return `${value.toFixed(1)}`
   return `${value.toFixed(2)}`
+}
+
+function formatSceneKwh(value: number): string {
+  return `${formatCompactFlowKwh(value)} kWh`
 }
 
 function sumAnnualSlotMetric(
@@ -366,10 +419,7 @@ function getDisabledFlowConsequences(flowPermissions: FlowPermissions): string[]
 
 function parseState(params: URLSearchParams): CalculatorState {
   const country: PvBatteryCountry = CALCULATOR_COUNTRY
-  const rawLoadProfileId = params.get('profile') ?? ''
-  const loadProfileId = isAllowedDeLoadProfile(rawLoadProfileId)
-    ? rawLoadProfileId
-    : getDefaultCalculatorLoadProfileId(country)
+  const loadProfileId = getDefaultCalculatorLoadProfileId(country)
   const planningModel: PvBatteryPlanningModel = params.get('model') === 'rolling' ? 'rolling' : 'deterministic'
   const parsedYear = Number(params.get('year'))
   const tariffIds = new Set(getTariffsFor(country).map((tariff) => tariff.id))
@@ -378,8 +428,8 @@ function parseState(params: URLSearchParams): CalculatorState {
     : getDefaultTariffForCountry(country)
   const resolution = params.get('resolution') === 'hour' ? 'hour' : 'quarterhour'
   const rawViewHours = Number(params.get('hours'))
-  const viewHours: 24 | 48 | 72 = rawViewHours === 48 || rawViewHours === 72 ? rawViewHours : 24
-  const flowPriceMode = params.get('price') === 'end' ? 'end' : 'spot'
+  const viewHours: 24 | 36 | 48 = rawViewHours === 36 || rawViewHours === 48 ? rawViewHours : 24
+  const flowPriceMode = 'spot'
 
   const getNum = (key: string, fallback: number, min: number, max: number) => {
     const raw = params.get(key)
@@ -391,8 +441,11 @@ function parseState(params: URLSearchParams): CalculatorState {
 
   const zipCodeRaw = params.get('pvzip') ?? ''
   const pvZipCode = /^\d{5}$/.test(zipCodeRaw) ? zipCodeRaw : ''
+  const batteryConnectionMode: BatteryConnectionMode = params.get('batteryMode') === 'plugin' ? 'plugin' : 'wired'
   const usableKwh = getNum('battery', DEFAULT_STATE.usableKwh, 0, 20)
   const initialSocDefault = usableKwh > 0 ? usableKwh / 2 : 0
+  const defaultChargeKw = defaultBatteryChargeKw(usableKwh)
+  const defaultDischargeKw = defaultBatteryDischargeKw(batteryConnectionMode, usableKwh)
 
   return {
     country,
@@ -406,12 +459,14 @@ function parseState(params: URLSearchParams): CalculatorState {
     annualLoadKwh: getNum('load', DEFAULT_STATE.annualLoadKwh, 1500, 15000),
     pvCapacityWp: getNum('pv', DEFAULT_STATE.pvCapacityWp, 0, 20000),
     pvZipCode,
+    batteryConnectionMode,
     usableKwh,
     initialSocKwh: getNum('soc', initialSocDefault, 0, Math.max(usableKwh, 0)),
-    maxChargeKw: getNum('charge', DEFAULT_STATE.maxChargeKw, 1, 15),
-    maxDischargeKw: getNum('discharge', DEFAULT_STATE.maxDischargeKw, 1, 15),
-    roundTripEff: getNum('eff', DEFAULT_STATE.roundTripEff, 0.75, 0.96),
+    maxChargeKw: getNum('charge', defaultChargeKw, BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW),
+    maxDischargeKw: getNum('discharge', defaultDischargeKw, BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW),
+    roundTripEff: getNum('eff', defaultBatteryEfficiency(batteryConnectionMode), 0.75, 0.96),
     feedInCapKw: getNum('feedin', DEFAULT_STATE.feedInCapKw, 0.5, 20),
+    curtailPvAtNegativePrices: params.get('curtailneg') !== '0',
     flowPermissions: {
       pvToLoad: parseFlowPermission(params, 'pvToLoad'),
       pvToBattery: parseFlowPermission(params, 'pvToBattery'),
@@ -442,8 +497,8 @@ function formatMonthLabel(month: string): string {
 
 function getPlanningModelLabel(planningModel: PvBatteryPlanningModel): string {
   return planningModel === 'rolling'
-    ? 'Rolling day-ahead planner'
-    : 'Deterministic replay'
+    ? 'Day-ahead'
+    : 'Full'
 }
 
 function getPlanningModelSummary(planningModel: PvBatteryPlanningModel): string {
@@ -552,16 +607,16 @@ function ControlBlock({
 }) {
   return (
     <Card className="overflow-hidden shadow-sm border-gray-200/80">
-      <div className="border-b border-gray-100 bg-gray-50/80 px-5 py-3">
+      <div className="border-b border-gray-100 bg-gray-50/80 px-5 py-2.5">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
-            {value ? <p className="mt-1 text-2xl font-bold text-[#313131] tabular-nums">{value}</p> : null}
+            <p className="text-[10px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
+            {value ? <p className="mt-1 text-xl font-bold text-[#313131] tabular-nums">{value}</p> : null}
           </div>
           {icon}
         </div>
       </div>
-      <CardContent className="pt-4 pb-4">
+      <CardContent className="pt-3.5 pb-4">
         {children}
       </CardContent>
     </Card>
@@ -847,11 +902,14 @@ function RangeControl({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between h-8">
-        <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</span>
-        <span className="text-2xl font-bold text-[#313131] tabular-nums">
+      <div className="flex min-h-7 items-baseline justify-between gap-3">
+        <span className="inline-flex min-w-0 items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+          {label}
+          {help ? <HelpTooltip label={`${label} help`}>{help}</HelpTooltip> : null}
+        </span>
+        <span className="shrink-0 text-xl font-bold text-[#313131] tabular-nums">
           {numericValue}
-          {unit && <span className="text-xs font-normal text-gray-400 ml-1">{unit}</span>}
+          {unit && <span className="ml-1 text-[11px] font-normal text-gray-400">{unit}</span>}
         </span>
       </div>
       <div>
@@ -872,13 +930,13 @@ function RangeControl({
           </div>
         ) : null}
       </div>
-      {help && <p className="text-[10px] text-gray-400">{help}</p>}
     </div>
   )
 }
 
 function buildScenario(
   state: CalculatorState,
+  regionalSurcharges?: Surcharges | null,
 ): PvBatteryCalculatorScenario {
   return {
     country: state.country,
@@ -891,6 +949,8 @@ function buildScenario(
     roundTripEff: state.roundTripEff,
     feedInCapKw: state.feedInCapKw,
     exportCompensationPct: MARKET_EXPORT_COMPENSATION_PCT,
+    regionalSurcharges,
+    curtailPvAtNegativePrices: state.curtailPvAtNegativePrices,
     flowPermissions: state.flowPermissions,
   }
 }
@@ -1011,7 +1071,7 @@ interface WaterfallChartColumn {
     detailLabel?: string
     ratio: number
   }>
-  fillSegments?: Array<{ color: string; ratio: number; striped?: boolean }>
+  fillSegments?: Array<{ color: string; ratio: number; striped?: boolean; stripeColor?: string }>
   footerLines?: string[]
   separatorBefore?: boolean
   overlay?: {
@@ -1048,7 +1108,7 @@ function formatMetricValue(
   units: ReturnType<typeof getPriceUnits>,
 ): string {
   if (kind === 'share') return `${value.toFixed(1)}%`
-  if (kind === 'kwh') return `${Math.round(value).toLocaleString()} kWh`
+  if (kind === 'kwh') return formatSceneKwh(value)
   if (kind === 'ct') return `${value.toFixed(2)} ${units.priceUnit}`
   return `${units.currencySym}${value.toFixed(0)}`
 }
@@ -1059,7 +1119,7 @@ function formatMetricDelta(
   units: ReturnType<typeof getPriceUnits>,
 ): string {
   if (kind === 'share') return `${value >= 0 ? '+' : '-'}${Math.abs(value).toFixed(1)}%`
-  if (kind === 'kwh') return `${value >= 0 ? '+' : '-'}${Math.abs(Math.round(value)).toLocaleString()} kWh`
+  if (kind === 'kwh') return `${value >= 0 ? '+' : '-'}${formatSceneKwh(Math.abs(value))}`
   if (kind === 'ct') return formatSignedCt(value, units.priceUnit)
   return formatSignedCurrency(value, units.currencySym)
 }
@@ -1090,12 +1150,66 @@ function formatBraceDetailLabel(
   return costLabel
 }
 
-function stripedFill(color: string): string {
-  return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, rgba(255,255,255,0.55) 8px, rgba(255,255,255,0.55) 12px)`
+function stripedFill(color: string, stripeColor = 'rgba(255,255,255,0.55)'): string {
+  return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, ${stripeColor} 8px, ${stripeColor} 12px)`
+}
+
+function formatNetResultLabel(valueEur: number, currencySym: string): string {
+  const prefix = valueEur >= 0 ? 'Net benefit' : 'Net loss'
+  return `${prefix} ${formatSignedCurrency(valueEur, currencySym)}`
+}
+
+function getAllocationFillSegment(bucket: AllocationBucket): NonNullable<WaterfallChartColumn['fillSegments']>[number] {
+  if (bucket.key === 'pvStored') {
+    return {
+      color: ALLOCATION_FLOW_COLORS.batteryPvExport,
+      ratio: 1,
+      striped: true,
+      stripeColor: 'rgba(47,111,179,0.42)',
+    }
+  }
+
+  if (bucket.key === 'gridStored') {
+    return {
+      color: ALLOCATION_FLOW_COLORS.batteryGridExport,
+      ratio: 1,
+      striped: true,
+      stripeColor: 'rgba(47,111,179,0.58)',
+    }
+  }
+
+  return { color: bucket.color, ratio: 1 }
 }
 
 function formatSetupSize(value: number): string {
   return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(1)
+}
+
+function addDays(date: string, days: number): string {
+  const next = new Date(`${date}T12:00:00Z`)
+  next.setUTCDate(next.getUTCDate() + days)
+  return next.toISOString().slice(0, 10)
+}
+
+function slicePvBatteryResult(
+  baseResult: PvBatteryAnnualResult,
+  slots: PvBatteryAnnualResult['slots'],
+): PvBatteryAnnualResult | null {
+  if (slots.length === 0) return null
+
+  return aggregatePvBatteryAnnualResult(slots, {
+    planningModel: baseResult.planningModel,
+    modelLabel: baseResult.modelLabel,
+    assumptions: baseResult.assumptions,
+    runs: baseResult.runs,
+  })
+}
+
+function findMiddaySlotIndex<T extends { date: string; hour: number; minute?: number }>(
+  slots: T[],
+  date: string,
+): number {
+  return slots.findIndex((slot) => slot.date === date && slot.hour === 12 && (slot.minute ?? 0) === 0)
 }
 
 const ALLOCATION_SCENE_NODE_LAYOUT: Record<FlowNodeKey, {
@@ -1124,7 +1238,7 @@ const ALLOCATION_SCENE_NODE_LAYOUT: Record<FlowNodeKey, {
     eyebrow: 'Shifted energy',
   },
   home: {
-    left: '82%',
+    left: '80%',
     top: '52%',
     label: 'Household load',
     eyebrow: 'Delivered destination',
@@ -1161,7 +1275,7 @@ function AllocationSceneNode({
   const iconSize = isHero ? 'h-6 w-6' : 'h-5 w-5'
   const shellSize = isHero ? 'h-[96px] w-[96px]' : 'h-[86px] w-[86px]'
   const primaryMetric = metrics[0]
-  const secondaryMetrics = metrics.slice(1, isHero ? 5 : 3)
+  const gridMetrics = node === 'grid' ? metrics.slice(0, 2) : []
 
   return (
     <div
@@ -1190,42 +1304,21 @@ function AllocationSceneNode({
           <div className="flex items-center justify-center" style={{ color: iconMeta.text }}>
             <Icon className={iconSize} />
           </div>
-          {primaryMetric ? (
+          {node === 'grid' && gridMetrics.length > 0 ? (
+            <div className="mt-1 space-y-0.5">
+              {gridMetrics.map((metric) => (
+                <p key={metric.label} className="flex items-center justify-center gap-1 text-[10px] font-bold tabular-nums text-slate-900">
+                  <span style={{ color: metric.color }}>{metric.label}</span>
+                  <span>{metric.value}</span>
+                </p>
+              ))}
+            </div>
+          ) : primaryMetric ? (
             <p className="mt-1 max-w-[84%] truncate text-[13px] font-bold tabular-nums text-slate-900">
               {primaryMetric.value}
             </p>
           ) : null}
         </div>
-        {secondaryMetrics.length > 0 ? (
-          <div className={cn('mt-1.5 space-y-0.5 text-center', isHero ? 'w-[180px]' : 'w-[150px]')}>
-            {secondaryMetrics.map((metric) => {
-              const row = (
-                <div className="flex items-center justify-center gap-1.5">
-                  <span className="flex min-w-0 items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.10em] text-slate-400">
-                    <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: metric.color }} />
-                    <span className="truncate">{metric.label}</span>
-                  </span>
-                  <span className="shrink-0 text-[11px] font-bold tabular-nums text-slate-900">{metric.value}</span>
-                </div>
-              )
-
-              if (!metric.tooltip) return <div key={`${node}-${metric.label}`}>{row}</div>
-
-              return (
-                <Tooltip key={`${node}-${metric.label}`}>
-                  <TooltipTrigger asChild>
-                    <button type="button" className="block w-full rounded-lg transition-colors hover:bg-white/70">
-                      {row}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-[280px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
-                    {metric.tooltip}
-                  </TooltipContent>
-                </Tooltip>
-              )
-            })}
-          </div>
-        ) : null}
       </div>
     </div>
   )
@@ -1255,6 +1348,15 @@ function AllocationSceneLane({
   speedSeconds?: number
 }) {
   const dotCount = Math.max(2, Math.min(3, Math.round(width / 5)))
+  const labelText = labelDetail ?? label ?? ''
+  const labelWidth = Math.max(112, Math.min(156, (labelText.length * 7.5) + 34))
+  const labelLeft = labelAnchor === 'end'
+    ? labelX === undefined ? 0 : labelX - labelWidth
+    : labelAnchor === 'middle'
+      ? labelX === undefined ? 0 : labelX - (labelWidth / 2)
+      : labelX ?? 0
+  const labelDotX = labelLeft + 14
+  const labelTextX = labelLeft + 24
 
   return (
     <>
@@ -1273,6 +1375,7 @@ function AllocationSceneLane({
         strokeWidth={width}
         strokeLinecap="round"
         strokeLinejoin="round"
+        markerEnd="url(#allocation-flow-arrow)"
       />
       <path
         d={path}
@@ -1312,22 +1415,22 @@ function AllocationSceneLane({
       {label && labelX !== undefined && labelY !== undefined ? (
         <g>
           <rect
-            x={labelAnchor === 'end' ? labelX - 112 : labelAnchor === 'middle' ? labelX - 56 : labelX}
+            x={labelLeft}
             y={labelY - 15}
-            width="112"
+            width={labelWidth}
             height="30"
             rx="15"
             fill="rgba(255,255,255,0.94)"
             stroke="rgba(100,116,139,0.30)"
           />
           <circle
-            cx={labelAnchor === 'end' ? labelX - 98 : labelAnchor === 'middle' ? labelX - 42 : labelX + 14}
+            cx={labelDotX}
             cy={labelY}
             r="4"
             fill={color}
           />
           <text
-            x={labelAnchor === 'end' ? labelX - 88 : labelAnchor === 'middle' ? labelX - 32 : labelX + 24}
+            x={labelTextX}
             y={labelY}
             textAnchor="start"
             dominantBaseline="middle"
@@ -1348,6 +1451,7 @@ function DeliveredAllocationScene({
   stats,
   setup,
   units,
+  timeline,
 }: {
   visibleBuckets: AllocationBucket[]
   showExportBucket: boolean
@@ -1364,6 +1468,7 @@ function DeliveredAllocationScene({
     usableKwh: number
   }
   units: ReturnType<typeof getPriceUnits>
+  timeline?: ReactNode
 }) {
   const exportSharePct = (stats.exportKwh / Math.max(stats.deliveredLoadKwh, 1e-6)) * 100
   const maxSharePct = Math.max(
@@ -1374,7 +1479,7 @@ function DeliveredAllocationScene({
   const bucketByKey = new Map(visibleBuckets.map((bucket) => [bucket.key, bucket]))
   const makeBucketMetric = (bucket: AllocationBucket): AllocationNodeMetric => ({
     label: bucket.shortLabel,
-    value: `${Math.round(bucket.kwh).toLocaleString()} kWh`,
+    value: formatSceneKwh(bucket.kwh),
     color: bucket.color,
     tooltip: (
       <div className="space-y-1.5">
@@ -1396,34 +1501,6 @@ function DeliveredAllocationScene({
   const pvDirectBucket = bucketByKey.get('pvDirect')
   if (pvDirectBucket) pvMetrics.push(makeBucketMetric(pvDirectBucket))
 
-  const gridExportMetrics: AllocationNodeMetric[] = []
-  if (showExportBucket && stats.directExportKwh > 1e-6) {
-    gridExportMetrics.push({
-      label: 'PV export',
-      value: `${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
-      color: ALLOCATION_FLOW_COLORS.pvExport,
-      tooltip: (
-        <div className="space-y-1.5">
-          <p className="font-medium text-slate-900">Direct PV feed-in at the shared grid connection.</p>
-          <p>Part of total export revenue: +{units.currencySym}{stats.exportRevenueEur.toFixed(0)}</p>
-        </div>
-      ),
-    })
-  }
-  if (showExportBucket && stats.batteryExportKwh > 1e-6) {
-    gridExportMetrics.push({
-      label: 'Battery export',
-      value: `${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
-      color: ALLOCATION_FLOW_COLORS.batteryExport,
-      tooltip: (
-        <div className="space-y-1.5">
-          <p className="font-medium text-slate-900">Battery feed-in at the shared grid connection.</p>
-          <p>Kept distinct from direct PV export because it can occur at different prices.</p>
-        </div>
-      ),
-    })
-  }
-
   const batteryMetrics: AllocationNodeMetric[] = []
   if (setup.usableKwh > 0) {
     batteryMetrics.push({
@@ -1437,20 +1514,29 @@ function DeliveredAllocationScene({
   if (pvStoredBucket) batteryMetrics.push(makeBucketMetric(pvStoredBucket))
   if (gridStoredBucket) batteryMetrics.push(makeBucketMetric(gridStoredBucket))
 
+  const gridImportKwh =
+    (bucketByKey.get('gridDirect')?.kwh ?? 0) +
+    (bucketByKey.get('gridStored')?.kwh ?? 0)
+
   const nodeMetrics: Record<FlowNodeKey, AllocationNodeMetric[]> = {
     grid: [
-      ...[
-        bucketByKey.get('gridDirect'),
-        bucketByKey.get('gridStored'),
-      ].filter((bucket): bucket is AllocationBucket => Boolean(bucket)).map(makeBucketMetric),
-      ...gridExportMetrics,
+      {
+        label: '->',
+        value: formatSceneKwh(gridImportKwh),
+        color: ALLOCATION_FLOW_COLORS.gridDirect,
+      },
+      {
+        label: '<-',
+        value: formatSceneKwh(showExportBucket ? stats.exportKwh : 0),
+        color: ALLOCATION_FLOW_COLORS.pvExport,
+      },
     ],
     pv: pvMetrics,
     battery: batteryMetrics,
     home: [
       {
         label: 'Served load',
-        value: `${Math.round(stats.deliveredLoadKwh).toLocaleString()} kWh`,
+        value: formatSceneKwh(stats.deliveredLoadKwh),
         color: ALLOCATION_FLOW_COLORS.household,
       },
       ...visibleBuckets.map((bucket) => ({
@@ -1460,7 +1546,7 @@ function DeliveredAllocationScene({
         tooltip: (
           <div className="space-y-1.5">
             <p className="font-medium text-slate-900">{bucket.label}</p>
-            <p>{Math.round(bucket.kwh).toLocaleString()} kWh delivered to household load.</p>
+            <p>{formatSceneKwh(bucket.kwh)} delivered to household load.</p>
             <p>Unit cost: {bucket.unitCostCtKwh.toFixed(2)} {units.priceUnit}</p>
           </div>
         ),
@@ -1470,11 +1556,11 @@ function DeliveredAllocationScene({
 
   const laneSpecs: AllocationSceneLaneSpec[] = visibleBuckets.flatMap((bucket) => {
     const laneWidth = getAllocationSceneWidth(bucket.sharePct, maxSharePct)
-    const laneKwh = `${Math.round(bucket.kwh).toLocaleString()} kWh`
+    const laneKwh = formatSceneKwh(bucket.kwh)
     if (bucket.key === 'gridDirect') {
       return [{
         key: bucket.key,
-        path: 'M194 292 L742 292',
+        path: 'M228 292 L704 292',
         color: bucket.color,
         width: laneWidth,
         label: laneKwh,
@@ -1485,11 +1571,11 @@ function DeliveredAllocationScene({
     if (bucket.key === 'pvDirect') {
       return [{
         key: bucket.key,
-        path: 'M532 150 C602 230 676 252 742 252',
+        path: 'M532 150 C596 226 646 252 704 252',
         color: bucket.color,
         width: laneWidth,
         label: laneKwh,
-        labelX: 646,
+        labelX: 626,
         labelY: 218,
       }]
     }
@@ -1500,23 +1586,35 @@ function DeliveredAllocationScene({
           path: 'M500 166 L500 390',
           color: bucket.color,
           width: laneWidth,
-          label: laneKwh,
-          labelX: 520,
-          labelY: 285,
-          labelAnchor: 'start',
         },
-        { key: `${bucket.key}-serve`, path: 'M540 412 C610 350 690 332 742 332', color: bucket.color, width: laneWidth },
+        {
+          key: `${bucket.key}-serve`,
+          path: 'M540 412 C604 350 652 332 704 332',
+          color: bucket.color,
+          width: laneWidth,
+          label: laneKwh,
+          labelX: 642,
+          labelY: 316,
+        },
       ]
     }
     return [
-      { key: `${bucket.key}-charge`, path: 'M194 318 C302 318 356 390 458 414', color: bucket.color, width: laneWidth },
       {
-        key: `${bucket.key}-serve`,
-        path: 'M540 438 C620 384 704 370 742 370',
+        key: `${bucket.key}-charge`,
+        path: 'M228 318 C318 318 370 390 458 414',
         color: bucket.color,
         width: laneWidth,
         label: laneKwh,
-        labelX: 650,
+        labelX: 340,
+        labelY: 350,
+      },
+      {
+        key: `${bucket.key}-serve`,
+        path: 'M540 438 C610 384 656 370 704 370',
+        color: bucket.color,
+        width: laneWidth,
+        label: laneKwh,
+        labelX: 632,
         labelY: 402,
       },
     ]
@@ -1539,24 +1637,24 @@ function DeliveredAllocationScene({
     if (stats.directExportKwh > 1e-6) {
       laneSpecs.push({
         key: 'pv-export',
-        path: 'M470 150 C432 222 322 250 194 266',
+        path: 'M470 150 C432 222 332 250 228 266',
         color: ALLOCATION_FLOW_COLORS.pvExport,
         width: getAllocationSceneWidth(directExportSharePct, maxSharePct),
         striped: true,
-        label: `${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
-        labelX: 330,
+        label: formatSceneKwh(stats.directExportKwh),
+        labelX: 346,
         labelY: 222,
       })
     }
     if (stats.batteryExportKwh > 1e-6) {
       laneSpecs.push({
         key: 'battery-export',
-        path: 'M458 438 C354 414 302 338 194 338',
+        path: 'M458 438 C354 414 318 338 228 338',
         color: ALLOCATION_FLOW_COLORS.batteryExport,
         width: getAllocationSceneWidth(batteryExportSharePct, maxSharePct),
         striped: true,
-        label: `${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
-        labelX: 326,
+        label: formatSceneKwh(stats.batteryExportKwh),
+        labelX: 340,
         labelY: 380,
       })
     }
@@ -1578,42 +1676,51 @@ function DeliveredAllocationScene({
   }
 
   return (
-    <div className="mt-5">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Flow allocation scene</p>
-          <p className="mt-1 text-sm font-semibold text-slate-900">Household intake on the right stays separate from the grid connection that handles both import and export.</p>
-        </div>
-      </div>
-
-      <div className="mt-4 hidden overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(180deg,#fdfdfd_0%,#f6f8fb_100%)] md:block">
-        <div className="relative aspect-[16/9]">
-          <svg viewBox="0 0 1000 560" className="h-full w-full" aria-hidden="true">
+    <div>
+      <div className="hidden overflow-hidden bg-white md:block">
+        {timeline}
+        <div className="relative aspect-[2/1]">
+          <svg viewBox="0 40 1000 500" className="h-full w-full" aria-hidden="true">
             <defs>
-              <linearGradient id="allocation-scene-sky" x1="0" y1="0" x2="1" y2="1">
-                <stop offset="0%" stopColor="#FFFFFF" />
-                <stop offset="100%" stopColor="#F0F4FA" />
-              </linearGradient>
+              <marker
+                id="allocation-flow-arrow"
+                viewBox="0 0 12 12"
+                markerWidth="3.4"
+                markerHeight="3.4"
+                refX="10"
+                refY="6"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path
+                  d="M2 2.5 L9.5 6 L2 9.5"
+                  fill="none"
+                  stroke="context-stroke"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </marker>
             </defs>
-            <rect x="0" y="0" width="1000" height="560" fill="url(#allocation-scene-sky)" />
+            <rect x="0" y="40" width="1000" height="500" fill="#FFFFFF" />
             <path d="M150 292 L790 292" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
             <path d="M500 118 L500 442" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
-            <path d="M470 150 C432 222 322 250 194 266" fill="none" stroke="rgba(103,183,209,0.12)" strokeWidth="1" />
-            <path d="M532 150 C602 230 676 252 742 252" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
-            <path d="M458 438 C354 414 302 338 194 338" fill="none" stroke="rgba(47,111,179,0.10)" strokeWidth="1" />
-            <path d="M540 438 C620 384 704 370 742 370" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
-            <rect x="180" y="244" width="28" height="116" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(148,163,184,0.24)" />
+            <path d="M470 150 C432 222 332 250 228 266" fill="none" stroke="rgba(214,176,75,0.14)" strokeWidth="1" />
+            <path d="M532 150 C596 226 646 252 704 252" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <path d="M458 438 C354 414 318 338 228 338" fill="none" stroke="rgba(47,111,179,0.10)" strokeWidth="1" />
+            <path d="M540 438 C610 384 656 370 704 370" fill="none" stroke="rgba(148,163,184,0.08)" strokeWidth="1" />
+            <rect x="214" y="244" width="28" height="116" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(148,163,184,0.24)" />
             {[266, 292, 318, 338].map((portY) => (
-              <circle key={`allocation-grid-port-${portY}`} cx="194" cy={portY} r="4.5" fill="rgba(148,163,184,0.34)" />
+              <circle key={`allocation-grid-port-${portY}`} cx="228" cy={portY} r="4.5" fill="rgba(148,163,184,0.34)" />
             ))}
-            <path d="M162 292 L180 292" fill="none" stroke="rgba(71,85,105,0.30)" strokeWidth="10" strokeLinecap="round" />
-            <path d="M162 292 L180 292" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2" strokeLinecap="round" />
-            <rect x="728" y="230" width="28" height="162" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(148,163,184,0.24)" />
+            <path d="M206 292 L214 292" fill="none" stroke="rgba(71,85,105,0.30)" strokeWidth="10" strokeLinecap="round" />
+            <path d="M206 292 L214 292" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2" strokeLinecap="round" />
+            <rect x="690" y="230" width="28" height="162" rx="14" fill="rgba(255,255,255,0.78)" stroke="rgba(148,163,184,0.24)" />
             {[252, 292, 332, 370].map((portY) => (
-              <circle key={`allocation-intake-port-${portY}`} cx="742" cy={portY} r="4.5" fill="rgba(148,163,184,0.34)" />
+              <circle key={`allocation-intake-port-${portY}`} cx="704" cy={portY} r="4.5" fill="rgba(148,163,184,0.34)" />
             ))}
-            <path d="M756 292 L774 292" fill="none" stroke="rgba(71,85,105,0.30)" strokeWidth="10" strokeLinecap="round" />
-            <path d="M756 292 L774 292" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2" strokeLinecap="round" />
+            <path d="M718 292 L736 292" fill="none" stroke="rgba(71,85,105,0.30)" strokeWidth="10" strokeLinecap="round" />
+            <path d="M718 292 L736 292" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2" strokeLinecap="round" />
             {laneSpecs.map((lane) => (
               <AllocationSceneLane
                 key={lane.key}
@@ -1622,6 +1729,7 @@ function DeliveredAllocationScene({
                 width={lane.width}
                 striped={lane.striped}
                 label={lane.label}
+                labelDetail={lane.labelDetail}
                 labelX={lane.labelX}
                 labelY={lane.labelY}
                 labelAnchor={lane.labelAnchor}
@@ -1644,6 +1752,7 @@ function DeliveredAllocationScene({
       </div>
 
       <div className="mt-4 grid gap-3 md:hidden">
+        {timeline}
         {mobileEntries.map((entry) => (
           <Tooltip key={entry.key}>
             <TooltipTrigger asChild>
@@ -1675,7 +1784,7 @@ function DeliveredAllocationScene({
                   </div>
                   <span className="text-[11px] font-semibold tabular-nums text-slate-600">{entry.sharePct.toFixed(1)}%</span>
                 </div>
-                <p className="mt-2 text-[11px] tabular-nums text-slate-500">{Math.round(entry.kwh).toLocaleString()} kWh annual flow</p>
+                <p className="mt-2 text-[11px] tabular-nums text-slate-500">{formatSceneKwh(entry.kwh)} modeled flow</p>
               </button>
             </TooltipTrigger>
             <TooltipContent side="top" className="max-w-[260px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
@@ -1706,6 +1815,9 @@ function DeliveredAllocationCard({
   isBatterySelected,
   pvCapacityWp,
   usableKwh,
+  title = 'Delivered allocation',
+  controls,
+  timeline,
 }: {
   annual: PvBatteryAnnualResult
   units: ReturnType<typeof getPriceUnits>
@@ -1714,6 +1826,9 @@ function DeliveredAllocationCard({
   isBatterySelected: boolean
   pvCapacityWp: number
   usableKwh: number
+  title?: string
+  controls?: ReactNode
+  timeline?: ReactNode
 }) {
   const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>('volume')
   const [volumeMode, setVolumeMode] = useState<AllocationVolumeMode>('abs')
@@ -1725,10 +1840,16 @@ function DeliveredAllocationCard({
       acc.pvDirectKwh += slot.pvToLoadKwh
       acc.pvStoredKwh += slot.batteryPvToLoadKwh
       acc.gridStoredKwh += slot.batteryGridToLoadKwh
+      acc.batteryPvExportKwh += slot.batteryPvExportKwh
+      acc.batteryGridExportKwh += slot.batteryGridExportKwh
       acc.baselineCostEur += slot.baselineCostEur
       acc.exportRevenueEur += slot.exportRevenueEur
       acc.directExportRevenueEur += (slot.directExportKwh * slot.exportPriceCtKwh) / 100
       acc.batteryExportRevenueEur += (slot.batteryExportKwh * slot.exportPriceCtKwh) / 100
+      acc.batteryPvExportRevenueEur += (slot.batteryPvExportKwh * slot.exportPriceCtKwh) / 100
+      acc.batteryGridExportRevenueEur += (slot.batteryGridExportKwh * slot.exportPriceCtKwh) / 100
+      acc.batteryPvExportNetEur += asFinite(slot.batteryPvExportSavingsEur, 0)
+      acc.batteryGridExportNetEur += asFinite(slot.batteryGridExportSavingsEur, 0)
       acc.gridDirectCostEur += (slot.gridToLoadKwh * slot.importPriceCtKwh) / 100
       acc.gridStoredInputCostEur += asFinite(slot.batteryGridLoadInputCostEur, 0)
       return acc
@@ -1737,10 +1858,16 @@ function DeliveredAllocationCard({
       pvDirectKwh: 0,
       pvStoredKwh: 0,
       gridStoredKwh: 0,
+      batteryPvExportKwh: 0,
+      batteryGridExportKwh: 0,
       baselineCostEur: 0,
       exportRevenueEur: 0,
       directExportRevenueEur: 0,
       batteryExportRevenueEur: 0,
+      batteryPvExportRevenueEur: 0,
+      batteryGridExportRevenueEur: 0,
+      batteryPvExportNetEur: 0,
+      batteryGridExportNetEur: 0,
       gridDirectCostEur: 0,
       gridStoredInputCostEur: 0,
     })
@@ -1760,6 +1887,15 @@ function DeliveredAllocationCard({
     const exportAvgCt = exportKwh > 0 ? (totals.exportRevenueEur * 100) / exportKwh : 0
     const directExportAvgCt = annual.directExportKwh > 0 ? (totals.directExportRevenueEur * 100) / annual.directExportKwh : 0
     const batteryExportAvgCt = annual.batteryExportKwh > 0 ? (totals.batteryExportRevenueEur * 100) / annual.batteryExportKwh : 0
+    const batteryPvExportAvgCt = totals.batteryPvExportKwh > 0 ? (totals.batteryPvExportRevenueEur * 100) / totals.batteryPvExportKwh : 0
+    const batteryGridExportGrossAvgCt = totals.batteryGridExportKwh > 0 ? (totals.batteryGridExportRevenueEur * 100) / totals.batteryGridExportKwh : 0
+    const batteryPvExportNetAvgCt = totals.batteryPvExportKwh > 0 ? (totals.batteryPvExportNetEur * 100) / totals.batteryPvExportKwh : 0
+    const batteryGridExportNetAvgCt = totals.batteryGridExportKwh > 0 ? (totals.batteryGridExportNetEur * 100) / totals.batteryGridExportKwh : 0
+    const batteryGridExportChargeCostEur = totals.batteryGridExportRevenueEur - totals.batteryGridExportNetEur
+    const netExportCreditEur =
+      totals.directExportRevenueEur +
+      totals.batteryPvExportRevenueEur +
+      totals.batteryGridExportNetEur
 
     const buckets: AllocationBucket[] = [
       {
@@ -1840,10 +1976,22 @@ function DeliveredAllocationCard({
       exportKwh,
       directExportKwh: annual.directExportKwh,
       batteryExportKwh: annual.batteryExportKwh,
+      batteryPvExportKwh: totals.batteryPvExportKwh,
+      batteryGridExportKwh: totals.batteryGridExportKwh,
       directExportAvgCt,
       batteryExportAvgCt,
+      batteryPvExportAvgCt,
+      batteryGridExportGrossAvgCt,
+      batteryPvExportNetAvgCt,
+      batteryGridExportNetAvgCt,
+      batteryPvExportRevenueEur: totals.batteryPvExportRevenueEur,
+      batteryGridExportRevenueEur: totals.batteryGridExportRevenueEur,
+      batteryPvExportNetEur: totals.batteryPvExportNetEur,
+      batteryGridExportNetEur: totals.batteryGridExportNetEur,
+      batteryGridExportChargeCostEur,
       exportAvgCt,
-      exportCreditCtEquivalent: totals.exportRevenueEur > 0 ? (totals.exportRevenueEur * 100) / safeLoadKwh : 0,
+      netExportCreditEur,
+      exportCreditCtEquivalent: netExportCreditEur > 0 ? (netExportCreditEur * 100) / safeLoadKwh : 0,
       overallNetEquivalentCt: (annual.netCostEur * 100) / safeLoadKwh,
       overallNetCostEur: annual.netCostEur,
     }
@@ -1905,7 +2053,7 @@ function DeliveredAllocationCard({
           priceCtKwh: bucket.unitCostCtKwh,
           braceLabel: formatBracePriceLabel(bucket.unitCostCtKwh, units.priceUnit),
           braceDetailLabel: formatBraceDetailLabel(bucket.totalCostEur, volumeMode === 'share' ? bucket.sharePct : null, volumeMode, units),
-          fillSegments: [{ color: bucket.color, ratio: 1 }],
+          fillSegments: [getAllocationFillSegment(bucket)],
           footerLines: [],
           startValue: running,
           endValue: running + basisValue,
@@ -1930,7 +2078,8 @@ function DeliveredAllocationCard({
 
       if (showExportBucket) {
         const directExportRatio = stats.exportKwh > 0 ? stats.directExportKwh / stats.exportKwh : 0
-        const batteryExportRatio = stats.exportKwh > 0 ? stats.batteryExportKwh / stats.exportKwh : 0
+        const batteryPvExportRatio = stats.exportKwh > 0 ? stats.batteryPvExportKwh / stats.exportKwh : 0
+        const batteryGridExportRatio = stats.exportKwh > 0 ? stats.batteryGridExportKwh / stats.exportKwh : 0
         columns.push({
           key: 'export',
           shortLabel: 'Export',
@@ -1939,29 +2088,47 @@ function DeliveredAllocationCard({
           color: ALLOCATION_FLOW_COLORS.pvExport,
           priceCtKwh: stats.exportAvgCt,
           braceDetailLabel: volumeMode === 'share'
-            ? `${formatSignedCurrency(-stats.exportRevenueEur, units.currencySym)} / ${exportBasisValue.toFixed(1)}%`
-            : formatSignedCurrency(-stats.exportRevenueEur, units.currencySym),
+            ? `${formatSignedCurrency(stats.netExportCreditEur, units.currencySym)} net credit / ${exportBasisValue.toFixed(1)}%`
+            : `${formatSignedCurrency(stats.netExportCreditEur, units.currencySym)} net credit`,
           fillSegments: [
             { color: ALLOCATION_FLOW_COLORS.pvExport, ratio: directExportRatio },
-            { color: ALLOCATION_FLOW_COLORS.batteryExport, ratio: batteryExportRatio },
+            {
+              color: ALLOCATION_FLOW_COLORS.batteryPvExport,
+              ratio: batteryPvExportRatio,
+              striped: true,
+              stripeColor: 'rgba(47,111,179,0.42)',
+            },
+            {
+              color: ALLOCATION_FLOW_COLORS.batteryGridExport,
+              ratio: batteryGridExportRatio,
+              striped: true,
+              stripeColor: 'rgba(47,111,179,0.58)',
+            },
           ],
           segmentBraces: [
             {
               color: ALLOCATION_FLOW_COLORS.pvExport,
               label: `${stats.directExportAvgCt.toFixed(2)} ${units.priceUnit}`,
-              detailLabel: `PV · ${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
+              detailLabel: `Direct PV · ${formatSceneKwh(stats.directExportKwh)}`,
               ratio: directExportRatio,
             },
             {
-              color: ALLOCATION_FLOW_COLORS.batteryExport,
-              label: `${stats.batteryExportAvgCt.toFixed(2)} ${units.priceUnit}`,
-              detailLabel: `Battery · ${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
-              ratio: batteryExportRatio,
+              color: ALLOCATION_FLOW_COLORS.batteryPvExport,
+              label: `${stats.batteryPvExportAvgCt.toFixed(2)} ${units.priceUnit}`,
+              detailLabel: `Battery PV · ${formatSceneKwh(stats.batteryPvExportKwh)}`,
+              ratio: batteryPvExportRatio,
+            },
+            {
+              color: ALLOCATION_FLOW_COLORS.batteryGridExport,
+              label: `${stats.batteryGridExportGrossAvgCt.toFixed(2)} ${units.priceUnit}`,
+              detailLabel: `${formatNetResultLabel(stats.batteryGridExportNetEur, units.currencySym)} · ${formatSceneKwh(stats.batteryGridExportKwh)}`,
+              ratio: batteryGridExportRatio,
             },
           ].filter((segment) => segment.ratio > 1e-6),
           footerLines: [
-            `PV feed-in ${Math.round(stats.directExportKwh).toLocaleString()} kWh`,
-            `Battery feed-in ${Math.round(stats.batteryExportKwh).toLocaleString()} kWh`,
+            `Direct PV feed-in ${formatSceneKwh(stats.directExportKwh)}`,
+            `PV battery feed-in ${formatSceneKwh(stats.batteryPvExportKwh)}`,
+            `Spot battery feed-in ${formatSceneKwh(stats.batteryGridExportKwh)} · ${formatNetResultLabel(stats.batteryGridExportNetEur, units.currencySym)}`,
           ],
           separatorBefore: true,
           totalValue: exportBasisValue,
@@ -1981,7 +2148,7 @@ function DeliveredAllocationCard({
         color: '#CBD5E1',
         priceCtKwh: stats.baselineAvgCt,
         braceLabel: formatBracePriceLabel(stats.baselineAvgCt, units.priceUnit),
-        topBadgeLabel: `${formatMetricValue(stats.baselineCostEur, 'eur', units)} · ${Math.round(stats.deliveredLoadKwh).toLocaleString()} kWh`,
+        topBadgeLabel: `${formatMetricValue(stats.baselineCostEur, 'eur', units)} · ${formatSceneKwh(stats.deliveredLoadKwh)}`,
         topBadgeTone: 'slate',
         fillSegments: [{ color: '#CBD5E1', ratio: 1 }],
         totalValue: baselineValue,
@@ -1995,7 +2162,7 @@ function DeliveredAllocationCard({
         deltaValue: bucket.impactDeltaCtKwh,
         color: bucket.color,
         priceCtKwh: bucket.unitCostCtKwh,
-        fillSegments: [{ color: bucket.color, ratio: 1 }],
+        fillSegments: [getAllocationFillSegment(bucket)],
       }))
 
       for (const column of impactColumns) {
@@ -2030,7 +2197,7 @@ function DeliveredAllocationCard({
         color: ALLOCATION_FLOW_COLORS.household,
         priceCtKwh: stats.grossDeliveredCt,
         braceLabel: formatBracePriceLabel(stats.grossDeliveredCt, units.priceUnit),
-        topBadgeLabel: `${formatMetricValue(stats.grossDeliveredCostEur, 'eur', units)} · ${Math.round(stats.deliveredLoadKwh).toLocaleString()} kWh`,
+        topBadgeLabel: `${formatMetricValue(stats.grossDeliveredCostEur, 'eur', units)} · ${formatSceneKwh(stats.deliveredLoadKwh)}`,
         topBadgeTone: 'neutral',
         fillSegments: [{ color: ALLOCATION_FLOW_COLORS.household, ratio: 1 }],
         totalValue: running,
@@ -2045,7 +2212,7 @@ function DeliveredAllocationCard({
         color: '#0F766E',
         priceCtKwh: stats.overallNetEquivalentCt,
         braceLabel: formatBracePriceLabel(stats.overallNetEquivalentCt, units.priceUnit),
-        topBadgeLabel: `Export credit -${units.currencySym}${stats.exportRevenueEur.toFixed(0)}`,
+        topBadgeLabel: `Export credit -${units.currencySym}${stats.netExportCreditEur.toFixed(0)} net`,
         topBadgeTone: 'sky',
         fillSegments: [{ color: '#0F766E', ratio: 1 }],
         separatorBefore: true,
@@ -2081,55 +2248,89 @@ function DeliveredAllocationCard({
 
   const usesBridgeBraceLabels = displayMode === 'volume'
   const chartHeightPx = 420
+  const minBraceHeightPct = 2.6
+  const graphControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <SegmentedPillGroup
+        options={[
+          {
+            label: 'Volume',
+            active: displayMode === 'volume',
+            onClick: () => setDisplayMode('volume'),
+          },
+          {
+            label: 'Price',
+            active: displayMode === 'impact',
+            onClick: () => setDisplayMode('impact'),
+          },
+        ]}
+      />
+      {displayMode === 'volume' ? (
+        <SegmentedPillGroup
+          options={[
+            {
+              label: 'Abs. kWh',
+              active: volumeMode === 'abs',
+              onClick: () => setVolumeMode('abs'),
+            },
+            {
+              label: '%',
+              active: volumeMode === 'share',
+              onClick: () => setVolumeMode('share'),
+            },
+          ]}
+        />
+      ) : null}
+    </div>
+  )
 
   return (
-    <Card className="border-gray-200/80 bg-white shadow-sm">
-      <CardContent className="p-0">
-        <div className="border-b border-gray-100 px-5 py-5 sm:px-7">
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Cost Allocation</p>
-              <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">{chartSeries.title}</p>
-              <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                {getMetricAxisLabel(chartMetric, units)}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 pt-1 xl:justify-end">
-              <SegmentedPillGroup
-                options={[
-                  {
-                    label: 'Volume',
-                    active: displayMode === 'volume',
-                    onClick: () => setDisplayMode('volume'),
-                  },
-                  {
-                    label: 'Price',
-                    active: displayMode === 'impact',
-                    onClick: () => setDisplayMode('impact'),
-                  },
-                ]}
-              />
-              {displayMode === 'volume' ? (
-                <SegmentedPillGroup
-                  options={[
-                    {
-                      label: 'Abs. kWh',
-                      active: volumeMode === 'abs',
-                      onClick: () => setVolumeMode('abs'),
-                    },
-                    {
-                      label: '%',
-                      active: volumeMode === 'share',
-                      onClick: () => setVolumeMode('share'),
-                    },
-                  ]}
-                />
-              ) : null}
+    <div className="space-y-4">
+      <Card className="border-gray-200/80 bg-white shadow-sm">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-5 sm:px-7">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <p className="text-[24px] font-semibold tracking-tight text-slate-900">{title}</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1 xl:justify-end">
+                {controls}
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="px-4 pb-5 pt-5 sm:px-6">
+          <div className="px-4 pb-5 pt-4 sm:px-6">
+            <DeliveredAllocationScene
+              visibleBuckets={visibleBuckets}
+              showExportBucket={showExportBucket}
+              stats={stats}
+              setup={{
+                pvCapacityWp,
+                usableKwh,
+              }}
+              units={units}
+              timeline={timeline}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-gray-200/80 bg-white shadow-sm">
+        <CardContent className="p-0">
+          <div className="border-b border-gray-100 px-5 py-5 sm:px-7">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <p className="text-[20px] font-semibold tracking-tight text-slate-900">Household Consumption Breakdown</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1 xl:justify-end">
+                {graphControls}
+                {controls}
+              </div>
+            </div>
+          </div>
+
+          <div className="px-4 pb-5 pt-12 sm:px-6">
+
           <div className="grid grid-cols-[58px_minmax(0,1fr)] items-start gap-3">
             <div className="relative" style={{ height: `${chartHeightPx}px` }}>
               {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
@@ -2254,7 +2455,7 @@ function DeliveredAllocationCard({
                           const showExternalPrice = false
                           const showBridgeBraceLabel = usesBridgeBraceLabels && Boolean(column.braceLabel)
                           const segmentBraces = usesBridgeBraceLabels ? column.segmentBraces ?? [] : []
-                          const braceHeightPct = Math.min(Math.max(barHeightPct, 5.5), 100)
+                          const braceHeightPct = Math.min(Math.max(barHeightPct, minBraceHeightPct), 100)
                           const braceMidPct = (lowPct + highPct) / 2
                           const braceBottomPct = Math.max(Math.min(braceMidPct - (braceHeightPct / 2), 100 - braceHeightPct), 0)
                           const hasRightBraceRail = showBridgeBraceLabel || segmentBraces.length > 0
@@ -2348,7 +2549,7 @@ function DeliveredAllocationCard({
                               </div>
                             ) : null}
                             {segmentBraces.map((segment, segmentIndex) => {
-                              const segmentHeightPct = Math.max(segment.ratio * barHeightPct, 5.5)
+                              const segmentHeightPct = Math.max(segment.ratio * barHeightPct, minBraceHeightPct)
                               const segmentBottomPct = lowPct + (segmentBraceOffsetPct * barHeightPct)
                               segmentBraceOffsetPct += segment.ratio
 
@@ -2442,7 +2643,7 @@ function DeliveredAllocationCard({
                                       const style = {
                                         bottom: `${segmentOffset}%`,
                                         height: `${segmentHeight}%`,
-                                        background: segment.striped ? stripedFill(segment.color) : segment.color,
+                                        background: segment.striped ? stripedFill(segment.color, segment.stripeColor) : segment.color,
                                         opacity: 0.98,
                                       }
                                       segmentOffset += segmentHeight
@@ -2526,19 +2727,10 @@ function DeliveredAllocationCard({
             </div>
           </div>
 
-          <DeliveredAllocationScene
-            visibleBuckets={visibleBuckets}
-            showExportBucket={showExportBucket}
-            stats={stats}
-            setup={{
-              pvCapacityWp,
-              usableKwh,
-            }}
-            units={units}
-          />
-        </div>
-      </CardContent>
-    </Card>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -2546,9 +2738,7 @@ function normalizeCalculatorState(
   state: CalculatorState,
   availableYears: number[],
 ): CalculatorState {
-  const loadProfileId = isAllowedDeLoadProfile(state.loadProfileId)
-    ? state.loadProfileId
-    : getDefaultCalculatorLoadProfileId(state.country)
+  const loadProfileId = getDefaultCalculatorLoadProfileId(state.country)
 
   const availableTariffs = new Set(getTariffsFor(state.country).map((tariff) => tariff.id))
   const tariffId = availableTariffs.has(state.tariffId)
@@ -2560,13 +2750,15 @@ function normalizeCalculatorState(
     : availableYears[0]
   const usableKwh = clamp(state.usableKwh, 0, 20)
   const initialSocKwh = clamp(state.initialSocKwh, 0, usableKwh)
+  const feedInCapKw = 5
 
   if (
     year === state.year &&
     loadProfileId === state.loadProfileId &&
     tariffId === state.tariffId &&
     usableKwh === state.usableKwh &&
-    initialSocKwh === state.initialSocKwh
+    initialSocKwh === state.initialSocKwh &&
+    feedInCapKw === state.feedInCapKw
   ) {
     return state
   }
@@ -2578,6 +2770,7 @@ function normalizeCalculatorState(
     tariffId,
     usableKwh,
     initialSocKwh,
+    feedInCapKw,
   }
 }
 
@@ -2827,6 +3020,10 @@ function PvBatteryCalculatorInner() {
     [searchParamsString],
   )
   const [draftState, setDraftState] = useState<CalculatorState>(initialState)
+  const [allocationWindow, setAllocationWindow] = useState<'day' | 'last365'>('day')
+  const [allocationDayView, setAllocationDayView] = useState<'quarterHour' | 'fullDay'>('fullDay')
+  const [selectedAllocationTimestamp, setSelectedAllocationTimestamp] = useState<number | null>(null)
+  const [isAllocationTimelapsePlaying, setIsAllocationTimelapsePlaying] = useState(false)
 
   useEffect(() => {
     lastSyncedQueryRef.current = searchParamsString
@@ -2850,16 +3047,21 @@ function PvBatteryCalculatorInner() {
     () => normalizeCalculatorState(draftState, availableYears),
     [draftState, availableYears],
   )
+  const [zipInput, setZipInput] = useState(state.pvZipCode)
+  const isZipInputCommitted = zipInput === state.pvZipCode && /^\d{5}$/.test(state.pvZipCode)
+  const rollingInitialSocKwh = state.usableKwh * 0.5
+
+  useEffect(() => {
+    setZipInput(state.pvZipCode)
+  }, [state.pvZipCode])
+
   const deferredState = useDeferredValue(state)
   const effectiveYear = state.year || availableYears[0] || new Date().getUTCFullYear()
 
   const tariffs = useMemo(() => getTariffsFor(CALCULATOR_COUNTRY), [])
-  const loadProfileOptions = useMemo(
-    () => DE_BATTERY_LOAD_PROFILES.filter((profile) => isAllowedDeLoadProfile(profile.id)),
-    [],
-  )
-  const activeLoadProfileId: BatteryLoadProfileId = state.planningModel === 'rolling' ? 'H25' : state.loadProfileId
-  const activeLoadProfileLabel = loadProfileOptions.find((profile) => profile.id === activeLoadProfileId)?.label ?? activeLoadProfileId
+  const activeLoadProfileId: BatteryLoadProfileId = 'H25'
+  const activeLoadProfile = DE_BATTERY_LOAD_PROFILES.find((profile) => profile.id === activeLoadProfileId)
+  const activeLoadProfileLabel = activeLoadProfile?.label ?? activeLoadProfileId
   const selectedTariff = tariffs.find((tariff) => tariff.id === state.tariffId)
   const isPvSelected = state.pvCapacityWp > 0
   const isBatterySelected = state.usableKwh > 0
@@ -2868,24 +3070,71 @@ function PvBatteryCalculatorInner() {
     activeLoadProfileId,
     effectiveYear,
   )
+  const selectedDateYear = Number(selectedDate?.slice(0, 4))
+  const selectedDayProfileYear = Number.isFinite(selectedDateYear) ? selectedDateYear : effectiveYear
+  const {
+    loadProfile: selectedDayLoadProfile,
+    pvProfile: selectedDayPvProfile,
+    loading: selectedDayProfilesLoading,
+    error: selectedDayProfilesError,
+  } = useBatteryProfiles(
+    CALCULATOR_COUNTRY,
+    activeLoadProfileId,
+    selectedDayProfileYear,
+  )
   const { data: radiationData, loading: radiationLoading } = usePvRadiation(
     state.pvZipCode || null,
     state.pvCapacityWp / 1000,
   )
-
-  const yearDates = useMemo(() => {
-    return prices.daily
-      .filter((day) => day.date.slice(0, 4) === String(effectiveYear))
-      .filter((day) => !prices.lastRealDate || day.date <= prices.lastRealDate)
-      .sort((a, b) => a.date.localeCompare(b.date))
-  }, [effectiveYear, prices.daily, prices.lastRealDate])
+  const [tariffComponents, setTariffComponents] = useState<TariffComponentsLookup | null>(null)
+  const [tariffComponentsLoading, setTariffComponentsLoading] = useState(false)
+  const [tariffComponentsError, setTariffComponentsError] = useState<string | null>(null)
 
   useEffect(() => {
-    const latestDate = yearDates[yearDates.length - 1]?.date
+    if (!/^\d{5}$/.test(state.pvZipCode)) {
+      setTariffComponents(null)
+      setTariffComponentsLoading(false)
+      setTariffComponentsError(null)
+      return
+    }
+
+    const controller = new AbortController()
+    setTariffComponentsLoading(true)
+    setTariffComponentsError(null)
+
+    fetch(`/api/tariff-components?plz=${state.pvZipCode}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Tariff lookup failed (${response.status})`)
+        return response.json() as Promise<TariffComponentsLookup>
+      })
+      .then((data) => {
+        setTariffComponents(data)
+        setTariffComponentsError(null)
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+        setTariffComponents(null)
+        setTariffComponentsError(error instanceof Error ? error.message : 'Tariff lookup failed')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setTariffComponentsLoading(false)
+      })
+
+    return () => controller.abort()
+  }, [state.pvZipCode])
+
+  const selectedDateOptions = useMemo(() => {
+    return prices.daily
+      .filter((day) => !prices.lastRealDate || day.date <= prices.lastRealDate)
+      .sort((a, b) => a.date.localeCompare(b.date))
+  }, [prices.daily, prices.lastRealDate])
+
+  useEffect(() => {
+    const latestDate = selectedDateOptions[selectedDateOptions.length - 1]?.date
     if (!latestDate) return
-    if (selectedDate && yearDates.some((day) => day.date === selectedDate)) return
+    if (selectedDate && selectedDateOptions.some((day) => day.date === selectedDate)) return
     setSelectedDate(latestDate)
-  }, [selectedDate, setSelectedDate, yearDates])
+  }, [selectedDate, selectedDateOptions, setSelectedDate])
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -2894,17 +3143,18 @@ function PvBatteryCalculatorInner() {
     if (state.year) params.set('year', String(state.year))
     params.set('resolution', state.resolution)
     params.set('hours', String(state.viewHours))
-    params.set('price', state.flowPriceMode)
     params.set('profile', state.loadProfileId)
     params.set('load', String(Math.round(state.annualLoadKwh)))
     params.set('pv', String(Math.round(state.pvCapacityWp)))
     if (state.pvZipCode) params.set('pvzip', state.pvZipCode)
+    params.set('batteryMode', state.batteryConnectionMode)
     params.set('battery', String(state.usableKwh))
-    params.set('soc', String(Number(state.initialSocKwh.toFixed(2))))
+    params.set('soc', String(Number(rollingInitialSocKwh.toFixed(2))))
     params.set('charge', String(state.maxChargeKw))
     params.set('discharge', String(state.maxDischargeKw))
     params.set('eff', String(Number(state.roundTripEff.toFixed(2))))
     params.set('feedin', String(state.feedInCapKw))
+    params.set('curtailneg', state.curtailPvAtNegativePrices ? '1' : '0')
     FLOW_PERMISSION_OPTIONS.forEach(({ key }) => {
       params.set(FLOW_PERMISSION_QUERY_KEYS[key], state.flowPermissions[key] ? '1' : '0')
     })
@@ -2917,19 +3167,57 @@ function PvBatteryCalculatorInner() {
       router.replace(`/battery/calculator?${nextQuery}`, { scroll: false })
     }, 180)
     return () => window.clearTimeout(timeoutId)
-  }, [router, searchParamsString, selectedDate, state])
+  }, [rollingInitialSocKwh, router, searchParamsString, selectedDate, state])
 
   useEffect(() => {
     const urlDate = new URLSearchParams(searchParamsString).get('date')
-    if (!urlDate || yearDates.length === 0) return
-    if (!yearDates.some((day) => day.date === urlDate)) return
+    if (!urlDate || selectedDateOptions.length === 0) return
+    if (!selectedDateOptions.some((day) => day.date === urlDate)) return
     setSelectedDate(urlDate)
-  }, [searchParamsString, setSelectedDate, yearDates])
+  }, [searchParamsString, selectedDateOptions, setSelectedDate])
+
+  const regionalSurcharges = useMemo<Surcharges | null>(() => {
+    if (!tariffComponents) return null
+
+    const base = surchargesForYear(effectiveYear)
+    const supplierMarkupInTaxes = 2.15
+    return {
+      ...base,
+      gridFee: tariffComponents.gridFeeNetto,
+      konzessionsabgabe: Math.max(
+        0,
+        tariffComponents.taxesNetto -
+          supplierMarkupInTaxes -
+          base.stromsteuer -
+          base.kwkg -
+          base.offshore -
+          base.par19,
+      ),
+    }
+  }, [effectiveYear, tariffComponents])
 
   const scenario = useMemo(
-    () => buildScenario(deferredState),
-    [deferredState],
+    () => buildScenario(deferredState, regionalSurcharges),
+    [deferredState, regionalSurcharges],
   )
+  const activeTariffSurcharges = useMemo(() => {
+    const supplierMargin = selectedTariff?.supplierFeeModel === 'margin'
+      ? selectedTariff.supplierMarginCtKwh
+      : 0
+    return {
+      ...(regionalSurcharges ?? surchargesForYear(effectiveYear)),
+      margin: supplierMargin,
+    }
+  }, [effectiveYear, regionalSurcharges, selectedTariff])
+  const tariffBreakdownRows = useMemo(() => [
+    { label: 'Grid fee', value: activeTariffSurcharges.gridFee, source: tariffComponents ? 'ZIP' : 'Default' },
+    { label: 'Stromsteuer', value: activeTariffSurcharges.stromsteuer, source: 'Fixed' },
+    { label: 'Konzessionsabgabe', value: activeTariffSurcharges.konzessionsabgabe, source: tariffComponents ? 'ZIP' : 'Default' },
+    { label: 'KWKG-Umlage', value: activeTariffSurcharges.kwkg, source: 'Year' },
+    { label: 'Offshore', value: activeTariffSurcharges.offshore, source: 'Year' },
+    { label: '§19 StromNEV', value: activeTariffSurcharges.par19, source: 'Year' },
+    { label: 'Supplier margin', value: activeTariffSurcharges.margin, source: selectedTariff?.supplierFeeModel === 'margin' ? 'Tariff' : 'Monthly fee' },
+  ], [activeTariffSurcharges, selectedTariff?.supplierFeeModel, tariffComponents])
 
   const annualSource = useMemo(() => {
     if (state.resolution !== 'quarterhour') return prices.hourly
@@ -2941,6 +3229,7 @@ function PvBatteryCalculatorInner() {
       .filter((point) => point.date.slice(0, 4) === String(effectiveYear))
       .filter((point) => !prices.lastRealDate || point.date <= prices.lastRealDate)
   }, [annualSource, effectiveYear, prices.lastRealDate])
+  const selectedDaySource = annualSource
 
   const radiationAdjustment = useMemo(() => {
     if (!radiationData) return null
@@ -2968,7 +3257,7 @@ function PvBatteryCalculatorInner() {
 
     if (state.planningModel === 'rolling') {
       return optimizePvBatteryRollingReplay(inputs, scenario, {
-        initialSocKwh: state.initialSocKwh,
+        initialSocKwh: rollingInitialSocKwh,
         modelLabel: planningModelLabel,
         assumptions: plannerAssumptions,
       })
@@ -2990,104 +3279,332 @@ function PvBatteryCalculatorInner() {
     planningModelLabel,
     pvProfile,
     radiationAdjustment,
+    rollingInitialSocKwh,
     scenario,
-    state.initialSocKwh,
     state.planningModel,
   ])
 
   const dayResult = useMemo(() => {
-    if (!annualResult || !prices.selectedDate) return null
-    const firstIndex = annualResult.slots.findIndex((slot) => slot.date === prices.selectedDate)
-    if (firstIndex < 0) return null
     const slotsPerHour = state.resolution === 'quarterhour' ? 4 : 1
     const targetCount = state.viewHours * slotsPerHour
-    const slots = annualResult.slots.slice(firstIndex, firstIndex + targetCount)
+    if (!prices.selectedDate) return null
+
+    if (annualResult) {
+      const firstIndex = annualResult.slots.findIndex((slot) => slot.date === prices.selectedDate)
+      if (firstIndex >= 0) {
+        const middayIndex = state.viewHours === 36
+          ? findMiddaySlotIndex(annualResult.slots, prices.selectedDate)
+          : -1
+        const windowStartIndex = middayIndex >= 0 ? middayIndex : firstIndex
+        const slots = annualResult.slots.slice(windowStartIndex, windowStartIndex + targetCount)
+        if (slots.length === 0) return null
+        return {
+          ...annualResult,
+          months: [],
+          slots,
+        }
+      }
+    }
+
+    if (!selectedDayLoadProfile || !selectedDayPvProfile) return null
+    const candidateWindowPrices = selectedDaySource
+      .filter((point) => point.date >= prices.selectedDate)
+      .filter((point) => !prices.lastRealDate || point.date <= prices.lastRealDate)
+    const middayPriceIndex = state.viewHours === 36
+      ? findMiddaySlotIndex(candidateWindowPrices, prices.selectedDate)
+      : -1
+    const windowPrices = candidateWindowPrices.slice(
+      Math.max(0, middayPriceIndex),
+      Math.max(0, middayPriceIndex) + targetCount,
+    )
+
+    if (windowPrices.length === 0) return null
+    const inputs = buildPvBatteryInputs(windowPrices, selectedDayLoadProfile, selectedDayPvProfile, scenario, radiationAdjustment)
+    const result = optimizePvBatteryWithOptions(inputs, scenario, {
+      planningModel: state.planningModel,
+      modelLabel: planningModelLabel,
+      assumptions: plannerAssumptions,
+      initialSocKwh: state.planningModel === 'rolling' ? rollingInitialSocKwh : undefined,
+      run: {
+        runId: `${state.planningModel}-selected-day-replay`,
+        runLabel: `${planningModelLabel} selected-day replay`,
+      },
+    })
+    const slots = result.slots.slice(0, targetCount)
     if (slots.length === 0) return null
     return {
-      ...annualResult,
+      ...result,
       months: [],
       slots,
     }
-  }, [annualResult, prices.selectedDate, state.resolution, state.viewHours])
+  }, [
+    annualResult,
+    plannerAssumptions,
+    planningModelLabel,
+    prices.lastRealDate,
+    prices.selectedDate,
+    radiationAdjustment,
+    rollingInitialSocKwh,
+    scenario,
+    selectedDayLoadProfile,
+    selectedDayPvProfile,
+    selectedDaySource,
+    state.planningModel,
+    state.resolution,
+    state.viewHours,
+  ])
+  const selectedDayAllocationResult = useMemo(() => {
+    if (!dayResult || !prices.selectedDate) return null
+    return slicePvBatteryResult(
+      dayResult,
+      dayResult.slots.filter((slot) => slot.date === prices.selectedDate),
+    )
+  }, [dayResult, prices.selectedDate])
+  const selectedDaySlots = useMemo(
+    () => dayResult?.slots.filter((slot) => slot.date === prices.selectedDate) ?? [],
+    [dayResult, prices.selectedDate],
+  )
+  const effectiveAllocationSlot = useMemo(() => {
+    if (selectedDaySlots.length === 0) return null
+    const firstActiveSlot = selectedDaySlots.find((slot) => {
+      const deliveredKwh = slot.gridToLoadKwh + slot.pvToLoadKwh + slot.batteryToLoadKwh
+      const exportKwh = slot.directExportKwh + slot.batteryExportKwh
+      const batteryMoveKwh = slot.gridToBatteryKwh + slot.pvToBatteryKwh
+      return deliveredKwh + exportKwh + batteryMoveKwh > 1e-6
+    })
+    return selectedDaySlots.find((slot) => slot.timestamp === selectedAllocationTimestamp) ?? firstActiveSlot ?? selectedDaySlots[0]
+  }, [selectedAllocationTimestamp, selectedDaySlots])
+  useEffect(() => {
+    if (!isAllocationTimelapsePlaying || selectedDaySlots.length === 0 || allocationWindow !== 'day') return
+    const intervalId = window.setInterval(() => {
+      setAllocationDayView('quarterHour')
+      setSelectedAllocationTimestamp((current) => {
+        const currentIndex = selectedDaySlots.findIndex((slot) => slot.timestamp === current)
+        const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % selectedDaySlots.length : 0
+        return selectedDaySlots[nextIndex]?.timestamp ?? null
+      })
+    }, 360)
+    return () => window.clearInterval(intervalId)
+  }, [allocationWindow, isAllocationTimelapsePlaying, selectedDaySlots])
+  const selectedSlotAllocationResult = useMemo(() => {
+    if (!dayResult || !effectiveAllocationSlot) return selectedDayAllocationResult
+    return slicePvBatteryResult(dayResult, [effectiveAllocationSlot]) ?? selectedDayAllocationResult
+  }, [dayResult, effectiveAllocationSlot, selectedDayAllocationResult])
+  const trailingAllocationResult = useMemo(() => {
+    if (!annualResult || !prices.selectedDate) return selectedDayAllocationResult
+    const startDate = addDays(prices.selectedDate, -364)
+    return slicePvBatteryResult(
+      annualResult,
+      annualResult.slots.filter((slot) => slot.date >= startDate && slot.date <= prices.selectedDate),
+    ) ?? selectedDayAllocationResult
+  }, [annualResult, prices.selectedDate, selectedDayAllocationResult])
+  const allocationResult = allocationWindow === 'day'
+    ? allocationDayView === 'quarterHour'
+      ? selectedSlotAllocationResult
+      : selectedDayAllocationResult
+    : trailingAllocationResult
+  const allocationWindowLabel = allocationWindow === 'day'
+    ? allocationDayView === 'quarterHour'
+      ? `Quarter-hour · ${effectiveAllocationSlot?.label ?? formatDayLabel(prices.selectedDate)}`
+      : `Full day · ${formatDayLabel(prices.selectedDate)}`
+    : 'Last 365 days'
+  const hasQuarterHourReplay = prices.hourlyQH.length > 0
+  const allocationTimeline = allocationWindow === 'day' && selectedDaySlots.length > 0 ? (
+    <div className="border-b border-slate-200/80 bg-white/52 px-5 py-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Selected day timeline</p>
+          <p className="mt-1 text-[12px] font-medium text-slate-600">
+            {allocationDayView === 'quarterHour' && effectiveAllocationSlot
+              ? `${isAllocationTimelapsePlaying ? 'Time-lapse' : 'Pinned'} ${effectiveAllocationSlot.label} · ${effectiveAllocationSlot.loadKwh.toFixed(2)} kWh load`
+              : `${formatDayLabel(prices.selectedDate)} · ${selectedDaySlots.length} modeled slots`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setAllocationDayView('quarterHour')
+              setIsAllocationTimelapsePlaying((current) => !current)
+            }}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors',
+              isAllocationTimelapsePlaying
+                ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
+                : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+            )}
+          >
+            {isAllocationTimelapsePlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+            Time-lapse
+          </button>
+          <SegmentedPillGroup
+            options={[
+              {
+                label: 'Full day',
+                active: allocationDayView === 'fullDay',
+                onClick: () => setAllocationDayView('fullDay'),
+              },
+              {
+                label: '60 min',
+                active: allocationDayView === 'quarterHour' && state.resolution === 'hour',
+                onClick: () => {
+                  setAllocationDayView('quarterHour')
+                  setDraftState((current) => ({ ...current, resolution: 'hour' }))
+                },
+              },
+              {
+                label: '15 min',
+                active: allocationDayView === 'quarterHour' && state.resolution === 'quarterhour',
+                disabled: !hasQuarterHourReplay,
+                onClick: () => {
+                  if (!hasQuarterHourReplay) return
+                  setAllocationDayView('quarterHour')
+                  setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))
+                },
+              },
+            ]}
+          />
+        </div>
+      </div>
+      <div
+        className="grid gap-0.5"
+        style={{ gridTemplateColumns: `repeat(${selectedDaySlots.length}, minmax(3px, 1fr))` }}
+      >
+        {selectedDaySlots.map((slot) => {
+          const active = effectiveAllocationSlot?.timestamp === slot.timestamp
+          const deliveredKwh = slot.gridToLoadKwh + slot.pvToLoadKwh + slot.batteryToLoadKwh
+          const exportKwh = slot.directExportKwh + slot.batteryExportKwh
+          const intensity = Math.min(1, Math.max(deliveredKwh + exportKwh, 0.01) / 3)
+          return (
+            <button
+              key={`${slot.timestamp}-${slot.label}`}
+              type="button"
+              onClick={() => {
+                setSelectedAllocationTimestamp(slot.timestamp)
+                setIsAllocationTimelapsePlaying(false)
+                setAllocationDayView('quarterHour')
+              }}
+              title={`${slot.label} · load ${slot.loadKwh.toFixed(2)} kWh · export ${exportKwh.toFixed(2)} kWh`}
+              className={cn(
+                'h-8 rounded-[3px] border transition-all hover:-translate-y-0.5 hover:shadow-sm',
+                active && allocationDayView === 'quarterHour' ? 'border-slate-900 ring-2 ring-slate-900/15' : 'border-white/70',
+              )}
+              style={{
+                background: slot.isBatteryExporting
+                  ? ALLOCATION_FLOW_COLORS.batteryExport
+                  : slot.isDirectPvExporting
+                    ? ALLOCATION_FLOW_COLORS.pvExport
+                    : slot.isBatteryDischarging
+                      ? ALLOCATION_FLOW_COLORS.gridStored
+                      : slot.pvToLoadKwh > 1e-6
+                        ? ALLOCATION_FLOW_COLORS.pvDirect
+                        : ALLOCATION_FLOW_COLORS.gridDirect,
+                opacity: 0.28 + (intensity * 0.72),
+              }}
+              aria-label={`Select ${slot.label}`}
+            />
+          )
+        })}
+      </div>
+      <div className="mt-2 flex items-center justify-between text-[10px] font-medium text-slate-400">
+        <span>00:00</span>
+        <span>06:00</span>
+        <span>12:00</span>
+        <span>18:00</span>
+        <span>24:00</span>
+      </div>
+    </div>
+  ) : null
 
-  const loading = prices.loading || profilesLoading
-  const noYearData = !loading && !prices.error && availableYears.length === 0
+  const loading = prices.loading || profilesLoading || selectedDayProfilesLoading
+  const combinedProfilesError = profilesError ?? selectedDayProfilesError
+  const noYearData = !loading && !prices.error && availableYears.length === 0 && selectedDateOptions.length === 0
   const pendingFlowPermissionKeys = FLOW_PERMISSION_OPTIONS
     .filter(({ key }) => state.flowPermissions[key] !== DEFAULT_FLOW_PERMISSIONS[key])
     .map(({ key }) => key)
   const disabledFlowKeys = FLOW_PERMISSION_OPTIONS
     .filter(({ key }) => !state.flowPermissions[key])
     .map(({ key }) => key)
-  const hasQuarterHourReplay = prices.hourlyQH.length > 0
-  const viewWindowOptions = [
-    {
-      label: '24h',
-      active: state.viewHours === 24,
-      onClick: () => setDraftState((current) => ({ ...current, viewHours: 24 })),
-    },
-    {
-      label: '48h',
-      active: state.viewHours === 48,
-      onClick: () => setDraftState((current) => ({ ...current, viewHours: 48 })),
-    },
-    {
-      label: '72h',
-      active: state.viewHours === 72,
-      onClick: () => setDraftState((current) => ({ ...current, viewHours: 72 })),
-    },
-  ]
-  const replayResolutionOptions = [
-    {
-      label: '60 min',
-      active: state.resolution === 'hour',
-      onClick: () => setDraftState((current) => ({ ...current, resolution: 'hour' })),
-    },
-    {
-      label: '15 min',
-      active: state.resolution === 'quarterhour',
-      disabled: !hasQuarterHourReplay,
-      onClick: () => hasQuarterHourReplay && setDraftState((current) => ({ ...current, resolution: 'quarterhour' })),
-    },
-  ]
-  const replayWindowControls = <SegmentedPillGroup options={viewWindowOptions} />
-  const replayResolutionControls = <SegmentedPillGroup options={replayResolutionOptions} />
-  const priceReplayControls = (
-    <div className="flex flex-wrap gap-2">
-      <SegmentedPillGroup
-        options={[
-          {
-            label: 'Spot',
-            active: state.flowPriceMode === 'spot',
-            onClick: () => setDraftState((current) => ({ ...current, flowPriceMode: 'spot' })),
-          },
-          {
-            label: 'End',
-            active: state.flowPriceMode === 'end',
-            onClick: () => setDraftState((current) => ({ ...current, flowPriceMode: 'end' })),
-          },
-        ]}
-      />
-      {replayWindowControls}
-      {replayResolutionControls}
-    </div>
-  )
   const selectedDayControls = (
-    <div className="space-y-3">
-      <div className="overflow-hidden rounded-lg border border-gray-200/80 bg-white">
+    <div className="sticky top-3 z-30 w-full overflow-hidden rounded-lg border border-gray-200/80 bg-white/95 shadow-sm backdrop-blur">
         <div className="px-4 py-3">
           <DateStrip
-            daily={yearDates}
+            daily={selectedDateOptions}
             selectedDate={prices.selectedDate}
             onSelect={prices.setSelectedDate}
-            latestDate={yearDates[yearDates.length - 1]?.date}
+            latestDate={selectedDateOptions[selectedDateOptions.length - 1]?.date}
             requireNextDay={false}
             forecastAfter={prices.lastRealDate || undefined}
             country={CALCULATOR_COUNTRY}
           />
         </div>
-      </div>
     </div>
   )
+  const consumptionWindowControls = (
+    <div className="flex flex-wrap items-center gap-2">
+      <SegmentedPillGroup
+        options={[
+          {
+            label: '24h',
+            active: state.viewHours === 24,
+            onClick: () => setDraftState((current) => ({ ...current, viewHours: 24 })),
+          },
+          {
+            label: '36h',
+            active: state.viewHours === 36,
+            onClick: () => setDraftState((current) => ({ ...current, viewHours: 36 })),
+          },
+          {
+            label: '48h',
+            active: state.viewHours === 48,
+            onClick: () => setDraftState((current) => ({ ...current, viewHours: 48 })),
+          },
+        ]}
+      />
+      <SegmentedPillGroup
+        options={[
+          {
+            label: '60 min',
+            active: state.resolution === 'hour',
+            onClick: () => setDraftState((current) => ({ ...current, resolution: 'hour' })),
+          },
+          {
+            label: '15 min',
+            active: state.resolution === 'quarterhour',
+            disabled: prices.hourlyQH.length === 0,
+            onClick: () => {
+              if (prices.hourlyQH.length === 0) return
+              setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))
+            },
+          },
+        ]}
+      />
+    </div>
+  )
+  const showPlannerCards = false
+  const batteryDefaultChargeKw = defaultBatteryChargeKw(state.usableKwh)
+  const batteryDefaultDischargeKw = defaultBatteryDischargeKw(state.batteryConnectionMode, state.usableKwh)
+  const batteryModeSummary = state.batteryConnectionMode === 'plugin'
+    ? 'Plug-in defaults: 0.8 kW discharge, 0.5 C charge, 88% efficiency'
+    : 'Wired defaults: 0.5 C charge/discharge, 90% efficiency'
+  const handleBatteryCapacityChange = (value: number) => {
+    setDraftState((current) => {
+      const previousDefaultChargeKw = defaultBatteryChargeKw(current.usableKwh)
+      const previousDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, current.usableKwh)
+      const nextDefaultChargeKw = defaultBatteryChargeKw(value)
+      const nextDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, value)
+      const followsChargeDefault = Math.abs(current.maxChargeKw - previousDefaultChargeKw) <= BATTERY_POWER_STEP_KW / 2
+      const followsDischargeDefault = Math.abs(current.maxDischargeKw - previousDefaultDischargeKw) <= BATTERY_POWER_STEP_KW / 2
+
+      return {
+        ...current,
+        usableKwh: value,
+        initialSocKwh: clamp(current.initialSocKwh, 0, value),
+        maxChargeKw: followsChargeDefault ? nextDefaultChargeKw : current.maxChargeKw,
+        maxDischargeKw: followsDischargeDefault ? nextDefaultDischargeKw : current.maxDischargeKw,
+      }
+    })
+  }
   const activeFlowKeys = FLOW_PERMISSION_OPTIONS
     .filter(({ key }) => state.flowPermissions[key])
     .map(({ key }) => key)
@@ -3174,33 +3691,24 @@ function PvBatteryCalculatorInner() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Load profile
+                          Foresight mode
                         </label>
-                        <span className="text-[10px] text-gray-400">H25 / P25 / S25</span>
+                        <span className="text-[10px] text-gray-400">{planningModelLabel}</span>
                       </div>
-                      <select
-                        value={state.planningModel === 'rolling' ? 'H25' : state.loadProfileId}
-                        disabled={state.planningModel === 'rolling'}
-                        onChange={(event) => setDraftState((current) => ({
-                          ...current,
-                          loadProfileId: event.target.value as BatteryLoadProfileId,
-                        }))}
-                        className={cn(
-                          'w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400',
-                          state.planningModel === 'rolling' && 'cursor-not-allowed bg-gray-50 text-gray-500',
-                        )}
-                      >
-                        {loadProfileOptions.map((profile) => (
-                          <option key={profile.id} value={profile.id}>
-                            {profile.label}
-                          </option>
-                        ))}
-                      </select>
-                      {state.planningModel === 'rolling' ? (
-                        <p className="text-[10px] leading-4 text-amber-700">
-                          Rolling mode locks the household forecast basis to H25 so every stitched run uses the same published-load assumption.
-                        </p>
-                      ) : null}
+                      <SegmentedPillGroup
+                        options={[
+                          {
+                            label: 'Full',
+                            active: state.planningModel === 'deterministic',
+                            onClick: () => setDraftState((current) => ({ ...current, planningModel: 'deterministic' })),
+                          },
+                          {
+                            label: 'Day-Ahead',
+                            active: state.planningModel === 'rolling',
+                            onClick: () => setDraftState((current) => ({ ...current, planningModel: 'rolling' })),
+                          },
+                        ]}
+                      />
                     </div>
 
                     {/* Horizontal line + Assets toggles */}
@@ -3251,7 +3759,17 @@ function PvBatteryCalculatorInner() {
                               return
                             }
                             if (state.usableKwh === 0) {
-                              setDraftState((current) => ({ ...current, usableKwh: 10 }))
+                              setDraftState((current) => {
+                                const usableKwh = 10
+                                return {
+                                  ...current,
+                                  usableKwh,
+                                  initialSocKwh: usableKwh / 2,
+                                  maxChargeKw: defaultBatteryChargeKw(usableKwh),
+                                  maxDischargeKw: defaultBatteryDischargeKw(current.batteryConnectionMode, usableKwh),
+                                  roundTripEff: defaultBatteryEfficiency(current.batteryConnectionMode),
+                                }
+                              })
                             }
                           }}
                           className={cn(
@@ -3280,12 +3798,54 @@ function PvBatteryCalculatorInner() {
                     </div>
 
                     {/* Dynamic tariff - after horizontal line */}
-                    <div className="border-t border-gray-200 pt-4 space-y-2">
+                    <div className="border-t border-gray-200 pt-4 space-y-3">
                       <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Dynamic tariff
-                        </label>
-                        <span className="text-[10px] text-gray-400">Germany only</span>
+                        <div className="flex items-center gap-1.5">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Dynamic tariff
+                          </label>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button type="button" className="rounded-full text-gray-400 transition-colors hover:text-gray-700" aria-label="Dynamic tariff cost breakdown">
+                                <CircleHelp className="h-3.5 w-3.5" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent side="right" className="max-w-[320px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
+                              <div className="space-y-2">
+                                <div>
+                                  <p className="font-semibold text-slate-900">{selectedTariff?.label ?? 'Selected dynamic tariff'}</p>
+                                  <p className="text-[10px] text-gray-500">
+                                    End-customer import price = spot market + surcharges + grid fees + VAT.
+                                  </p>
+                                </div>
+                                <div className="space-y-1 border-t border-gray-100 pt-2">
+                                  {tariffBreakdownRows.map((row) => (
+                                    <div key={row.label} className="flex items-center justify-between gap-3">
+                                      <span>{row.label}</span>
+                                      <span className="shrink-0 font-semibold tabular-nums text-slate-900">
+                                        {row.value.toFixed(2)} ct/kWh
+                                      </span>
+                                    </div>
+                                  ))}
+                                  <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-1 font-semibold text-slate-900">
+                                    <span>Total netto add-on</span>
+                                    <span className="shrink-0 tabular-nums">{totalSurchargesNetto(activeTariffSurcharges).toFixed(2)} ct/kWh</span>
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-gray-500">
+                                  {tariffComponents
+                                    ? `ZIP ${tariffComponents.plz}: ${tariffComponents.location}${tariffComponents.dso ? ` · ${tariffComponents.dso}` : ''}.`
+                                    : 'Enter a ZIP code to replace default grid fee and concession assumptions.'}
+                                </p>
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                        {tariffComponentsLoading ? (
+                          <span className="text-[10px] text-gray-400">Loading fees...</span>
+                        ) : tariffComponents ? (
+                          <span className="text-[10px] text-emerald-700">ZIP fees active</span>
+                        ) : null}
                       </div>
                       <select
                         value={state.tariffId}
@@ -3298,6 +3858,61 @@ function PvBatteryCalculatorInner() {
                           </option>
                         ))}
                       </select>
+
+                      <div className="space-y-2 pt-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                            Location
+                          </label>
+                          {isZipInputCommitted && radiationData ? (
+                            <span className="text-[10px] text-gray-400">{radiationData.location.region}</span>
+                          ) : null}
+                        </div>
+                        <input
+                          type="text"
+                          maxLength={5}
+                          placeholder="ZIP code, e.g. 10115"
+                          value={zipInput}
+                          onChange={(event) => {
+                            const value = event.target.value.replace(/\D/g, '').slice(0, 5)
+                            setZipInput(value)
+                            if (value.length === 5) {
+                              setDraftState((current) => ({ ...current, pvZipCode: value }))
+                              return
+                            }
+                            if (value.length === 0 || state.pvZipCode) {
+                              setDraftState((current) => ({ ...current, pvZipCode: '' }))
+                            }
+                          }}
+                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+                        />
+                        {zipInput.length > 0 && zipInput.length < 5 ? (
+                          <p className="text-[10px] text-gray-400">Enter 5 digits to load regional values.</p>
+                        ) : null}
+                        {isZipInputCommitted && radiationLoading ? (
+                          <p className="text-[10px] text-gray-400">Loading PV radiation data...</p>
+                        ) : null}
+                        {isZipInputCommitted && tariffComponents ? (
+                          <p className="text-[10px] leading-4 text-emerald-700">
+                            Regional tariff add-ons: grid {tariffComponents.gridFeeNetto.toFixed(2)} ct/kWh, taxes {tariffComponents.taxesNetto.toFixed(2)} ct/kWh
+                          </p>
+                        ) : null}
+                        {isZipInputCommitted && tariffComponentsError ? (
+                          <p className="text-[10px] leading-4 text-amber-600">
+                            Regional grid fees unavailable; using default German tariff assumptions.
+                          </p>
+                        ) : null}
+                        {isZipInputCommitted && radiationData && !radiationData.isDefault ? (
+                          <p className="text-[10px] leading-4 text-emerald-700">
+                            PVGIS yield: {Math.round(radiationData.annualTotal)} kWh/kWp
+                          </p>
+                        ) : null}
+                        {isZipInputCommitted && radiationData?.isDefault ? (
+                          <p className="text-[10px] leading-4 text-amber-600">
+                            PVGIS unavailable for this ZIP; using default German radiation values.
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -3322,44 +3937,32 @@ function PvBatteryCalculatorInner() {
                       maxLabel="20 kWp"
                     />
 
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                          Zip code
-                        </label>
-                        {radiationData && (
-                          <span className="text-[10px] text-gray-400">
-                            {radiationData.location.region}
-                          </span>
-                        )}
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-semibold text-gray-800">Curtail PV at negative prices</p>
                       </div>
-                      <input
-                        type="text"
-                        maxLength={5}
-                        placeholder="e.g., 10115 (Berlin)"
-                        value={state.pvZipCode}
-                        onChange={(event) => {
-                          const value = event.target.value.replace(/\D/g, '').slice(0, 5)
-                          setDraftState((current) => ({ ...current, pvZipCode: value }))
-                        }}
-                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
-                      />
-                      {radiationLoading && (
-                        <p className="text-[10px] text-gray-400">Loading radiation data...</p>
-                      )}
-                      {radiationData && !radiationData.isDefault && (
-                        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-800">
-                          <p className="font-semibold">PVGIS data loaded</p>
-                          <p className="mt-1">
-                            Annual yield: <span className="font-medium">{Math.round(radiationData.annualTotal)} kWh/kWp</span>
-                          </p>
-                        </div>
-                      )}
-                      {radiationData && radiationData.isDefault && (
-                        <p className="text-[10px] text-amber-600">
-                          Using default German radiation values (PVGIS unavailable)
-                        </p>
-                      )}
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-label="Curtail PV at negative prices"
+                        aria-checked={state.curtailPvAtNegativePrices}
+                        onClick={() => setDraftState((current) => ({
+                          ...current,
+                          curtailPvAtNegativePrices: !current.curtailPvAtNegativePrices,
+                        }))}
+                        className={cn(
+                          'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+                          state.curtailPvAtNegativePrices ? 'bg-slate-700' : 'bg-gray-300',
+                        )}
+                        title="When enabled, PV surplus is curtailed instead of exported during negative spot-price slots."
+                      >
+                        <span
+                          className={cn(
+                            'absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                            state.curtailPvAtNegativePrices ? 'translate-x-4' : 'translate-x-0',
+                          )}
+                        />
+                      </button>
                     </div>
 
                     <div className="pt-2">
@@ -3397,7 +4000,36 @@ function PvBatteryCalculatorInner() {
                   label="Battery storage"
                   icon={<BatteryCharging className="h-5 w-5 text-gray-400" />}
                 >
-                  <div className="space-y-4">
+                  <div className="space-y-3.5">
+                    <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-2.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Connection</p>
+                          <p className="mt-0.5 text-[11px] leading-4 text-gray-500">{batteryModeSummary}</p>
+                        </div>
+                        <div className="inline-flex shrink-0 rounded-full bg-gray-100 p-0.5">
+                          {[
+                            { mode: 'plugin' as const, label: 'Plug-in' },
+                            { mode: 'wired' as const, label: 'Wired' },
+                          ].map((option) => (
+                            <button
+                              key={option.mode}
+                              type="button"
+                              onClick={() => setDraftState((current) => applyBatteryConnectionDefaults(current, option.mode))}
+                              className={cn(
+                                'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                                state.batteryConnectionMode === option.mode
+                                  ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
+                                  : 'text-gray-400 hover:text-gray-600',
+                              )}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
                     <RangeControl
                       label="Usable capacity"
                       value={`${state.usableKwh.toFixed(1)} kWh`}
@@ -3405,57 +4037,50 @@ function PvBatteryCalculatorInner() {
                       max={20}
                       step={0.5}
                       sliderValue={state.usableKwh}
-                      onChange={(value) => setDraftState((current) => ({ ...current, usableKwh: value }))}
+                      onChange={handleBatteryCapacityChange}
                       minLabel="0"
                       maxLabel="20 kWh"
                     />
 
-                    <div className="space-y-2">
-                      <RangeControl
-                        label="Initial SoC"
-                        value={`${state.initialSocKwh.toFixed(1)} kWh`}
-                        min={0}
-                        max={Math.max(state.usableKwh, 0)}
-                        step={0.5}
-                        sliderValue={Math.min(state.initialSocKwh, state.usableKwh)}
-                        onChange={(value) => setDraftState((current) => ({ ...current, initialSocKwh: value }))}
-                        minLabel="0"
-                        maxLabel={`${state.usableKwh.toFixed(1)} kWh`}
-                      />
-                      <p className={cn(
-                        'text-[10px] leading-4',
-                        state.planningModel === 'rolling' ? 'text-emerald-700' : 'text-gray-500',
-                      )}>
-                        {state.planningModel === 'rolling'
-                          ? 'Used as the starting battery state for the stitched rolling chain and as the terminal anchor for each run.'
-                          : 'Saved for the rolling planner. The current deterministic replay still keeps its original empty-start, free-terminal behavior.'}
-                      </p>
-                    </div>
+                    {state.planningModel === 'rolling' ? (
+                      <div
+                        className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2"
+                        title="Initial state is fixed for the stitched rolling planner."
+                      >
+                        <p className="text-[11px] font-semibold text-emerald-800">50% initial SoC · {rollingInitialSocKwh.toFixed(1)} kWh</p>
+                      </div>
+                    ) : null}
 
                     <div className="grid gap-4 sm:grid-cols-2">
                       <RangeControl
-                        label="Charge power"
+                        label="Charge limit"
                         value={`${state.maxChargeKw.toFixed(1)} kW`}
-                        min={1}
-                        max={15}
-                        step={0.5}
+                        min={BATTERY_POWER_MIN_KW}
+                        max={BATTERY_POWER_MAX_KW}
+                        step={BATTERY_POWER_STEP_KW}
                         sliderValue={state.maxChargeKw}
                         onChange={(value) => setDraftState((current) => ({ ...current, maxChargeKw: value }))}
+                        minLabel="0.1"
+                        maxLabel={`${BATTERY_POWER_MAX_KW} kW`}
+                        help={`Full-battery input cap. ${state.batteryConnectionMode === 'plugin' ? `Default is 0.5 C (${batteryDefaultChargeKw.toFixed(1)} kW here), but you can override it.` : 'PV charging and grid charging share this one limit.'}`}
                       />
 
                       <RangeControl
-                        label="Discharge power"
+                        label="Discharge limit"
                         value={`${state.maxDischargeKw.toFixed(1)} kW`}
-                        min={1}
-                        max={15}
-                        step={0.5}
+                        min={BATTERY_POWER_MIN_KW}
+                        max={BATTERY_POWER_MAX_KW}
+                        step={BATTERY_POWER_STEP_KW}
                         sliderValue={state.maxDischargeKw}
                         onChange={(value) => setDraftState((current) => ({ ...current, maxDischargeKw: value }))}
+                        minLabel="0.1"
+                        maxLabel={`${BATTERY_POWER_MAX_KW} kW`}
+                        help={`Full-battery output cap. ${state.batteryConnectionMode === 'plugin' ? `Plug-in default is ${batteryDefaultDischargeKw.toFixed(1)} kW, but you can override it.` : 'Household discharge and grid export share this one limit.'}`}
                       />
                     </div>
 
                     <RangeControl
-                      label="Round-trip efficiency"
+                      label="Efficiency"
                       value={`${Math.round(state.roundTripEff * 100)}%`}
                       min={0.75}
                       max={0.96}
@@ -3465,33 +4090,6 @@ function PvBatteryCalculatorInner() {
                       minLabel="75%"
                       maxLabel="96%"
                     />
-
-                    <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 p-3">
-                      <div>
-                        <p className="text-sm font-semibold text-gray-900">Plug-In</p>
-                        <p className="text-[11px] text-gray-500">Restricts export to 800 W</p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={state.feedInCapKw <= 0.8}
-                        onClick={() => setDraftState((current) => ({
-                          ...current,
-                          feedInCapKw: current.feedInCapKw <= 0.8 ? 5 : 0.8,
-                        }))}
-                        className={cn(
-                          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-                          state.feedInCapKw <= 0.8 ? 'bg-gray-900' : 'bg-gray-300',
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            'inline-block h-5 w-5 transform rounded-full bg-white transition-transform',
-                            state.feedInCapKw <= 0.8 ? 'translate-x-5' : 'translate-x-1',
-                          )}
-                        />
-                      </button>
-                    </div>
 
                     <div className="space-y-2 pt-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Battery flow routing</p>
@@ -3525,12 +4123,13 @@ function PvBatteryCalculatorInner() {
             </aside>
 
             <section className="order-1 space-y-4 lg:order-2 lg:col-span-3">
+              {selectedDayControls}
               {loading ? (
                 <StatusCard title="Loading calculator inputs" body="Fetching German price history and bundled household profiles." />
               ) : prices.error ? (
                 <StatusCard title="Price data could not be loaded" body={prices.error} tone="warning" />
-              ) : profilesError ? (
-                <StatusCard title="Profile data could not be loaded" body={profilesError} tone="warning" />
+              ) : combinedProfilesError ? (
+                <StatusCard title="Profile data could not be loaded" body={combinedProfilesError} tone="warning" />
               ) : noYearData ? (
                 <StatusCard
                   title="No complete annual replay is available"
@@ -3539,48 +4138,63 @@ function PvBatteryCalculatorInner() {
                 />
               ) : annualResult ? (
                 <>
-                  <PlanningModelCard
-                    planningModel={state.planningModel}
-                    onChange={(planningModel) => setDraftState((current) => ({ ...current, planningModel }))}
-                  />
-                  <PlannerAssumptionsCard
-                    planningModel={state.planningModel}
-                    assumptions={annualResult.assumptions}
-                    initialSocKwh={state.initialSocKwh}
-                  />
-                  <AnnualHero annual={annualResult} units={units} />
-                  <DeliveredAllocationCard
-                    annual={annualResult}
-                    units={units}
-                    flowPermissions={state.flowPermissions}
-                    isPvSelected={isPvSelected}
-                    isBatterySelected={isBatterySelected}
-                    pvCapacityWp={state.pvCapacityWp}
-                    usableKwh={state.usableKwh}
-                  />
-                  <MonthlyBars annual={annualResult} units={units} />
+                  {showPlannerCards ? (
+                    <>
+                      <PlanningModelCard
+                        planningModel={state.planningModel}
+                        onChange={(planningModel) => setDraftState((current) => ({ ...current, planningModel }))}
+                      />
+                      <PlannerAssumptionsCard
+                        planningModel={state.planningModel}
+                        assumptions={annualResult.assumptions}
+                        initialSocKwh={rollingInitialSocKwh}
+                      />
+                    </>
+                  ) : null}
+                  {allocationResult ? (
+                    <DeliveredAllocationCard
+                      annual={allocationResult}
+                      units={units}
+                      flowPermissions={state.flowPermissions}
+                      isPvSelected={isPvSelected}
+                      isBatterySelected={isBatterySelected}
+                      pvCapacityWp={state.pvCapacityWp}
+                      usableKwh={state.usableKwh}
+                      title="Energy Flows"
+                      timeline={allocationTimeline}
+                      controls={(
+                        <SegmentedPillGroup
+                          options={[
+                            {
+                              label: 'Selected day',
+                              active: allocationWindow === 'day',
+                              onClick: () => setAllocationWindow('day'),
+                            },
+                            {
+                              label: 'Last 365 days',
+                              active: allocationWindow === 'last365',
+                              onClick: () => setAllocationWindow('last365'),
+                            },
+                          ]}
+                        />
+                      )}
+                    />
+                  ) : null}
                   <ConsumptionPriceBlockCard
                     annualResult={dayResult}
                     dayLabel={formatDayLabel(prices.selectedDate)}
                     units={units}
                     loading={prices.loading}
-                    priceCurveMode={state.flowPriceMode}
-                    controls={priceReplayControls}
+                    windowControls={consumptionWindowControls}
                   />
                   <PvBatteryDayChart
                     annualResult={dayResult}
                     dayLabel={formatDayLabel(prices.selectedDate)}
                     units={units}
-                    priceCurveMode={state.flowPriceMode}
-                    loading={prices.loading}
-                    controls={selectedDayControls}
-                    householdControls={(
-                      <div className="flex flex-wrap gap-2">
-                        {replayWindowControls}
-                        {replayResolutionControls}
-                      </div>
-                    )}
-                    priceControls={priceReplayControls}
+                    loading={loading}
+                    priceCurveMode="spot"
+                    windowControls={consumptionWindowControls}
+                    mode="optimizationFlow"
                   />
 
                 </>

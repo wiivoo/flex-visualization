@@ -1,15 +1,14 @@
 'use client'
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { Battery, BatteryCharging, Home, SunMedium, Zap } from 'lucide-react'
+import { useCallback, useId, useMemo, useState, type ReactNode } from 'react'
 import {
   Area,
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Line,
   ReferenceDot,
-  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -44,9 +43,17 @@ interface Props {
   } | null
   loading?: boolean
   controls?: ReactNode
-  priceControls?: ReactNode
   householdControls?: ReactNode
+  windowControls?: ReactNode
   priceCurveMode?: 'spot' | 'end'
+  mode?: 'full' | 'optimizationFlow'
+}
+
+interface ReferenceLabelProps {
+  viewBox?: {
+    x?: number
+    y?: number
+  }
 }
 
 type HouseholdSeriesKey =
@@ -55,24 +62,27 @@ type HouseholdSeriesKey =
   | 'gridDirect'
   | 'demand'
 
+type AssetOptimizationView = 'pv' | 'battery'
+
+const FLOW_EPSILON = 1e-6
+
 const COLORS = {
-  pvDirect: '#E9B94A',
+  pvDirect: '#F2B705',
   pvStored: '#C96C1C',
-  pvCharge: '#D99F21',
+  pvCharge: '#2563EB',
   gridDirect: '#7D8797',
   gridStored: '#2F6FB3',
-  export: '#0F8A86',
-  curtailed: '#E8CD88',
+  export: '#059669',
+  curtailed: '#94A3B8',
   lineSpot: '#0F172A',
   lineHousehold: '#334155',
   lineExport: '#0F8A86',
   bandCharge: '#D8E5F8',
   bandBattery: '#F8DFCA',
   bandPv: '#FCEFC8',
-  bandSoc: '#FEE6BF',
   markerCharge: '#2F6FB3',
   markerDischarge: '#C96C1C',
-  markerPvExport: '#C59B1F',
+  markerPvExport: '#059669',
   surface: '#FFFFFF',
   surfaceMuted: '#FFFFFF',
   surfaceInset: '#FFFFFF',
@@ -213,8 +223,61 @@ function formatMetricKwh(value: number): string {
   return `${value.toFixed(3)} kWh`
 }
 
+function InlinePillGroup({
+  options,
+}: {
+  options: Array<{ label: string; active: boolean; onClick: () => void }>
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
+      {options.map((option) => (
+        <button
+          key={option.label}
+          type="button"
+          onClick={option.onClick}
+          className={cn(
+            'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors whitespace-nowrap',
+            option.active ? 'bg-white text-[#313131] shadow-sm ring-1 ring-gray-200' : 'text-gray-400 hover:text-gray-600',
+          )}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function formatMoney(value: number, units: PriceUnits): string {
   return `${value >= 0 ? '+' : '-'}${units.currencySym}${Math.abs(value).toFixed(2)}`
+}
+
+function formatCostMoney(value: number, units: PriceUnits): string {
+  return `${units.currencySym}${Math.abs(value).toFixed(2)}`
+}
+
+function formatAvgPrice(value: number, units: PriceUnits): string {
+  return `${value.toFixed(1)} ${units.priceUnit}`
+}
+
+function renderStartLabel(label: string, fill: string, dy = -10) {
+  return function StartLabel({ viewBox }: ReferenceLabelProps) {
+    const x = Number(viewBox?.x ?? 0)
+    const y = Number(viewBox?.y ?? 0)
+
+    return (
+      <text
+        x={x}
+        y={y + dy}
+        textAnchor="start"
+        fill={fill}
+        fillOpacity={0.74}
+        fontSize={12}
+        fontWeight={750}
+      >
+        {label}
+      </text>
+    )
+  }
 }
 
 function buildSlotWhyLines(
@@ -342,10 +405,14 @@ export function PvBatteryDayChart({
   savingsCard = null,
   loading = false,
   controls,
-  priceControls,
   householdControls,
+  windowControls,
   priceCurveMode = 'spot',
+  mode = 'full',
 }: Props) {
+  const patternIdPrefix = useId()
+  const pvChargePatternId = `${patternIdPrefix}-battery-pv-charge-stripes`
+  const gridChargePatternId = `${patternIdPrefix}-battery-grid-charge-stripes`
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
   const slotSelectionKey = `${slots.length}:${slots[0]?.timestamp ?? ''}`
   const [selectedState, setSelectedState] = useState({ key: '', index: 0 })
@@ -353,11 +420,7 @@ export function PvBatteryDayChart({
   const setSelectedIndex = useCallback((index: number) => {
     setSelectedState({ key: slotSelectionKey, index })
   }, [slotSelectionKey])
-  const [visibleFlowLayers, setVisibleFlowLayers] = useState({
-    charge: true,
-    discharge: true,
-    pvExport: true,
-  })
+  const [assetView, setAssetView] = useState<AssetOptimizationView>('pv')
   const [visibleSeries, setVisibleSeries] = useState<Record<HouseholdSeriesKey, boolean>>({
     pvLoad: true,
     batteryLoad: true,
@@ -467,37 +530,160 @@ export function PvBatteryDayChart({
       batteryToLoadKwh: 0,
     })
   }, [slots])
+  const pvGenerationAxis = useMemo(
+    () => buildPositiveAxis(Math.max(...slots.map((slot) => slot.pvKwh), 0.1), 5),
+    [slots],
+  )
   const maxSocKwh = useMemo(
     () => Math.max(...slots.map((slot) => Math.max(slot.socKwhStart, slot.socKwhEnd)), 0.1),
     [slots],
   )
-  const maxFlowAbsKwh = useMemo(
-    () => Math.max(
-      ...slots.map((slot) =>
-        Math.max(slot.gridToBatteryKwh, slot.pvToBatteryKwh, slot.batteryToLoadKwh, slot.batteryExportKwh, slot.pvToGridKwh)),
-      0.1,
-    ),
-    [slots],
-  )
-  const flowAxis = useMemo(() => buildSymmetricAxis(maxFlowAbsKwh, 5), [maxFlowAbsKwh])
+  const assetSummary = useMemo(() => slots.reduce((totals, slot) => {
+    totals.pvProducedKwh += slot.pvKwh
+    totals.pvExportedKwh += slot.pvToGridKwh
+    totals.pvToHouseholdKwh += slot.pvToLoadKwh
+    totals.pvToBatteryKwh += slot.pvToBatteryKwh
+    totals.pvCurtailedKwh += slot.curtailedKwh
+    totals.gridChargeKwh += slot.gridToBatteryKwh
+    totals.batteryToHouseholdKwh += slot.batteryToLoadKwh
+    totals.batteryExportKwh += slot.batteryExportKwh
+    totals.batteryGridExportKwh += slot.batteryGridExportKwh
+    return totals
+  }, {
+    pvProducedKwh: 0,
+    pvExportedKwh: 0,
+    pvToHouseholdKwh: 0,
+    pvToBatteryKwh: 0,
+    pvCurtailedKwh: 0,
+    gridChargeKwh: 0,
+    batteryToHouseholdKwh: 0,
+    batteryExportKwh: 0,
+    batteryGridExportKwh: 0,
+  }), [slots])
+  const assetEconomics = useMemo(() => slots.reduce((totals, slot) => {
+    totals.savingsEur += slot.savingsEur
+    totals.baselineCostEur += slot.baselineCostEur
+    totals.importCostEur += slot.slotImportCostEur
+    totals.exportRevenueEur += slot.slotExportRevenueEur
+    totals.netCostEur += slot.slotNetCostEur
+    return totals
+  }, {
+    savingsEur: 0,
+    baselineCostEur: 0,
+    importCostEur: 0,
+    exportRevenueEur: 0,
+    netCostEur: 0,
+  }), [slots])
+  const pvExportAvgCtKwh = useMemo(() => {
+    if (assetSummary.pvExportedKwh <= FLOW_EPSILON) return null
+
+    const weightedTotal = slots.reduce((total, slot) => total + (slot.pvToGridKwh * slot.exportPriceCtKwh), 0)
+    return weightedTotal / assetSummary.pvExportedKwh
+  }, [assetSummary.pvExportedKwh, slots])
+  const pvSummaryPills = useMemo(() => [
+    {
+      key: 'pv-home',
+      label: 'PV → Home',
+      value: assetSummary.pvToHouseholdKwh,
+      color: COLORS.pvDirect,
+      detail: null,
+    },
+    {
+      key: 'pv-battery',
+      label: 'PV → Battery',
+      value: assetSummary.pvToBatteryKwh,
+      color: COLORS.pvCharge,
+      swatchStyle: {
+        background: `repeating-linear-gradient(135deg, ${COLORS.pvDirect} 0 5px, ${COLORS.pvCharge} 5px 7px, ${COLORS.pvDirect} 7px 12px)`,
+      },
+      detail: null,
+    },
+    {
+      key: 'pv-grid',
+      label: 'PV → Grid',
+      value: assetSummary.pvExportedKwh,
+      color: COLORS.markerPvExport,
+      detail: pvExportAvgCtKwh === null ? null : `@ Avg. ${formatAvgPrice(pvExportAvgCtKwh, units)}`,
+    },
+    {
+      key: 'pv-curtailed',
+      label: 'Curtailed',
+      value: assetSummary.pvCurtailedKwh,
+      color: COLORS.curtailed,
+      detail: null,
+    },
+  ].filter((item) => item.value > FLOW_EPSILON), [
+    assetSummary.pvCurtailedKwh,
+    assetSummary.pvExportedKwh,
+    assetSummary.pvToBatteryKwh,
+    assetSummary.pvToHouseholdKwh,
+    pvExportAvgCtKwh,
+    units,
+  ])
+  const batterySummaryPills = useMemo(() => [
+    {
+      key: 'pv-charge',
+      label: 'PV → Battery',
+      value: assetSummary.pvToBatteryKwh,
+      color: COLORS.pvCharge,
+      swatchStyle: {
+        background: `repeating-linear-gradient(135deg, ${COLORS.pvDirect} 0 5px, ${COLORS.pvCharge} 5px 7px, ${COLORS.pvDirect} 7px 12px)`,
+      },
+    },
+    {
+      key: 'grid-charge',
+      label: 'Grid → Battery',
+      value: assetSummary.gridChargeKwh,
+      color: COLORS.gridStored,
+      swatchStyle: {
+        background: `repeating-linear-gradient(135deg, ${COLORS.gridDirect} 0 5px, ${COLORS.pvCharge} 5px 7px, ${COLORS.gridDirect} 7px 12px)`,
+      },
+    },
+    {
+      key: 'battery-home',
+      label: 'Battery → Home',
+      value: assetSummary.batteryToHouseholdKwh,
+      color: COLORS.markerDischarge,
+    },
+    {
+      key: 'battery-grid',
+      label: 'Battery → Grid',
+      value: assetSummary.batteryExportKwh,
+      color: COLORS.export,
+    },
+  ].filter((item) => item.value > FLOW_EPSILON), [
+    assetSummary.batteryExportKwh,
+    assetSummary.batteryToHouseholdKwh,
+    assetSummary.gridChargeKwh,
+    assetSummary.pvToBatteryKwh,
+  ])
   const batteryFlowData = useMemo(
     () => slots.map((slot, index) => ({
       ...slot,
       idx: index,
       time: slot.label,
+      pvGenerationKwh: slot.pvKwh,
       chargeFromPriceKwh: slot.gridToBatteryKwh,
       chargeFromExcessPvKwh: slot.pvToBatteryKwh,
       dischargeToHouseholdKwh: -slot.batteryToLoadKwh,
       dischargeToPriceKwh: -slot.batteryExportKwh,
       sellExcessPvKwh: -slot.pvToGridKwh,
       chargeMarkerPrice: slot.chargeToBatteryKwh > 0 ? slot[flowPriceDataKey] : null,
+      gridChargeMarkerPrice: slot.gridToBatteryKwh > 0 ? slot[flowPriceDataKey] : null,
       dischargeMarkerPrice: (slot.batteryToLoadKwh + slot.batteryExportKwh) > 0 ? slot[flowPriceDataKey] : null,
+      batteryGridExportMarkerPrice: slot.batteryGridExportKwh > 0 ? slot[flowPriceDataKey] : null,
       pvExportMarkerPrice: slot.pvToGridKwh > 0 ? slot[flowPriceDataKey] : null,
-      socBandKwh: maxSocKwh > 0
-        ? (slot.socKwhEnd / maxSocKwh) * flowAxis.domain[1] * 0.9
-        : 0,
+      batteryWaterfallRange: [
+        Math.min(slot.socKwhStart, slot.socKwhEnd),
+        Math.max(slot.socKwhStart, slot.socKwhEnd),
+      ] as [number, number],
+      batteryWaterfallDeltaKwh: slot.socKwhEnd - slot.socKwhStart,
+      batteryWaterfallFill: slot.socKwhEnd >= slot.socKwhStart
+        ? (slot.pvToBatteryKwh >= slot.gridToBatteryKwh ? `url(#${pvChargePatternId})` : `url(#${gridChargePatternId})`)
+        : (slot.batteryExportKwh > slot.batteryToLoadKwh ? COLORS.export : COLORS.markerDischarge),
+      batterySocTraceKwh: slot.socKwhEnd,
     })),
-    [flowAxis.domain, flowPriceDataKey, maxSocKwh, slots],
+    [flowPriceDataKey, gridChargePatternId, pvChargePatternId, slots],
   )
   const householdDataByIndex = useMemo(
     () => new Map(householdData.map((point) => [point.idx, point])),
@@ -609,266 +795,7 @@ export function PvBatteryDayChart({
   }, [flowPriceDataKey, slots])
 
   const isQuarterHour = slotsPerHour >= 4
-  const timelineMinWidthPx = useMemo(() => {
-    if (!isQuarterHour) return 0
-    // Keep quarter-hour slots readable on 48h/72h windows.
-    const pxPerSlot = householdData.length > 96 ? 6 : 4.5
-    return Math.max(760, Math.round(householdData.length * pxPerSlot))
-  }, [householdData.length, isQuarterHour])
-  const socTurnAnnotations = useMemo(() => {
-    if (slots.length < 3 || maxSocKwh <= 0) return [] as Array<{ key: string; time: string; y: number; label: string }>
-
-    const epsilon = Math.max(maxSocKwh * 0.001, 0.01)
-    const direction = (delta: number) => (delta > epsilon ? 1 : delta < -epsilon ? -1 : 0)
-    const annotations: Array<{ key: string; time: string; y: number; label: string }> = []
-    for (let index = 1; index < slots.length - 1; index += 1) {
-      const prevDir = direction(slots[index].socKwhEnd - slots[index - 1].socKwhEnd)
-      const nextDir = direction(slots[index + 1].socKwhEnd - slots[index].socKwhEnd)
-      const hasTurn = prevDir !== nextDir && !(prevDir === 0 && nextDir === 0)
-      if (!hasTurn) continue
-
-      const percent = Math.round((slots[index].socKwhEnd / maxSocKwh) * 100)
-      const point = batteryFlowData[index]
-      if (!point) continue
-
-      annotations.push({
-        key: `soc-turn-${index}`,
-        time: point.time,
-        y: point.socBandKwh,
-        label: `${percent}%`,
-      })
-    }
-
-    return annotations
-  }, [batteryFlowData, maxSocKwh, slots])
-  const flowPills = useMemo(() => {
-    let chargeKwh = 0
-    let chargeWeightedCt = 0
-    let dischargeKwh = 0
-    let dischargeWeightedCt = 0
-    let pvExportKwh = 0
-    let pvExportWeightedCt = 0
-
-    for (const slot of slots) {
-      if (slot.chargeToBatteryKwh > 0) {
-        chargeKwh += slot.chargeToBatteryKwh
-        chargeWeightedCt += slot.chargeToBatteryKwh * slot[flowPriceDataKey]
-      }
-
-      const slotDischargeKwh = slot.batteryToLoadKwh + slot.batteryExportKwh
-      if (slotDischargeKwh > 0) {
-        dischargeKwh += slotDischargeKwh
-        dischargeWeightedCt += slotDischargeKwh * slot[flowPriceDataKey]
-      }
-
-      if (slot.pvToGridKwh > 0) {
-        pvExportKwh += slot.pvToGridKwh
-        pvExportWeightedCt += slot.pvToGridKwh * slot.exportPriceCtKwh
-      }
-    }
-
-    const chargeAvgCtKwh = chargeKwh > 0 ? chargeWeightedCt / chargeKwh : null
-    const chargeTotalEur = chargeWeightedCt / 100
-    const dischargeAvgCtKwh = dischargeKwh > 0 ? dischargeWeightedCt / dischargeKwh : null
-    const pvExportAvgCtKwh = pvExportKwh > 0 ? pvExportWeightedCt / pvExportKwh : null
-
-    return {
-      charge: chargeAvgCtKwh === null
-        ? null
-        : {
-            avgCtKwh: chargeAvgCtKwh,
-            totalEur: chargeTotalEur,
-          },
-      discharge: dischargeAvgCtKwh === null
-        ? null
-        : {
-            avgCtKwh: dischargeAvgCtKwh,
-            totalEur: dischargeWeightedCt / 100,
-          },
-      pvExport: pvExportAvgCtKwh === null
-        ? null
-        : {
-            avgCtKwh: pvExportAvgCtKwh,
-            totalEur: pvExportWeightedCt / 100,
-          },
-    }
-  }, [flowPriceDataKey, slots])
-  const flowTopStats = useMemo(() => {
-    let pvExportKwh = 0
-    let pvExportWeightedCt = 0
-    let batteryExportSpotKwh = 0
-    let batteryExportSpotSavingsEur = 0
-    let batteryExportPvKwh = 0
-    let batteryExportPvSavingsEur = 0
-    let chargeFromGridKwh = 0
-    let chargeFromGridWeightedCt = 0
-    let chargeFromPvKwh = 0
-    let chargeFromPvWeightedCt = 0
-
-    // Reference price for savings calculation depends on mode
-    const referencePriceKey = priceCurveMode === 'end' ? 'householdImportPriceCtKwh' : 'spotPriceCtKwh'
-
-    for (const slot of slots) {
-      if (slot.pvToGridKwh > 0) {
-        pvExportKwh += slot.pvToGridKwh
-        pvExportWeightedCt += slot.pvToGridKwh * slot.exportPriceCtKwh
-      }
-      if (slot.batteryGridExportKwh > 0) {
-        batteryExportSpotKwh += slot.batteryGridExportKwh
-        // Calculate savings vs reference price
-        const referencePrice = slot[referencePriceKey]
-        const savingsEur = (slot.exportPriceCtKwh - referencePrice) * slot.batteryGridExportKwh / 100
-        batteryExportSpotSavingsEur += savingsEur
-      }
-      if (slot.batteryPvExportKwh > 0) {
-        batteryExportPvKwh += slot.batteryPvExportKwh
-        // Calculate savings vs reference price
-        const referencePrice = slot[referencePriceKey]
-        const savingsEur = (slot.exportPriceCtKwh - referencePrice) * slot.batteryPvExportKwh / 100
-        batteryExportPvSavingsEur += savingsEur
-      }
-      if (slot.gridToBatteryKwh > 0) {
-        chargeFromGridKwh += slot.gridToBatteryKwh
-        chargeFromGridWeightedCt += slot.gridToBatteryKwh * slot[referencePriceKey]
-      }
-      if (slot.pvToBatteryKwh > 0) {
-        chargeFromPvKwh += slot.pvToBatteryKwh
-        chargeFromPvWeightedCt += slot.pvToBatteryKwh * slot[referencePriceKey]
-      }
-    }
-
-    return {
-      pvExport: {
-        kwh: pvExportKwh,
-        avgCtKwh: pvExportKwh > 0 ? pvExportWeightedCt / pvExportKwh : null,
-      },
-      batteryExportSpot: {
-        kwh: batteryExportSpotKwh,
-        avgSavingCtKwh: batteryExportSpotKwh > 0 ? (batteryExportSpotSavingsEur * 100) / batteryExportSpotKwh : null,
-      },
-      batteryExportPv: {
-        kwh: batteryExportPvKwh,
-        avgSavingCtKwh: batteryExportPvKwh > 0 ? (batteryExportPvSavingsEur * 100) / batteryExportPvKwh : null,
-      },
-      chargeFromGrid: {
-        kwh: chargeFromGridKwh,
-        avgCtKwh: chargeFromGridKwh > 0 ? chargeFromGridWeightedCt / chargeFromGridKwh : null,
-      },
-      chargeFromPv: {
-        kwh: chargeFromPvKwh,
-        avgCtKwh: chargeFromPvKwh > 0 ? chargeFromPvWeightedCt / chargeFromPvKwh : null,
-      },
-    }
-  }, [slots, priceCurveMode])
-  const anchoredFlowPills = useMemo(() => {
-    if (slots.length === 0) return []
-
-    const toPercent = (index: number) => ((index + 0.5) / slots.length) * 100
-    const clampPercent = (value: number) => Math.min(94, Math.max(6, value))
-    const minGapPercent = 23
-    const plotTopPx = flowChartLayout.marginTop
-    const plotBottomPx = flowChartLayout.height - flowChartLayout.marginBottom
-    const plotHeightPx = Math.max(1, plotBottomPx - plotTopPx)
-    const priceDomainSpan = Math.max(1e-6, flowPriceAxis.domain[1] - flowPriceAxis.domain[0])
-    const yMin = plotTopPx + 6
-    const yMax = plotBottomPx - 22
-
-    const weightedCenter = (
-      predicate: (slot: PvBatterySlotResult) => boolean,
-      weight: (slot: PvBatterySlotResult) => number,
-    ) => {
-      let weightedIndex = 0
-      let totalWeight = 0
-
-      slots.forEach((slot, index) => {
-        if (!predicate(slot)) return
-        const w = Math.max(weight(slot), 1e-6)
-        weightedIndex += index * w
-        totalWeight += w
-      })
-
-      if (totalWeight <= 0) return null
-      return clampPercent(toPercent(weightedIndex / totalWeight))
-    }
-    const weightedPrice = (
-      predicate: (slot: PvBatterySlotResult) => boolean,
-      weight: (slot: PvBatterySlotResult) => number,
-    ) => {
-      let weightedPrice = 0
-      let totalWeight = 0
-
-      slots.forEach((slot) => {
-        if (!predicate(slot)) return
-        const w = Math.max(weight(slot), 1e-6)
-        weightedPrice += slot[flowPriceDataKey] * w
-        totalWeight += w
-      })
-
-      if (totalWeight <= 0) return null
-      return weightedPrice / totalWeight
-    }
-    const toCurveYPx = (priceCtKwh: number) => {
-      const ratio = (flowPriceAxis.domain[1] - priceCtKwh) / priceDomainSpan
-      return plotTopPx + ratio * plotHeightPx
-    }
-    const clampYPx = (y: number) => Math.min(yMax, Math.max(yMin, y))
-
-    const candidates: Array<{ id: 'charge' | 'discharge' | 'pvExport'; xPercent: number; curveYPx: number }> = []
-
-    if (flowPills.charge) {
-      const center = weightedCenter(
-        (slot) => slot.chargeToBatteryKwh > 0,
-        (slot) => slot.chargeToBatteryKwh,
-      )
-      const price = weightedPrice(
-        (slot) => slot.chargeToBatteryKwh > 0,
-        (slot) => slot.chargeToBatteryKwh,
-      )
-      if (center !== null && price !== null) candidates.push({ id: 'charge', xPercent: center, curveYPx: toCurveYPx(price) })
-    }
-    if (flowPills.discharge) {
-      const center = weightedCenter(
-        (slot) => (slot.batteryToLoadKwh + slot.batteryExportKwh) > 0,
-        (slot) => slot.batteryToLoadKwh + slot.batteryExportKwh,
-      )
-      const price = weightedPrice(
-        (slot) => (slot.batteryToLoadKwh + slot.batteryExportKwh) > 0,
-        (slot) => slot.batteryToLoadKwh + slot.batteryExportKwh,
-      )
-      if (center !== null && price !== null) candidates.push({ id: 'discharge', xPercent: center, curveYPx: toCurveYPx(price) })
-    }
-    if (flowPills.pvExport) {
-      const center = weightedCenter(
-        (slot) => slot.pvToGridKwh > 0,
-        (slot) => slot.pvToGridKwh,
-      )
-      const price = weightedPrice(
-        (slot) => slot.pvToGridKwh > 0,
-        (slot) => slot.pvToGridKwh,
-      )
-      if (center !== null && price !== null) candidates.push({ id: 'pvExport', xPercent: center, curveYPx: toCurveYPx(price) })
-    }
-
-    const placed: Array<{ id: 'charge' | 'discharge' | 'pvExport'; xPercent: number; yPx: number }> = []
-    ;[...candidates]
-      .sort((a, b) => a.xPercent - b.xPercent)
-      .forEach((pill) => {
-        const placeBelowCurve = pill.curveYPx < plotTopPx + plotHeightPx / 2
-        const offsetDirection = placeBelowCurve ? 1 : -1
-        let yPx = clampYPx(pill.curveYPx + (offsetDirection * 26))
-
-        for (const other of placed) {
-          const collidesX = Math.abs(pill.xPercent - other.xPercent) < minGapPercent
-          const collidesY = Math.abs(yPx - other.yPx) < 24
-          if (!collidesX || !collidesY) continue
-          yPx = clampYPx(yPx + (offsetDirection * 24))
-        }
-
-        placed.push({ id: pill.id, xPercent: pill.xPercent, yPx })
-      })
-    return placed
-  }, [flowChartLayout.height, flowChartLayout.marginBottom, flowChartLayout.marginTop, flowPills.charge, flowPills.discharge, flowPills.pvExport, flowPriceAxis.domain, flowPriceDataKey, slots])
-
+  const batteryFlowAxis = useMemo(() => buildPositiveAxis(maxSocKwh, 5), [maxSocKwh])
   const maxHomeStackKwh = useMemo(
     () => Math.max(
       ...slots.map(
@@ -894,14 +821,12 @@ export function PvBatteryDayChart({
   const toggleSeries = (key: HouseholdSeriesKey) => {
     setVisibleSeries((prev) => ({ ...prev, [key]: !prev[key] }))
   }
-  const toggleFlowLayer = (key: 'charge' | 'discharge' | 'pvExport') => {
-    setVisibleFlowLayers((prev) => ({ ...prev, [key]: !prev[key] }))
-  }
   const syncSelectedIndex = useCallback((value: number | string | undefined | null) => {
     const nextIndex = typeof value === 'number' ? value : Number(value)
     if (!Number.isFinite(nextIndex)) return
     setSelectedIndex(Math.max(0, Math.min(slots.length - 1, nextIndex)))
   }, [setSelectedIndex, slots.length])
+  const showFullLayout = mode === 'full'
 
   if (loading || slots.length === 0 || !selectedSlot) {
     return (
@@ -915,9 +840,10 @@ export function PvBatteryDayChart({
 
   return (
     <div className="space-y-5">
-      {controls ? <div>{controls}</div> : null}
+      {showFullLayout && controls ? <div>{controls}</div> : null}
 
       {/* Household consumption */}
+      {showFullLayout ? (
       <Card className="overflow-hidden shadow-sm border-gray-200/80">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
@@ -1006,11 +932,8 @@ export function PvBatteryDayChart({
               </div>
               {householdControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{householdControls}</div> : null}
             </div>
-            <div className={cn(isQuarterHour ? 'overflow-x-auto' : '')}>
-              <div
-                className="relative h-[420px]"
-                style={timelineMinWidthPx > 0 ? { minWidth: `${timelineMinWidthPx}px` } : undefined}
-              >
+            <div>
+              <div className="relative h-[420px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart
                     data={householdData}
@@ -1020,6 +943,16 @@ export function PvBatteryDayChart({
                     onMouseMove={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                     onClick={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                   >
+                  <defs>
+                    <pattern id={pvChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="8" height="8" fill={COLORS.pvDirect} />
+                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    </pattern>
+                    <pattern id={gridChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="8" height="8" fill={COLORS.gridDirect} />
+                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    </pattern>
+                  </defs>
                   <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
 
                   <XAxis
@@ -1084,7 +1017,7 @@ export function PvBatteryDayChart({
                   {/* Stacked pixel bars for household consumption composition */}
                   {visibleSeries.pvLoad ? (
                     <Bar
-                      name="PV -> load"
+                      name="PV → load"
                       dataKey="visiblePvToLoadKwh"
                       fill={COLORS.pvDirect}
                       minPointSize={2}
@@ -1095,7 +1028,7 @@ export function PvBatteryDayChart({
                   ) : null}
                   {visibleSeries.batteryLoad ? (
                     <Bar
-                      name="Battery -> load"
+                      name="Battery → load"
                       dataKey="visibleBatteryToLoadKwh"
                       fill={COLORS.pvStored}
                       minPointSize={2}
@@ -1135,194 +1068,75 @@ export function PvBatteryDayChart({
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
       <Card className="overflow-hidden shadow-sm border-gray-200/80">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
-            <div className="grid gap-4 lg:grid-cols-[minmax(240px,1fr)_minmax(560px,2fr)_auto] lg:items-center">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="pt-0.5">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Asset Optimization</p>
-                <p className="mt-1 text-[24px] font-semibold tracking-tight text-slate-900">Asset Optimization</p>
+                <p className="text-[24px] font-semibold tracking-tight text-slate-900">Asset Optimization</p>
                 <p className="mt-1 text-[13px] font-medium text-slate-500">{dayLabel}</p>
               </div>
-              <div className="min-w-0">
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">PV export</p>
-                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.pvExport.kwh)}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                      Avg {flowTopStats.pvExport.avgCtKwh === null ? '—' : `${flowTopStats.pvExport.avgCtKwh.toFixed(2)} ${units.priceUnit}`}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Battery export (Spot)</p>
-                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.batteryExportSpot.kwh)}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                      Avg saving {flowTopStats.batteryExportSpot.avgSavingCtKwh === null ? '—' : `${flowTopStats.batteryExportSpot.avgSavingCtKwh.toFixed(2)} ${units.priceUnit}`}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Battery export (PV)</p>
-                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.batteryExportPv.kwh)}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                      Avg saving {flowTopStats.batteryExportPv.avgSavingCtKwh === null ? '—' : `${flowTopStats.batteryExportPv.avgSavingCtKwh.toFixed(2)} ${units.priceUnit}`}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Charge from grid</p>
-                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.chargeFromGrid.kwh)}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                      Avg {flowTopStats.chargeFromGrid.avgCtKwh === null ? '—' : `${flowTopStats.chargeFromGrid.avgCtKwh.toFixed(2)} ${units.priceUnit}`}
-                    </p>
-                  </div>
-                  <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                    <p className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">Charge from own PV</p>
-                    <p className="mt-1 text-[12px] font-semibold tabular-nums text-slate-900">{formatDayKwh(flowTopStats.chargeFromPv.kwh)}</p>
-                    <p className="mt-1 text-[10px] leading-4 text-gray-500">
-                      Avg {flowTopStats.chargeFromPv.avgCtKwh === null ? '—' : `${flowTopStats.chargeFromPv.avgCtKwh.toFixed(2)} ${units.priceUnit}`}
-                    </p>
-                  </div>
+              {windowControls ? (
+                <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+                  <InlinePillGroup
+                    options={[
+                      {
+                        label: 'PV',
+                        active: assetView === 'pv',
+                        onClick: () => setAssetView('pv'),
+                      },
+                      {
+                        label: 'Battery',
+                        active: assetView === 'battery',
+                        onClick: () => setAssetView('battery'),
+                      },
+                    ]}
+                  />
+                  {windowControls}
                 </div>
-              </div>
-              <div />
+              ) : (
+                <div />
+              )}
             </div>
           </div>
 
           <div className="px-4 pb-3 pt-3 sm:px-5">
-            <div className="mb-2 flex flex-wrap items-start gap-2 px-1 py-1">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.gridStored }} />
-                  Charge from price (grid)
-                </span>
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.pvCharge }} />
-                  Charge from excess PV
-                </span>
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.pvStored }} />
-                  Discharge to household
-                </span>
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.export }} />
-                  Discharge to price (export)
-                </span>
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.curtailed }} />
-                  Sell excess PV (direct)
-                </span>
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-2 w-2 rounded-sm" style={{ backgroundColor: COLORS.bandSoc }} />
-                  SoC presence band
-                </span>
-                <span className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] font-medium text-slate-600">
-                  <span className="h-3 w-4 border-b-2" style={{ borderColor: COLORS.lineSpot }} />
-                  {flowPriceLegendLabel}
-                </span>
-              </div>
-              {priceControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{priceControls}</div> : null}
-            </div>
-            <div className={cn(isQuarterHour ? 'overflow-x-auto' : '')}>
-              <div
-                className="relative h-[420px]"
-                style={timelineMinWidthPx > 0 ? { minWidth: `${timelineMinWidthPx}px` } : undefined}
-              >
-                {anchoredFlowPills.map((pill) => {
-                  if (pill.id === 'charge' && flowPills.charge) {
-                    return (
-                      <button
-                        type="button"
-                        key={pill.id}
-                        onClick={() => toggleFlowLayer('charge')}
-                        className="absolute z-20 -translate-x-1/2"
-                        aria-pressed={visibleFlowLayers.charge}
-                        title={`${visibleFlowLayers.charge ? 'Hide' : 'Show'} charge layers`}
-                        style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+            <div>
+              <div className="relative h-[420px]">
+                {assetView === 'pv' ? (
+                  <div className="pointer-events-none absolute left-[72px] top-4 z-20 flex max-w-[calc(100%-5.5rem)] flex-col items-start gap-1.5">
+                    {pvSummaryPills.map((item) => (
+                      <div
+                        key={item.key}
+                        aria-label={`${item.label} ${formatDayKwh(item.value)}${item.detail ? ` ${item.detail}` : ''}`}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/70 bg-white/86 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 shadow-sm backdrop-blur-md"
                       >
-                        <div className={cn(
-                          'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
-                          visibleFlowLayers.charge
-                            ? 'bg-blue-50/80 border-blue-300/50 text-blue-800'
-                            : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
-                        )}>
-                          <BatteryCharging className="h-3 w-3 text-blue-700" />
-                          <span className="font-semibold">Charge</span>
-                          <span className="font-bold tabular-nums">
-                            Avg {flowPills.charge.avgCtKwh.toFixed(2)} {units.priceUnit}
-                          </span>
-                          <span>·</span>
-                          <span className="tabular-nums font-semibold">
-                            Total {units.currencySym}{flowPills.charge.totalEur.toFixed(2)}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  }
-
-                  if (pill.id === 'discharge' && flowPills.discharge) {
-                    return (
-                      <button
-                        type="button"
-                        key={pill.id}
-                        onClick={() => toggleFlowLayer('discharge')}
-                        className="absolute z-20 -translate-x-1/2"
-                        aria-pressed={visibleFlowLayers.discharge}
-                        title={`${visibleFlowLayers.discharge ? 'Hide' : 'Show'} discharge layers`}
-                        style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
+                        <span className="h-2 w-2 shrink-0 rounded-sm" style={item.swatchStyle ?? { backgroundColor: item.color }} />
+                        <span className="whitespace-nowrap font-bold text-slate-900">{item.label}</span>
+                        <span className="whitespace-nowrap tabular-nums">{formatDayKwh(item.value)}</span>
+                        {item.detail ? (
+                          <span className="whitespace-nowrap tabular-nums text-slate-500">{item.detail}</span>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="pointer-events-none absolute left-[72px] top-4 z-20 flex max-w-[calc(100%-5.5rem)] flex-col items-start gap-1.5">
+                    {batterySummaryPills.map((item) => (
+                      <div
+                        key={item.key}
+                        aria-label={`${item.label} ${formatDayKwh(item.value)}`}
+                        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/70 bg-white/86 px-2.5 py-0.5 text-[11px] font-semibold text-slate-700 shadow-sm backdrop-blur-md"
                       >
-                        <div className={cn(
-                          'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
-                          visibleFlowLayers.discharge
-                            ? 'bg-amber-50/80 border-amber-300/50 text-amber-800'
-                            : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
-                        )}>
-                          <Battery className="h-3 w-3 text-amber-700" />
-                          <span className="font-semibold">Discharge</span>
-                          <span className="font-bold tabular-nums">
-                            Avg {flowPills.discharge.avgCtKwh.toFixed(2)} {units.priceUnit}
-                          </span>
-                          <span>·</span>
-                          <span className="tabular-nums font-semibold">
-                            Total {units.currencySym}{flowPills.discharge.totalEur.toFixed(2)}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  }
-
-                  if (pill.id === 'pvExport' && flowPills.pvExport) {
-                    return (
-                      <button
-                        type="button"
-                        key={pill.id}
-                        onClick={() => toggleFlowLayer('pvExport')}
-                        className="absolute z-20 -translate-x-1/2"
-                        aria-pressed={visibleFlowLayers.pvExport}
-                        title={`${visibleFlowLayers.pvExport ? 'Hide' : 'Show'} PV export layers`}
-                        style={{ left: `${pill.xPercent}%`, top: `${pill.yPx}px` }}
-                      >
-                        <div className={cn(
-                          'backdrop-blur-sm border rounded-full px-2 py-0.5 shadow-sm flex items-center gap-1 text-[10px] whitespace-nowrap transition-colors',
-                          visibleFlowLayers.pvExport
-                            ? 'bg-yellow-50/85 border-yellow-300/50 text-yellow-800'
-                            : 'bg-slate-100/95 border-slate-300/70 text-slate-500',
-                        )}>
-                          <SunMedium className="h-3 w-3 text-yellow-700" />
-                          <span className="font-semibold">PV Export</span>
-                          <span className="font-bold tabular-nums">
-                            Avg {flowPills.pvExport.avgCtKwh.toFixed(2)} {units.priceUnit}
-                          </span>
-                          <span>·</span>
-                          <span className="tabular-nums font-semibold">
-                            Total {units.currencySym}{flowPills.pvExport.totalEur.toFixed(2)}
-                          </span>
-                        </div>
-                      </button>
-                    )
-                  }
-
-                  return null
-                })}
+                        <span className="h-2 w-2 shrink-0 rounded-sm" style={item.swatchStyle ?? { backgroundColor: item.color }} />
+                        <span className="whitespace-nowrap font-bold text-slate-900">{item.label}</span>
+                        <span className="whitespace-nowrap tabular-nums">{formatDayKwh(item.value)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <ResponsiveContainer width="100%" height="100%">
                   <ComposedChart
                     data={batteryFlowData}
@@ -1332,6 +1146,16 @@ export function PvBatteryDayChart({
                     onMouseMove={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                     onClick={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                   >
+                  <defs>
+                    <pattern id={pvChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="8" height="8" fill={COLORS.pvDirect} />
+                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    </pattern>
+                    <pattern id={gridChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="8" height="8" fill={COLORS.gridDirect} />
+                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    </pattern>
+                  </defs>
                   <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
 
                   <XAxis
@@ -1349,36 +1173,58 @@ export function PvBatteryDayChart({
 
                   <YAxis
                     yAxisId="flow"
-                    orientation="left"
-                    width={56}
-                    domain={flowAxis.domain}
-                    ticks={flowAxis.ticks}
+                    orientation="right"
+                    width={66}
+                    domain={assetView === 'pv' ? pvGenerationAxis.domain : batteryFlowAxis.domain}
+                    ticks={assetView === 'pv' ? pvGenerationAxis.ticks : batteryFlowAxis.ticks}
                     tick={{ fontSize: 11, fill: COLORS.axis }}
                     tickLine={{ stroke: COLORS.textSoft }}
                     axisLine={{ stroke: COLORS.textSoft }}
-                    tickFormatter={(value: number) => formatKwhAxisTick(value, flowAxis.step)}
-                    label={{ value: 'kWh', angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 11 }}
+                    tickFormatter={(value: number) => formatKwhAxisTick(value, assetView === 'pv' ? pvGenerationAxis.step : batteryFlowAxis.step)}
+                    label={{ value: assetView === 'pv' ? 'PV generation (kWh)' : 'Battery SoC (kWh)', angle: 90, position: 'insideRight', fill: COLORS.axis, fontSize: 11 }}
                   />
                   <YAxis
                     yAxisId="price"
-                    orientation="right"
+                    orientation="left"
                     domain={flowPriceAxis.domain}
                     ticks={flowPriceAxis.ticks}
-                    width={62}
+                    width={58}
                     tick={{ fontSize: 10, fill: COLORS.axis }}
                     tickLine={{ stroke: COLORS.textSoft }}
                     axisLine={{ stroke: COLORS.textSoft }}
                     tickFormatter={(value: number) => `${value.toFixed(0)} ${units.priceSym}`}
-                    label={{ value: units.priceUnit, angle: 90, position: 'insideRight', fill: COLORS.axis, fontSize: 10 }}
+                    label={{ value: units.priceUnit, angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 10 }}
                   />
-                  <ReferenceLine yAxisId="flow" y={0} stroke={COLORS.textSoft} strokeDasharray="3 3" />
                   <ReferenceLine x={effectiveSelectedIndex} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
+                  {assetView === 'battery' ? (
+                    <ReferenceLine yAxisId="flow" y={0} stroke={COLORS.axis} strokeOpacity={0.26} />
+                  ) : null}
+                  <ReferenceDot
+                    yAxisId="price"
+                    x={0}
+                    y={batteryFlowData[0]?.[flowPriceDataKey] ?? flowPriceAxis.domain[0]}
+                    r={0}
+                    ifOverflow="hidden"
+                    label={renderStartLabel('Price curve', COLORS.lineSpot, -10)}
+                  />
+                  {assetView === 'battery' ? (
+                    <ReferenceDot
+                      yAxisId="flow"
+                      x={0}
+                      y={batteryFlowData[0]?.batterySocTraceKwh ?? batteryFlowAxis.domain[0]}
+                      r={0}
+                      ifOverflow="hidden"
+                      label={renderStartLabel('Battery SoC', COLORS.axisStrong, -14)}
+                    />
+                  ) : null}
 
                   <Tooltip
                     contentStyle={{ borderRadius: 18, borderColor: COLORS.border, boxShadow: '0 12px 30px rgba(15,23,42,0.12)' }}
-                    formatter={(value: number | string | undefined, name: string | undefined) => {
+                    formatter={(value: number | string | [number, number] | undefined, name: string | undefined) => {
+                      if (Array.isArray(value)) return [`${value[0].toFixed(2)} → ${value[1].toFixed(2)} kWh`, name ?? 'Value']
                       if (typeof value !== 'number') return [value ?? '—', name ?? 'Value']
-                      if (name?.toLowerCase().includes('spot price')) return [`${value.toFixed(2)} ${units.priceUnit}`, name ?? 'Value']
+                      const normalizedName = name?.toLowerCase() ?? ''
+                      if (normalizedName.includes('price') || normalizedName.includes('direct pv sale') || normalizedName.includes('battery charging') || normalizedName.includes('battery discharging')) return [`${value.toFixed(2)} ${units.priceUnit}`, name ?? 'Value']
                       return [`${Math.abs(value).toFixed(3)} kWh`, name ?? 'Value']
                     }}
                     labelFormatter={(value) => {
@@ -1390,85 +1236,92 @@ export function PvBatteryDayChart({
                     }}
                   />
 
-                  <Area
-                    yAxisId="flow"
-                    type="monotone"
-                    dataKey="socBandKwh"
-                    stroke="none"
-                    fill={COLORS.bandSoc}
-                    fillOpacity={0.32}
-                    isAnimationActive={false}
-                    tooltipType="none"
-                  />
-                  {socTurnAnnotations.map((annotation) => (
-                    <ReferenceDot
-                      key={annotation.key}
-                      yAxisId="flow"
-                      x={annotation.time}
-                      y={annotation.y}
-                      r={0}
-                      ifOverflow="hidden"
-                      label={{
-                        value: annotation.label,
-                        position: 'inside',
-                        fill: COLORS.pvStored,
-                        fontSize: 10,
-                        fontWeight: 500,
-                        opacity: 0.22,
-                      }}
-                    />
-                  ))}
-
-                  {visibleFlowLayers.charge ? (
-                    <Bar
-                      yAxisId="flow"
-                      name="Charge from price (grid)"
-                      dataKey="chargeFromPriceKwh"
-                      fill={COLORS.gridStored}
-                      isAnimationActive={false}
-                      stackId="flow"
-                    />
-                  ) : null}
-                  {visibleFlowLayers.charge ? (
-                    <Bar
-                      yAxisId="flow"
-                      name="Charge from excess PV"
-                      dataKey="chargeFromExcessPvKwh"
-                      fill={COLORS.pvCharge}
-                      isAnimationActive={false}
-                      stackId="flow"
-                    />
-                  ) : null}
-                  {visibleFlowLayers.discharge ? (
-                    <Bar
-                      yAxisId="flow"
-                      name="Discharge to household"
-                      dataKey="dischargeToHouseholdKwh"
-                      fill={COLORS.pvStored}
-                      isAnimationActive={false}
-                      stackId="flow"
-                    />
-                  ) : null}
-                  {visibleFlowLayers.discharge ? (
-                    <Bar
-                      yAxisId="flow"
-                      name="Discharge to price (export)"
-                      dataKey="dischargeToPriceKwh"
-                      fill={COLORS.export}
-                      isAnimationActive={false}
-                      stackId="flow"
-                    />
-                  ) : null}
-                  {visibleFlowLayers.pvExport ? (
-                    <Bar
-                      yAxisId="flow"
-                      name="Sell excess PV (direct)"
-                      dataKey="sellExcessPvKwh"
-                      fill={COLORS.curtailed}
-                      isAnimationActive={false}
-                      stackId="flow"
-                    />
-                  ) : null}
+                  {assetView === 'pv' ? (
+                    <>
+                      <Bar
+                        yAxisId="flow"
+                        name="PV → household"
+                        dataKey="pvToLoadKwh"
+                        stackId="pvAllocation"
+                        fill={COLORS.pvDirect}
+                        fillOpacity={0.78}
+                        stroke="#FFFFFF"
+                        strokeOpacity={0.7}
+                        strokeWidth={0.7}
+                        isAnimationActive={false}
+                      />
+                      <Bar
+                        yAxisId="flow"
+                        name="PV → battery"
+                        dataKey="pvToBatteryKwh"
+                        stackId="pvAllocation"
+                        fill={`url(#${pvChargePatternId})`}
+                        fillOpacity={0.74}
+                        stroke="#FFFFFF"
+                        strokeOpacity={0.7}
+                        strokeWidth={0.7}
+                        isAnimationActive={false}
+                      />
+                      <Bar
+                        yAxisId="flow"
+                        name="PV → grid"
+                        dataKey="pvToGridKwh"
+                        stackId="pvAllocation"
+                        fill={COLORS.markerPvExport}
+                        fillOpacity={0.72}
+                        stroke="#FFFFFF"
+                        strokeOpacity={0.7}
+                        strokeWidth={0.7}
+                        isAnimationActive={false}
+                      />
+                      <Bar
+                        yAxisId="flow"
+                        name="PV curtailed"
+                        dataKey="curtailedKwh"
+                        stackId="pvAllocation"
+                        fill={COLORS.curtailed}
+                        fillOpacity={0.64}
+                        stroke="#FFFFFF"
+                        strokeOpacity={0.72}
+                        strokeWidth={0.7}
+                        isAnimationActive={false}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <Line
+                        yAxisId="flow"
+                        name="Battery SoC trace"
+                        type="stepAfter"
+                        dataKey="batterySocTraceKwh"
+                        stroke={COLORS.axisStrong}
+                        strokeOpacity={0.74}
+                        strokeWidth={2.2}
+                        strokeDasharray="5 4"
+                        dot={false}
+                        activeDot={false}
+                        isAnimationActive={false}
+                      />
+                      <Bar
+                        yAxisId="flow"
+                        name="Battery SoC waterfall"
+                        dataKey="batteryWaterfallRange"
+                        fillOpacity={0.78}
+                        stroke="#FFFFFF"
+                        strokeOpacity={0.72}
+                        strokeWidth={0.7}
+                        isAnimationActive={false}
+                      >
+                        {batteryFlowData.map((point) => (
+                          <Cell
+                            key={`battery-waterfall-${point.idx}`}
+                            fill={point.batteryWaterfallFill}
+                            fillOpacity={Math.abs(point.batteryWaterfallDeltaKwh) > FLOW_EPSILON ? 0.78 : 0.18}
+                          />
+                        ))}
+                      </Bar>
+                    </>
+                  )}
 
                   <Line
                     yAxisId="price"
@@ -1480,51 +1333,53 @@ export function PvBatteryDayChart({
                     dot={false}
                     isAnimationActive={false}
                   />
-                  {visibleFlowLayers.charge ? (
+                  {assetView === 'pv' ? (
                     <Line
                       yAxisId="price"
-                      name="Battery charge"
-                      type="monotone"
-                      dataKey="chargeMarkerPrice"
-                      stroke={COLORS.markerCharge}
-                      strokeWidth={isQuarterHour ? 2 : 3}
-                      dot={isQuarterHour
-                        ? { r: 2, fill: COLORS.markerCharge, stroke: '#fff', strokeWidth: 1 }
-                        : { r: 3.5, fill: COLORS.markerCharge, stroke: '#fff', strokeWidth: 1.5 }}
-                      connectNulls={false}
-                      isAnimationActive={false}
-                    />
-                  ) : null}
-                  {visibleFlowLayers.discharge ? (
-                    <Line
-                      yAxisId="price"
-                      name="Battery discharge"
-                      type="monotone"
-                      dataKey="dischargeMarkerPrice"
-                      stroke={COLORS.markerDischarge}
-                      strokeWidth={isQuarterHour ? 2 : 3}
-                      dot={isQuarterHour
-                        ? { r: 2, fill: COLORS.markerDischarge, stroke: '#fff', strokeWidth: 1 }
-                        : { r: 3.5, fill: COLORS.markerDischarge, stroke: '#fff', strokeWidth: 1.5 }}
-                      connectNulls={false}
-                      isAnimationActive={false}
-                    />
-                  ) : null}
-                  {visibleFlowLayers.pvExport ? (
-                    <Line
-                      yAxisId="price"
-                      name="PV export on price"
+                      name="PV sale on price curve"
                       type="monotone"
                       dataKey="pvExportMarkerPrice"
                       stroke={COLORS.markerPvExport}
-                      strokeWidth={isQuarterHour ? 2 : 3}
+                      strokeWidth={isQuarterHour ? 2.4 : 3.2}
                       dot={isQuarterHour
-                        ? { r: 2, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1 }
-                        : { r: 3.5, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1.5 }}
+                        ? { r: 2.4, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1 }
+                        : { r: 3.4, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1.5 }}
+                      activeDot={isQuarterHour
+                        ? { r: 4, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 1.5 }
+                        : { r: 5.5, fill: COLORS.markerPvExport, stroke: '#fff', strokeWidth: 2 }}
                       connectNulls={false}
                       isAnimationActive={false}
                     />
-                  ) : null}
+                  ) : (
+                    <>
+                      <Line
+                        yAxisId="price"
+                        name="Battery charging"
+                        type="monotone"
+                        dataKey="chargeMarkerPrice"
+                        stroke={COLORS.markerCharge}
+                        strokeWidth={isQuarterHour ? 2.4 : 3.2}
+                        dot={isQuarterHour
+                          ? { r: 2.4, fill: COLORS.markerCharge, stroke: '#fff', strokeWidth: 1 }
+                          : { r: 3.4, fill: COLORS.markerCharge, stroke: '#fff', strokeWidth: 1.5 }}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        yAxisId="price"
+                        name="Battery discharging"
+                        type="monotone"
+                        dataKey="dischargeMarkerPrice"
+                        stroke={COLORS.markerDischarge}
+                        strokeWidth={isQuarterHour ? 2.4 : 3.2}
+                        dot={isQuarterHour
+                          ? { r: 2.4, fill: COLORS.markerDischarge, stroke: '#fff', strokeWidth: 1 }
+                          : { r: 3.4, fill: COLORS.markerDischarge, stroke: '#fff', strokeWidth: 1.5 }}
+                        connectNulls={false}
+                        isAnimationActive={false}
+                      />
+                    </>
+                  )}
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>
@@ -1533,6 +1388,7 @@ export function PvBatteryDayChart({
         </CardContent>
       </Card>
 
+      {showFullLayout ? (
       <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
@@ -1568,7 +1424,7 @@ export function PvBatteryDayChart({
                   <div className="mt-3 grid gap-2 text-[11px] leading-5 text-slate-600">
                     <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
                       <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Visible chain</span>
-                      <span>{segment.firstSlot.date} {segment.firstSlot.label} {'->'} {segment.lastSlot.date} {segment.lastSlot.label}</span>
+                      <span>{segment.firstSlot.date} {segment.firstSlot.label} {'→'} {segment.lastSlot.date} {segment.lastSlot.label}</span>
                     </div>
                     <div className="grid grid-cols-[108px_minmax(0,1fr)] gap-2">
                       <span className="font-semibold uppercase tracking-[0.12em] text-slate-400">Known horizon</span>
@@ -1593,7 +1449,9 @@ export function PvBatteryDayChart({
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
+      {showFullLayout ? (
       <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
@@ -1623,7 +1481,7 @@ export function PvBatteryDayChart({
                 {[
                   { label: 'Load forecast', value: formatMetricKwh(selectedSlot.loadForecastKwh) },
                   { label: 'PV forecast', value: formatMetricKwh(selectedSlot.pvForecastKwh) },
-                  { label: 'SoC', value: `${selectedSlot.socKwhStart.toFixed(2)} -> ${selectedSlot.socKwhEnd.toFixed(2)} kWh` },
+                  { label: 'SoC', value: `${selectedSlot.socKwhStart.toFixed(2)} → ${selectedSlot.socKwhEnd.toFixed(2)} kWh` },
                   { label: 'Import tariff', value: `${selectedSlot.importPriceCtKwh.toFixed(2)} ${units.priceUnit}` },
                   { label: 'Export value', value: `${selectedSlot.exportPriceCtKwh.toFixed(2)} ${units.priceUnit}` },
                   { label: 'Household price view', value: `${selectedSlot.householdImportPriceCtKwh.toFixed(2)} ${units.priceUnit}` },
@@ -1639,13 +1497,13 @@ export function PvBatteryDayChart({
                 <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Routing flows in this slot</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                   {[
-                    { label: 'PV -> load', value: selectedSlot.pvToLoadKwh },
-                    { label: 'PV -> battery', value: selectedSlot.pvToBatteryKwh },
-                    { label: 'PV -> grid', value: selectedSlot.pvToGridKwh },
-                    { label: 'Grid -> battery', value: selectedSlot.gridToBatteryKwh },
-                    { label: 'Grid -> load', value: selectedSlot.gridToLoadKwh },
-                    { label: 'Battery -> load', value: selectedSlot.batteryToLoadKwh },
-                    { label: 'Battery -> grid', value: selectedSlot.batteryExportKwh },
+                    { label: 'PV → load', value: selectedSlot.pvToLoadKwh },
+                    { label: 'PV → battery', value: selectedSlot.pvToBatteryKwh },
+                    { label: 'PV → grid', value: selectedSlot.pvToGridKwh },
+                    { label: 'Grid → battery', value: selectedSlot.gridToBatteryKwh },
+                    { label: 'Grid → load', value: selectedSlot.gridToLoadKwh },
+                    { label: 'Battery → load', value: selectedSlot.batteryToLoadKwh },
+                    { label: 'Battery → grid', value: selectedSlot.batteryExportKwh },
                     { label: 'Curtailment', value: selectedSlot.curtailedKwh },
                     { label: 'Direct self-use', value: selectedSlot.directSelfKwh },
                   ].map((flow) => (
@@ -1716,10 +1574,10 @@ export function PvBatteryDayChart({
                 <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Battery discharge split</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {[
-                    { label: 'PV -> battery -> load', value: selectedSlot.batteryPvToLoadKwh },
-                    { label: 'Grid -> battery -> load', value: selectedSlot.batteryGridToLoadKwh },
-                    { label: 'PV -> battery -> grid', value: selectedSlot.batteryPvExportKwh },
-                    { label: 'Grid -> battery -> grid', value: selectedSlot.batteryGridExportKwh },
+                    { label: 'PV → battery → load', value: selectedSlot.batteryPvToLoadKwh },
+                    { label: 'Grid → battery → load', value: selectedSlot.batteryGridToLoadKwh },
+                    { label: 'PV → battery → grid', value: selectedSlot.batteryPvExportKwh },
+                    { label: 'Grid → battery → grid', value: selectedSlot.batteryGridExportKwh },
                   ].map((row) => (
                     <div key={row.label} className="rounded-xl border border-gray-200 bg-[#FAFBFC] px-3 py-2.5">
                       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">{row.label}</p>
@@ -1732,7 +1590,9 @@ export function PvBatteryDayChart({
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
+      {showFullLayout ? (
       <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-4 sm:px-7 sm:py-5">
@@ -1756,13 +1616,13 @@ export function PvBatteryDayChart({
                     'PV fcst',
                     `Import ${units.priceSym}`,
                     `Export ${units.priceSym}`,
-                    'PV->Load',
-                    'PV->Batt',
-                    'Grid->Batt',
-                    'Batt->Load',
-                    'Batt->Grid',
-                    'Grid->Load',
-                    'PV->Grid',
+                    'PV→Load',
+                    'PV→Batt',
+                    'Grid→Batt',
+                    'Batt→Load',
+                    'Batt→Grid',
+                    'Grid→Load',
+                    'PV→Grid',
                     'Curtail',
                     `Import ${units.currencySym}`,
                     `Export ${units.currencySym}`,
@@ -1813,8 +1673,9 @@ export function PvBatteryDayChart({
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
-      {savingsCard ? (
+      {showFullLayout && savingsCard ? (
         <Card className="overflow-hidden shadow-sm border-gray-200/80">
           <CardContent className="p-0">
             <div className="px-6 py-5 sm:px-7">

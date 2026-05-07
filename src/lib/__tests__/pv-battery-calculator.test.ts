@@ -25,6 +25,7 @@ function mkPrice(hour: number, importPriceCtKwh: number, exportPriceCtKwh: numbe
     price,
     importPriceCtKwh: importPriceCtKwh,
     exportPriceCtKwh,
+    curtailPvAtNegativePrice: false,
     loadKwh: 0,
     pvKwh: 0,
   }
@@ -52,6 +53,7 @@ const BASE_SCENARIO: PvBatteryCalculatorScenario = {
   roundTripEff: 1,
   feedInCapKw: 4,
   exportCompensationPct: 100,
+  curtailPvAtNegativePrices: true,
   flowPermissions: {
     pvToLoad: true,
     pvToBattery: true,
@@ -72,6 +74,51 @@ function expectSlotConservation(slot: PvBatterySlotResult) {
   expect(slot.batteryExportKwh).toBeCloseTo(slot.batteryPvExportKwh + slot.batteryGridExportKwh, 3)
   expect(slot.pvKwh).toBeCloseTo(slot.pvToLoadKwh + slot.pvToBatteryKwh + slot.pvToGridKwh + slot.curtailedKwh, 3)
   expect(slot.loadKwh).toBeCloseTo(slot.pvToLoadKwh + slot.batteryToLoadKwh + slot.gridToLoadKwh, 3)
+}
+
+function expectScenarioInvariants(
+  result: ReturnType<typeof optimizePvBattery>,
+  scenario: PvBatteryCalculatorScenario,
+  slotHours = 1,
+) {
+  const chargeLimitKwh = scenario.maxChargeKw * slotHours
+  const dischargeLimitKwh = scenario.maxDischargeKw * slotHours
+  const exportCapKwh = scenario.feedInCapKw * slotHours
+  const permissions = scenario.flowPermissions
+  const tolerance = 0.0015
+
+  let baselineCostEur = 0
+  let gridImportCostEur = 0
+  let exportRevenueEur = 0
+
+  for (const slot of result.slots) {
+    expectSlotConservation(slot)
+    expect(slot.socKwhStart).toBeGreaterThanOrEqual(-tolerance)
+    expect(slot.socKwhEnd).toBeGreaterThanOrEqual(-tolerance)
+    expect(slot.socKwhStart).toBeLessThanOrEqual(scenario.usableKwh + tolerance)
+    expect(slot.socKwhEnd).toBeLessThanOrEqual(scenario.usableKwh + tolerance)
+    expect(slot.pvToBatteryKwh + slot.gridToBatteryKwh).toBeLessThanOrEqual(chargeLimitKwh + tolerance)
+    expect(slot.batteryToLoadKwh + slot.batteryExportKwh).toBeLessThanOrEqual(dischargeLimitKwh + tolerance)
+    expect(slot.pvToGridKwh + slot.batteryExportKwh).toBeLessThanOrEqual(exportCapKwh + tolerance)
+    expect(slot.chargeToBatteryKwh > tolerance && (slot.batteryToLoadKwh + slot.batteryExportKwh) > tolerance).toBe(false)
+
+    if (!permissions.pvToLoad) expect(slot.pvToLoadKwh).toBeCloseTo(0, 3)
+    if (!permissions.pvToBattery) expect(slot.pvToBatteryKwh).toBeCloseTo(0, 3)
+    if (!permissions.gridToBattery) expect(slot.gridToBatteryKwh).toBeCloseTo(0, 3)
+    if (!permissions.batteryToLoad) expect(slot.batteryToLoadKwh).toBeCloseTo(0, 3)
+    if (!permissions.pvToGrid) expect(slot.pvToGridKwh).toBeCloseTo(0, 3)
+    if (!permissions.batteryToGrid) expect(slot.batteryExportKwh).toBeCloseTo(0, 3)
+
+    baselineCostEur += slot.baselineCostEur
+    gridImportCostEur += slot.slotImportCostEur
+    exportRevenueEur += slot.slotExportRevenueEur
+  }
+
+  expect(result.baselineCostEur).toBeCloseTo(baselineCostEur, 2)
+  expect(result.gridImportCostEur).toBeCloseTo(gridImportCostEur, 2)
+  expect(result.exportRevenueEur).toBeCloseTo(exportRevenueEur, 2)
+  expect(Math.abs(result.netCostEur - (result.gridImportCostEur - result.exportRevenueEur))).toBeLessThanOrEqual(0.02)
+  expect(Math.abs(result.savingsEur - (result.baselineCostEur - result.netCostEur))).toBeLessThanOrEqual(0.02)
 }
 
 describe('optimizePvBattery', () => {
@@ -114,6 +161,66 @@ describe('optimizePvBattery', () => {
 
     expect(inputs[0].pvKwh).toBeCloseTo(205, 6)
     expect(inputs[1].pvKwh).toBeCloseTo(205, 6)
+  })
+
+  it('preserves negative export prices and marks PV curtailment slots', () => {
+    const prices: HourlyPrice[] = [
+      {
+        timestamp: Date.UTC(2025, 5, 15, 12, 0, 0),
+        date: '2025-06-15',
+        hour: 12,
+        minute: 0,
+        priceCtKwh: -5,
+        priceEurMwh: -50,
+      },
+    ]
+    const loadProfile = Array.from({ length: 8760 }, () => 0)
+    const pvProfile = Array.from({ length: 8760 }, () => 0)
+
+    const inputs = buildPvBatteryInputs(
+      prices,
+      loadProfile,
+      pvProfile,
+      {
+        ...BASE_SCENARIO,
+        curtailPvAtNegativePrices: true,
+      },
+    )
+
+    expect(inputs[0].exportPriceCtKwh).toBeCloseTo(-5, 3)
+    expect(inputs[0].curtailPvAtNegativePrice).toBe(true)
+  })
+
+  it('curtails direct PV export in negative-price slots when enabled', () => {
+    const negativePvSlot: OptimizerSlotInput = {
+      ...mkPrice(12, 20, -5),
+      price: {
+        ...mkPrice(12, 20, -5).price,
+        priceCtKwh: -5,
+        priceEurMwh: -50,
+      },
+      curtailPvAtNegativePrice: true,
+      pvKwh: 1,
+    }
+
+    const curtailed = optimizePvBattery([negativePvSlot], {
+      ...BASE_SCENARIO,
+      usableKwh: 0,
+      maxChargeKw: 0,
+      maxDischargeKw: 0,
+    })
+    const exported = optimizePvBattery([{ ...negativePvSlot, curtailPvAtNegativePrice: false }], {
+      ...BASE_SCENARIO,
+      usableKwh: 0,
+      maxChargeKw: 0,
+      maxDischargeKw: 0,
+    })
+
+    expect(curtailed.directExportKwh).toBeCloseTo(0, 3)
+    expect(curtailed.curtailedKwh).toBeCloseTo(1, 3)
+    expect(curtailed.exportRevenueEur).toBeCloseTo(0, 3)
+    expect(exported.directExportKwh).toBeCloseTo(1, 3)
+    expect(exported.exportRevenueEur).toBeCloseTo(-0.05, 3)
   })
 
   it('optimizes for lower net cost instead of self-sufficiency', () => {
@@ -476,5 +583,38 @@ describe('optimizePvBattery', () => {
     }
 
     expect(getAvailablePvBatteryYears(prices, '2026-01-31')).toEqual([2025])
+  })
+
+  it('preserves core dispatch invariants across permission and tariff edge cases', () => {
+    const baseSlots: OptimizerSlotInput[] = [
+      { ...mkPrice(0, 8, -2), importPriceCtKwh: 18, loadKwh: 0.4, pvKwh: 0 },
+      { ...mkPrice(1, 4, 0), importPriceCtKwh: 14, loadKwh: 0.2, pvKwh: 0 },
+      { ...mkPrice(12, 28, 18), importPriceCtKwh: 38, loadKwh: 0.8, pvKwh: 2.4 },
+      { ...mkPrice(13, -6, -6), importPriceCtKwh: 4, loadKwh: 0.3, pvKwh: 2.1, curtailPvAtNegativePrice: true },
+      { ...mkPrice(19, 45, 32), importPriceCtKwh: 55, loadKwh: 2.8, pvKwh: 0.1 },
+      { ...mkPrice(20, 22, 40), importPriceCtKwh: 32, loadKwh: 0.6, pvKwh: 0 },
+    ]
+    const permissionVariants: PvBatteryCalculatorScenario['flowPermissions'][] = [
+      BASE_SCENARIO.flowPermissions,
+      { ...BASE_SCENARIO.flowPermissions, gridToBattery: true },
+      { ...BASE_SCENARIO.flowPermissions, pvToGrid: false, gridToBattery: true },
+      { ...BASE_SCENARIO.flowPermissions, batteryToGrid: false, gridToBattery: true },
+      { ...BASE_SCENARIO.flowPermissions, pvToLoad: false, pvToBattery: false, gridToBattery: true },
+      { ...BASE_SCENARIO.flowPermissions, batteryToLoad: false, gridToBattery: true },
+    ]
+
+    for (const flowPermissions of permissionVariants) {
+      const scenario = {
+        ...BASE_SCENARIO,
+        usableKwh: 3,
+        maxChargeKw: 1,
+        maxDischargeKw: 1.5,
+        roundTripEff: 0.9,
+        feedInCapKw: 1.25,
+        flowPermissions,
+      }
+      const result = optimizePvBattery(baseSlots, scenario)
+      expectScenarioInvariants(result, scenario)
+    }
   })
 })

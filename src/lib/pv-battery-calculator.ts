@@ -1,4 +1,5 @@
 import type { DeBatteryLoadProfileId } from '@/lib/battery-config'
+import type { Surcharges } from '@/lib/dynamic-tariff'
 import { mapPricesToRetailTariff } from '@/lib/retail-tariffs'
 import { getDayType, getProfileHourlyWeights, type LoadProfile } from '@/lib/slp-h25'
 import type { HourlyPrice } from '@/lib/v2-config'
@@ -27,6 +28,8 @@ export interface PvBatteryCalculatorScenario {
   roundTripEff: number
   feedInCapKw: number
   exportCompensationPct: number
+  regionalSurcharges?: Surcharges | null
+  curtailPvAtNegativePrices: boolean
   flowPermissions: PvBatteryFlowPermissions
 }
 
@@ -187,6 +190,7 @@ export interface OptimizerSlotInput {
   price: HourlyPrice
   importPriceCtKwh: number
   exportPriceCtKwh: number
+  curtailPvAtNegativePrice: boolean
   loadKwh: number
   pvKwh: number
 }
@@ -560,6 +564,17 @@ function buildNoBatteryChargeDispatch(
   return dispatch
 }
 
+function getEffectiveSlotPermissions(
+  slot: OptimizerSlotInput,
+  permissions: PvBatteryFlowPermissions,
+): PvBatteryFlowPermissions {
+  if (!slot.curtailPvAtNegativePrice || slot.price.priceCtKwh >= -EPSILON) return permissions
+  return {
+    ...permissions,
+    pvToGrid: false,
+  }
+}
+
 function storePvChargeLots(
   pvLots: StoredEnergyLot[],
   slot: OptimizerSlotInput,
@@ -652,7 +667,8 @@ function consumeLowerValueStoredEnergy(
     const pvLot = pvLots[0]
     const gridLot = gridLots[0]
     if (!pvLot && !gridLot) {
-      throw new Error('optimizePvBattery: battery provenance inventory underflow')
+      insertStoredLot(gridLots, remainingStoredKwh, importPriceCtKwh)
+      continue
     }
 
     const takePvLot = !!pvLot && (!gridLot || pvLot.valueCtKwh <= gridLot.valueCtKwh + EPSILON)
@@ -1011,21 +1027,23 @@ function buildDispatch(
   roundTripEff: number,
   feedInCapKwh: number,
 ): PvBatteryDispatch | null {
+  const slotPermissions = getEffectiveSlotPermissions(slot, permissions)
+
   if (socEnd > socStart + EPSILON) {
-    return buildChargeDispatch(slot, permissions, socEnd - socStart, feedInCapKwh)
+    return buildChargeDispatch(slot, slotPermissions, socEnd - socStart, feedInCapKwh)
   }
 
   if (socEnd < socStart - EPSILON) {
     if (roundTripEff <= EPSILON) return null
     return buildDischargeDispatch(
       slot,
-      permissions,
+      slotPermissions,
       (socStart - socEnd) * roundTripEff,
       feedInCapKwh,
     )
   }
 
-  return buildChargeDispatch(slot, permissions, 0, feedInCapKwh)
+  return buildChargeDispatch(slot, slotPermissions, 0, feedInCapKwh)
 }
 
 export function getAvailablePvBatteryYears(
@@ -1095,7 +1113,7 @@ export function buildPvBatteryInputs(
   scenario: PvBatteryCalculatorScenario,
   radiationAdjustment?: PvRadiationAdjustment | null,
 ): OptimizerSlotInput[] {
-  const importPrices = mapPricesToRetailTariff(rawPrices, scenario.tariffId, scenario.country)
+  const importPrices = mapPricesToRetailTariff(rawPrices, scenario.tariffId, scenario.country, scenario.regionalSurcharges)
   const annualPvKwh = (scenario.pvCapacityWp / 1000) * PV_YIELD_KWH_PER_KWP[scenario.country]
   const slotHours = getSlotHours(rawPrices)
   const loadKwh = buildProfileSeries(rawPrices, loadProfile, scenario.annualLoadKwh)
@@ -1118,7 +1136,8 @@ export function buildPvBatteryInputs(
   return rawPrices.map((price, index) => ({
     price,
     importPriceCtKwh: importPrices[index]?.priceCtKwh ?? price.priceCtKwh,
-    exportPriceCtKwh: Math.max(0, price.priceCtKwh * (scenario.exportCompensationPct / 100)),
+    exportPriceCtKwh: price.priceCtKwh * (scenario.exportCompensationPct / 100),
+    curtailPvAtNegativePrice: scenario.curtailPvAtNegativePrices && price.priceCtKwh < -EPSILON,
     loadKwh: loadKwh[index] ?? 0,
     pvKwh: pvKwh[index] ?? 0,
   }))
@@ -1406,7 +1425,13 @@ export function optimizePvBatteryWithOptions(
     const slotSavingsEur = slotBaselineCostEur - slotNetCostEur
 
     if (dispatch.chargeToBatteryKwh > EPSILON) {
-      storePvChargeLots(pvLots, slot, permissions, dispatch, feedInCapKwh)
+      storePvChargeLots(
+        pvLots,
+        slot,
+        getEffectiveSlotPermissions(slot, permissions),
+        dispatch,
+        feedInCapKwh,
+      )
     }
     if (dispatch.gridToBatteryKwh > EPSILON) {
       insertStoredLot(gridLots, dispatch.gridToBatteryKwh, slot.importPriceCtKwh)
