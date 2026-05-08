@@ -705,3 +705,4 @@ Balcony PV behavior is now controlled by an explicit PV installation selector:
 - Savings summary cards and nested category rows are collapsed by default.
 - Baseline and optimized detail labels use `Household consumption` and `Grid export`; optimized and total headings use `Avg price` for consistency.
 - Expandable summary table rows toggle from the full row area and support Enter / Space keyboard activation.
+- `15 min` selected-day detail is disabled until quarter-hour dispatch can share the same annual replay accounting as the savings summary.

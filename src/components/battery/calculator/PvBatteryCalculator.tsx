@@ -323,7 +323,7 @@ const DEFAULT_STATE: CalculatorState = {
   planningModel: 'rolling',
   year: 0,
   viewHours: 24,
-  resolution: 'quarterhour',
+  resolution: 'hour',
   flowPriceMode: 'spot',
   loadProfileId: 'H25',
   annualLoadKwh: 4500,
@@ -494,7 +494,7 @@ function parseState(params: URLSearchParams): CalculatorState {
   const tariffId = tariffIds.has(params.get('tariff') ?? '')
     ? (params.get('tariff') as string)
     : getDefaultTariffForCountry(country)
-  const resolution = params.get('resolution') === 'hour' ? 'hour' : 'quarterhour'
+  const resolution: PvBatteryResolution = 'hour'
   const rawViewHours = Number(params.get('hours'))
   const viewHours: 24 | 36 | 48 = rawViewHours === 36 || rawViewHours === 48 ? rawViewHours : 24
   const flowPriceMode = 'spot'
@@ -625,7 +625,7 @@ function buildPlannerAssumptions({
 function SegmentedPillGroup({
   options,
 }: {
-  options: Array<{ label: string; active: boolean; onClick: () => void; disabled?: boolean }>
+  options: Array<{ label: string; active: boolean; onClick: () => void; disabled?: boolean; title?: string }>
 }) {
   return (
     <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
@@ -634,6 +634,7 @@ function SegmentedPillGroup({
           key={option.label}
           type="button"
           disabled={option.disabled}
+          title={option.title}
           onClick={option.onClick}
           className={cn(
             'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
@@ -4223,7 +4224,7 @@ function PlannerAssumptionsCard({
         <SectionHeading
           eyebrow="Explainability"
           title="How this model works"
-          help="This card makes the active claim boundaries explicit: what the solver optimizes, what it is allowed to know, and which assumptions drive the visible quarter-hour routing."
+          help="This card makes the active claim boundaries explicit: what the solver optimizes, what it is allowed to know, and which assumptions drive the visible slot-level routing."
           icon={<LineChart className="h-5 w-5 text-gray-400" />}
         />
 
@@ -4232,12 +4233,12 @@ function PlannerAssumptionsCard({
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Narrative</p>
             <p className="mt-2 text-[14px] leading-7 text-slate-700">
               {planningModel === 'rolling'
-                ? 'The rolling planner behaves like a planning desk instead of a clairvoyant annual replay. It solves on publication cadence, commits only the visible stitched chain, and keeps every day selectable so quarter-hour decisions remain inspectable without pretending the solver knew the full year ahead.'
+                ? 'The rolling planner behaves like a planning desk instead of a clairvoyant annual replay. It solves on publication cadence, commits only the visible stitched chain, and keeps every day selectable so dispatch decisions remain inspectable without pretending the solver knew the full year ahead.'
                 : 'The deterministic replay remains the current audit baseline. It solves the full selected year in one pass, then lets you inspect any day on that chain to understand where value came from before introducing publication-time uncertainty.'}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Any day stays selectable</span>
-              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Quarter-hour flows remain auditable</span>
+              <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Replay flows remain auditable</span>
               <span className="rounded-full bg-white px-2 py-1 text-[10px] font-semibold text-slate-600 shadow-sm">Tariff economics drive routing</span>
             </div>
           </div>
@@ -4805,10 +4806,10 @@ function PvBatteryCalculatorInner() {
     : trailingAllocationResult
   const allocationWindowLabel = allocationWindow === 'day'
     ? allocationDayView === 'quarterHour'
-      ? `Quarter-hour · ${effectiveAllocationSlot?.label ?? formatDayLabel(prices.selectedDate)}`
+      ? `Slot · ${effectiveAllocationSlot?.label ?? formatDayLabel(prices.selectedDate)}`
       : `Full day · ${formatDayLabel(prices.selectedDate)}`
     : 'Last 365 days'
-  const hasQuarterHourReplay = prices.hourlyQH.length > 0
+  const quarterHourDisabledTitle = '15 min dispatch is disabled until it can use the same annual replay accounting as the summary.'
   const allocationTimeline = allocationWindow === 'day' && selectedDaySlots.length > 0 ? (
     <div className="border-b border-slate-200/80 bg-white/52 px-5 py-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -4855,12 +4856,9 @@ function PvBatteryCalculatorInner() {
               {
                 label: '15 min',
                 active: allocationDayView === 'quarterHour' && state.resolution === 'quarterhour',
-                disabled: !hasQuarterHourReplay,
-                onClick: () => {
-                  if (!hasQuarterHourReplay) return
-                  setAllocationDayView('quarterHour')
-                  setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))
-                },
+                disabled: true,
+                title: quarterHourDisabledTitle,
+                onClick: () => undefined,
               },
             ]}
           />
@@ -4980,11 +4978,9 @@ function PvBatteryCalculatorInner() {
           {
             label: '15 min',
             active: state.resolution === 'quarterhour',
-            disabled: prices.hourlyQH.length === 0,
-            onClick: () => {
-              if (prices.hourlyQH.length === 0) return
-              setDraftState((current) => ({ ...current, resolution: 'quarterhour' }))
-            },
+            disabled: true,
+            title: quarterHourDisabledTitle,
+            onClick: () => undefined,
           },
         ]}
       />
@@ -5143,26 +5139,33 @@ function PvBatteryCalculatorInner() {
   return (
     <TooltipProvider delayDuration={120}>
       <div className="min-h-screen bg-[#F5F5F2]">
-        <header className="border-b border-gray-200 bg-white">
-          <div className="mx-auto flex max-w-[1440px] flex-wrap items-center justify-between gap-3 px-4 py-2.5 sm:px-6 lg:px-8">
+        <header className="relative z-50 border-b border-gray-200 bg-white">
+          <div className="mx-auto flex max-w-[1440px] items-center justify-between px-8 py-2">
             <h1 className="text-sm font-semibold text-gray-400">PV + Battery Dynamic Tariff Calculator</h1>
-            <nav className="flex flex-wrap items-center gap-2">
-              <Link
-                href="/battery"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
-              >
-                Battery business case
-              </Link>
-              <Link
-                href="/v2"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
-              >
-                EV charging
-              </Link>
-              <span className="rounded-lg border border-[#313131] bg-[#313131] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm">
-                PV + battery calculator
-              </span>
-            </nav>
+            <details className="relative z-50">
+              <summary className="flex cursor-pointer select-none list-none items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+                More
+              </summary>
+              <div className="absolute right-0 top-full z-50 mt-2 w-44 rounded-xl border border-gray-200 bg-white p-1.5 shadow-lg">
+                <Link
+                  href="/v2"
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
+                >
+                  EV Charging
+                  <span className="text-[10px] text-gray-400">Load shifting</span>
+                </Link>
+                <Link
+                  href="/dynamic"
+                  className="flex items-center justify-between rounded-lg px-3 py-2 text-[12px] font-semibold text-gray-600 transition-colors hover:bg-gray-50"
+                >
+                  Dynamic Tariff
+                  <span className="text-[10px] text-gray-400">Calculator</span>
+                </Link>
+              </div>
+            </details>
           </div>
         </header>
 
