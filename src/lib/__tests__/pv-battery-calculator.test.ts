@@ -84,6 +84,9 @@ function expectScenarioInvariants(
   const chargeLimitKwh = scenario.maxChargeKw * slotHours
   const dischargeLimitKwh = scenario.maxDischargeKw * slotHours
   const exportCapKwh = scenario.feedInCapKw * slotHours
+  const sharedAcOutputCapKwh = Number.isFinite(scenario.sharedAcOutputCapKw ?? Number.POSITIVE_INFINITY)
+    ? Math.max(0, scenario.sharedAcOutputCapKw ?? 0) * slotHours
+    : Number.POSITIVE_INFINITY
   const permissions = scenario.flowPermissions
   const tolerance = 0.0015
 
@@ -100,6 +103,7 @@ function expectScenarioInvariants(
     expect(slot.pvToBatteryKwh + slot.gridToBatteryKwh).toBeLessThanOrEqual(chargeLimitKwh + tolerance)
     expect(slot.batteryToLoadKwh + slot.batteryExportKwh).toBeLessThanOrEqual(dischargeLimitKwh + tolerance)
     expect(slot.pvToGridKwh + slot.batteryExportKwh).toBeLessThanOrEqual(exportCapKwh + tolerance)
+    expect(slot.pvToLoadKwh + slot.pvToGridKwh + slot.batteryToLoadKwh + slot.batteryExportKwh).toBeLessThanOrEqual(sharedAcOutputCapKwh + tolerance)
     expect(slot.chargeToBatteryKwh > tolerance && (slot.batteryToLoadKwh + slot.batteryExportKwh) > tolerance).toBe(false)
 
     if (!permissions.pvToLoad) expect(slot.pvToLoadKwh).toBeCloseTo(0, 3)
@@ -294,6 +298,82 @@ describe('optimizePvBattery', () => {
     expect(result.batteryToLoadKwh).toBeCloseTo(2, 3)
     expect(result.slots[1].batteryPvToLoadKwh).toBeCloseTo(2, 3)
     expect(result.selfConsumptionPct).toBeCloseTo(100, 3)
+  })
+
+  it('caps balcony PV direct household output with the shared plug-in AC limit', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(12, 30, 0), loadKwh: 2, pvKwh: 2 },
+    ]
+
+    const result = optimizePvBattery(slots, {
+      ...BASE_SCENARIO,
+      usableKwh: 0,
+      maxChargeKw: 0,
+      maxDischargeKw: 0,
+      feedInCapKw: 5,
+      sharedAcOutputCapKw: 0.8,
+    })
+
+    expect(result.directSelfConsumedKwh).toBeCloseTo(0.8, 3)
+    expect(result.gridImportKwh).toBeCloseTo(1.2, 3)
+    expect(result.directExportKwh).toBeCloseTo(0, 3)
+    expect(result.curtailedKwh).toBeCloseTo(1.2, 3)
+    expectScenarioInvariants(result, { ...BASE_SCENARIO, usableKwh: 0, maxChargeKw: 0, maxDischargeKw: 0, feedInCapKw: 5, sharedAcOutputCapKw: 0.8 })
+  })
+
+  it('lets balcony PV charge the battery while AC output remains capped', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(12, 20, 0), loadKwh: 0.8, pvKwh: 2 },
+      { ...mkPrice(13, 50, 0), loadKwh: 0.8 },
+    ]
+
+    const scenario = {
+      ...BASE_SCENARIO,
+      usableKwh: 1,
+      maxChargeKw: 1,
+      maxDischargeKw: 0.8,
+      feedInCapKw: 5,
+      sharedAcOutputCapKw: 0.8,
+      flowPermissions: {
+        ...BASE_SCENARIO.flowPermissions,
+        batteryToGrid: false,
+      },
+    }
+    const result = optimizePvBatteryWithOptions(slots, scenario, { socStepKwh: 0.1 })
+
+    expect(result.slots[0].pvToLoadKwh).toBeCloseTo(0.8, 3)
+    expect(result.slots[0].pvToBatteryKwh).toBeGreaterThan(0)
+    expect(result.slots[0].batteryToLoadKwh).toBeCloseTo(0, 3)
+    expect(result.slots[1].batteryToLoadKwh).toBeCloseTo(0.8, 3)
+    expectScenarioInvariants(result, scenario)
+  })
+
+  it('shares balcony AC headroom between live PV and battery discharge', () => {
+    const slots: OptimizerSlotInput[] = [
+      { ...mkPrice(12, 20, 0), pvKwh: 1 },
+      { ...mkPrice(13, 50, 0), loadKwh: 2, pvKwh: 0.6 },
+    ]
+
+    const scenario = {
+      ...BASE_SCENARIO,
+      usableKwh: 1,
+      maxChargeKw: 1,
+      maxDischargeKw: 0.8,
+      feedInCapKw: 5,
+      sharedAcOutputCapKw: 0.8,
+      flowPermissions: {
+        ...BASE_SCENARIO.flowPermissions,
+        batteryToGrid: false,
+      },
+    }
+    const result = optimizePvBatteryWithOptions(slots, scenario, { socStepKwh: 0.1 })
+    const constrainedSlot = result.slots[1]
+
+    expect(constrainedSlot.pvToLoadKwh).toBeGreaterThan(0)
+    expect(constrainedSlot.batteryToLoadKwh).toBeGreaterThan(0)
+    expect(constrainedSlot.pvToLoadKwh + constrainedSlot.batteryToLoadKwh).toBeLessThanOrEqual(0.801)
+    expect(constrainedSlot.gridToLoadKwh).toBeGreaterThan(1.1)
+    expectScenarioInvariants(result, scenario)
   })
 
   it('settles baseline and import costs on the household tariff instead of the raw spot price', () => {

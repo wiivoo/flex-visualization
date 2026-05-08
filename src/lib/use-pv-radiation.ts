@@ -15,7 +15,7 @@ export interface PvRadiationData {
   isDefault: boolean
 }
 
-export function usePvRadiation(zipCode: string | null, peakPowerKwp: number) {
+export function usePvRadiation(zipCode: string | null, _peakPowerKwp: number) {
   const isValidZip = Boolean(zipCode && /^\d{5}$/.test(zipCode))
   const [data, setData] = useState<PvRadiationData | null>(null)
   const [loading, setLoading] = useState(false)
@@ -26,11 +26,13 @@ export function usePvRadiation(zipCode: string | null, peakPowerKwp: number) {
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true)
+    setData(null)
     setError(null)
 
     const controller = new AbortController()
+    const normalizedPeakPowerKwp = 1
 
-    fetch(`/api/pv-radiation?zip=${zipCode}&peakPower=${peakPowerKwp}`, {
+    fetch(`/api/pv-radiation?zip=${zipCode}&peakPower=${normalizedPeakPowerKwp}`, {
       signal: controller.signal,
     })
       .then((res) => res.json())
@@ -53,7 +55,7 @@ export function usePvRadiation(zipCode: string | null, peakPowerKwp: number) {
       })
 
     return () => controller.abort()
-  }, [isValidZip, zipCode, peakPowerKwp])
+  }, [isValidZip, zipCode])
 
   if (!isValidZip) {
     return { data: null, loading: false, error: null }

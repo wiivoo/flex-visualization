@@ -27,6 +27,7 @@ export interface PvBatteryCalculatorScenario {
   maxDischargeKw: number
   roundTripEff: number
   feedInCapKw: number
+  sharedAcOutputCapKw?: number | null
   exportCompensationPct: number
   regionalSurcharges?: Surcharges | null
   curtailPvAtNegativePrices: boolean
@@ -75,6 +76,7 @@ export interface PvBatteryInventoryState {
 export interface PvBatteryOptimizationOptions {
   initialSocKwh?: number
   terminalSocKwh?: number | null
+  socStepKwh?: number
   planningModel?: PvBatteryPlanningModel
   modelLabel?: string
   assumptions?: Partial<PvBatteryPlannerAssumptions>
@@ -201,6 +203,7 @@ const PV_YIELD_KWH_PER_KWP: Record<PvBatteryCountry, number> = {
 }
 
 const SOC_STEP_KWH = 0.5
+export const FINE_SOC_STEP_KWH = 0.1
 const EPSILON = 1e-9
 const DEFAULT_FLOW_PERMISSIONS: PvBatteryFlowPermissions = {
   pvToLoad: true,
@@ -369,10 +372,10 @@ function resolvePlannerAssumptions(
   }
 }
 
-function socToStateIndex(socKwh: number, capacity: number): number {
+function socToStateIndex(socKwh: number, capacity: number, socStepKwh = SOC_STEP_KWH): number {
   if (capacity <= EPSILON) return 0
   const clampedSoc = clamp(socKwh, 0, capacity)
-  return Math.round(clampedSoc / SOC_STEP_KWH)
+  return Math.round(clampedSoc / socStepKwh)
 }
 
 function resolveRunProvenance(
@@ -556,8 +559,9 @@ function buildNoBatteryChargeDispatch(
   slot: OptimizerSlotInput,
   permissions: PvBatteryFlowPermissions,
   feedInCapKwh: number,
+  sharedAcOutputCapKwh: number,
 ): PvBatteryDispatch {
-  const dispatch = buildChargeDispatch(slot, permissions, 0, feedInCapKwh)
+  const dispatch = buildChargeDispatch(slot, permissions, 0, feedInCapKwh, sharedAcOutputCapKwh)
   if (!dispatch) {
     throw new Error('optimizePvBattery: failed to build no-battery charge counterfactual')
   }
@@ -581,10 +585,11 @@ function storePvChargeLots(
   permissions: PvBatteryFlowPermissions,
   dispatch: PvBatteryDispatch,
   feedInCapKwh: number,
+  sharedAcOutputCapKwh: number,
 ) {
   if (dispatch.chargeToBatteryKwh <= EPSILON) return
 
-  const withoutBatteryCharge = buildNoBatteryChargeDispatch(slot, permissions, feedInCapKwh)
+  const withoutBatteryCharge = buildNoBatteryChargeDispatch(slot, permissions, feedInCapKwh, sharedAcOutputCapKwh)
   const displacedDirectUseKwh = Math.max(0, withoutBatteryCharge.directSelfKwh - dispatch.directSelfKwh)
   const displacedExportKwh = Math.max(0, withoutBatteryCharge.directExportKwh - dispatch.directExportKwh)
   const displacedCurtailmentKwh = Math.max(0, withoutBatteryCharge.curtailedKwh - dispatch.curtailedKwh)
@@ -726,17 +731,22 @@ function choosePvToLoad(
   importPriceCtKwh: number,
   exportPriceCtKwh: number,
   exportCapKwh: number,
+  sharedAcOutputCapKwh: number,
   pvToLoadEnabled: boolean,
   pvToGridEnabled: boolean,
 ): number {
   if (!pvToLoadEnabled || pvKwh <= EPSILON || loadKwh <= EPSILON) return 0
 
   const cappedExport = Math.max(0, exportCapKwh)
-  const yMax = Math.min(pvKwh, loadKwh)
+  const cappedAcOutput = Number.isFinite(sharedAcOutputCapKwh)
+    ? Math.max(0, sharedAcOutputCapKwh)
+    : Number.POSITIVE_INFINITY
+  const yMax = Math.min(pvKwh, loadKwh, cappedAcOutput)
   const candidates = uniqueCandidates([
     0,
     yMax,
     clamp(pvKwh - cappedExport, 0, yMax),
+    clamp(pvKwh - cappedAcOutput, 0, yMax),
   ])
 
   let bestY = 0
@@ -745,7 +755,7 @@ function choosePvToLoad(
   for (const candidate of candidates) {
     const pvRemaining = Math.max(0, pvKwh - candidate)
     const directExportKwh = pvToGridEnabled
-      ? Math.min(pvRemaining, cappedExport)
+      ? Math.min(pvRemaining, cappedExport, Math.max(0, cappedAcOutput - candidate))
       : 0
     const value =
       candidate * importPriceCtKwh +
@@ -768,12 +778,16 @@ function buildChargeDispatch(
   permissions: PvBatteryFlowPermissions,
   chargeKwh: number,
   feedInCapKwh: number,
+  sharedAcOutputCapKwh: number,
 ): PvBatteryDispatch | null {
   const pvKwh = Math.max(0, slot.pvKwh)
   const loadKwh = Math.max(0, slot.loadKwh)
   const importPriceCtKwh = slot.importPriceCtKwh
   const exportPriceCtKwh = slot.exportPriceCtKwh
   const cappedExport = Math.max(0, feedInCapKwh)
+  const cappedAcOutput = Number.isFinite(sharedAcOutputCapKwh)
+    ? Math.max(0, sharedAcOutputCapKwh)
+    : Number.POSITIVE_INFINITY
 
   if (chargeKwh > EPSILON && !permissions.pvToBattery && !permissions.gridToBattery) {
     return null
@@ -783,7 +797,7 @@ function buildChargeDispatch(
   const pvChargeMax = permissions.pvToBattery ? chargeKwh : 0
   if (pvChargeMin > pvChargeMax + EPSILON) return null
 
-  const pvLoadMax = permissions.pvToLoad ? loadKwh : 0
+  const pvLoadMax = permissions.pvToLoad ? Math.min(loadKwh, cappedAcOutput) : 0
   const zMin = pvChargeMin
   const zMax = Math.min(pvKwh, pvChargeMax + pvLoadMax)
   if (zMin > zMax + EPSILON) return null
@@ -792,6 +806,7 @@ function buildChargeDispatch(
     zMin,
     zMax,
     clamp(pvKwh - cappedExport, zMin, zMax),
+    clamp(pvKwh - cappedAcOutput, zMin, zMax),
   ])
 
   let bestDispatch: PvBatteryDispatch | null = null
@@ -802,7 +817,7 @@ function buildChargeDispatch(
     const gridToBatteryKwh = chargeKwh - chargeToBatteryKwh
     const pvRemaining = Math.max(0, pvKwh - z)
     const directExportKwh = permissions.pvToGrid
-      ? Math.min(pvRemaining, cappedExport)
+      ? Math.min(pvRemaining, cappedExport, Math.max(0, cappedAcOutput - directSelfKwh))
       : 0
     const curtailedKwh = Math.max(0, pvRemaining - directExportKwh)
     const gridImportKwh = Math.max(0, loadKwh - directSelfKwh)
@@ -844,30 +859,41 @@ function buildDischargeDispatch(
   permissions: PvBatteryFlowPermissions,
   dischargeOutputKwh: number,
   feedInCapKwh: number,
+  sharedAcOutputCapKwh: number,
 ): PvBatteryDispatch | null {
   const pvKwh = Math.max(0, slot.pvKwh)
   const loadKwh = Math.max(0, slot.loadKwh)
   const importPriceCtKwh = slot.importPriceCtKwh
   const exportPriceCtKwh = slot.exportPriceCtKwh
   const cappedExport = Math.max(0, feedInCapKwh)
+  const cappedAcOutput = Number.isFinite(sharedAcOutputCapKwh)
+    ? Math.max(0, sharedAcOutputCapKwh)
+    : Number.POSITIVE_INFINITY
 
-  if (dischargeOutputKwh <= EPSILON) return buildChargeDispatch(slot, permissions, 0, feedInCapKwh)
+  if (dischargeOutputKwh <= EPSILON) return buildChargeDispatch(slot, permissions, 0, feedInCapKwh, sharedAcOutputCapKwh)
   if (!permissions.batteryToLoad && !permissions.batteryToGrid) return null
+  if (dischargeOutputKwh > cappedAcOutput + EPSILON) return null
 
   if (!permissions.batteryToLoad) {
     // Battery can only discharge to grid - check if discharge exceeds export cap
     if (!permissions.batteryToGrid || dischargeOutputKwh > cappedExport + EPSILON) return null
+    const remainingAcOutputKwh = Math.max(0, cappedAcOutput - dischargeOutputKwh)
     const pvToLoadKwh = choosePvToLoad(
       pvKwh,
       loadKwh,
       importPriceCtKwh,
       exportPriceCtKwh,
-      cappedExport - dischargeOutputKwh,
+      Math.min(cappedExport - dischargeOutputKwh, remainingAcOutputKwh),
+      remainingAcOutputKwh,
       permissions.pvToLoad,
       permissions.pvToGrid,
     )
     const directExportKwh = permissions.pvToGrid
-      ? Math.min(Math.max(0, pvKwh - pvToLoadKwh), Math.max(0, cappedExport - dischargeOutputKwh))
+      ? Math.min(
+        Math.max(0, pvKwh - pvToLoadKwh),
+        Math.max(0, cappedExport - dischargeOutputKwh),
+        Math.max(0, remainingAcOutputKwh - pvToLoadKwh),
+      )
       : 0
     const curtailedKwh = Math.max(0, pvKwh - pvToLoadKwh - directExportKwh)
     const gridImportKwh = Math.max(0, loadKwh - pvToLoadKwh)
@@ -889,20 +915,26 @@ function buildDischargeDispatch(
   }
 
   if (!permissions.batteryToGrid) {
-    // Battery can only discharge to load - no export cap constraint needed
-    // Discharge is limited by load, not by feed-in cap
+    // Battery can only discharge to load. In balcony/plug-in mode, this
+    // discharge also consumes the shared AC output envelope.
     if (dischargeOutputKwh > loadKwh + EPSILON) return null
+    const remainingAcOutputKwh = Math.max(0, cappedAcOutput - dischargeOutputKwh)
     const pvToLoadKwh = choosePvToLoad(
       pvKwh,
       Math.max(0, loadKwh - dischargeOutputKwh),
       importPriceCtKwh,
       exportPriceCtKwh,
-      cappedExport,
+      Math.min(cappedExport, remainingAcOutputKwh),
+      remainingAcOutputKwh,
       permissions.pvToLoad,
       permissions.pvToGrid,
     )
     const directExportKwh = permissions.pvToGrid
-      ? Math.min(Math.max(0, pvKwh - pvToLoadKwh), cappedExport)
+      ? Math.min(
+        Math.max(0, pvKwh - pvToLoadKwh),
+        cappedExport,
+        Math.max(0, remainingAcOutputKwh - pvToLoadKwh),
+      )
       : 0
     const curtailedKwh = Math.max(0, pvKwh - pvToLoadKwh - directExportKwh)
     const gridImportKwh = Math.max(0, loadKwh - dischargeOutputKwh - pvToLoadKwh)
@@ -926,17 +958,19 @@ function buildDischargeDispatch(
   if (!permissions.pvToGrid) {
     // No PV export allowed - battery can export but PV excess is curtailed
     // Battery discharge split: prioritize load first, then export up to cap
-    const directSelfKwh = permissions.pvToLoad ? Math.min(pvKwh, loadKwh) : 0
+    const remainingAcOutputKwh = Math.max(0, cappedAcOutput - dischargeOutputKwh)
+    const directSelfKwh = permissions.pvToLoad ? Math.min(pvKwh, loadKwh, remainingAcOutputKwh) : 0
     const residualLoadKwh = Math.max(0, loadKwh - directSelfKwh)
     let batteryToLoadKwh = exportPriceCtKwh > importPriceCtKwh
       ? Math.max(0, dischargeOutputKwh - cappedExport)
       : Math.min(dischargeOutputKwh, residualLoadKwh)
 
     const batteryExportKwh = dischargeOutputKwh - batteryToLoadKwh
-    // Validate: battery to load cannot exceed residual load, battery export cannot exceed cap
+    // Validate: battery to load cannot exceed residual load, battery export cannot exceed cap.
     if (
       batteryToLoadKwh > residualLoadKwh + EPSILON ||
-      batteryExportKwh > cappedExport + EPSILON
+      batteryExportKwh > cappedExport + EPSILON ||
+      directSelfKwh + batteryToLoadKwh + batteryExportKwh > cappedAcOutput + EPSILON
     ) {
       return null
     }
@@ -962,16 +996,18 @@ function buildDischargeDispatch(
 
   // Full flexibility: both PV and battery can export
   // z = total energy serving load (PV + battery combined)
-  // Battery export is capped at feedInCapKwh, but total discharge is not limited by it
-  const pvLoadMax = permissions.pvToLoad ? pvKwh : 0
+  // Battery export is capped at feedInCapKwh, and plug-in/balcony systems
+  // additionally cap the combined AC output from PV and battery.
+  const pvLoadMax = permissions.pvToLoad ? Math.min(pvKwh, Math.max(0, cappedAcOutput - dischargeOutputKwh)) : 0
   const zMin = 0
-  const zMax = Math.min(loadKwh, dischargeOutputKwh + pvLoadMax)
+  const zMax = Math.min(loadKwh, dischargeOutputKwh + pvLoadMax, cappedAcOutput)
   if (zMin > zMax + EPSILON) return null
 
   const candidates = uniqueCandidates([
     zMin,
     zMax,
     clamp(pvKwh + dischargeOutputKwh - cappedExport, zMin, zMax),
+    clamp(pvKwh + dischargeOutputKwh - cappedAcOutput, zMin, zMax),
   ])
 
   let bestDispatch: PvBatteryDispatch | null = null
@@ -984,7 +1020,11 @@ function buildDischargeDispatch(
     if (batteryExportKwh > cappedExport + EPSILON) continue
 
     const pvRemaining = Math.max(0, pvKwh - directSelfKwh)
-    const directExportKwh = Math.min(pvRemaining, Math.max(0, cappedExport - batteryExportKwh))
+    const directExportKwh = Math.min(
+      pvRemaining,
+      Math.max(0, cappedExport - batteryExportKwh),
+      Math.max(0, cappedAcOutput - dischargeOutputKwh - directSelfKwh),
+    )
     const curtailedKwh = Math.max(0, pvRemaining - directExportKwh)
     const gridImportKwh = Math.max(0, loadKwh - z)
     const netCostEur =
@@ -1026,11 +1066,12 @@ function buildDispatch(
   socEnd: number,
   roundTripEff: number,
   feedInCapKwh: number,
+  sharedAcOutputCapKwh: number,
 ): PvBatteryDispatch | null {
   const slotPermissions = getEffectiveSlotPermissions(slot, permissions)
 
   if (socEnd > socStart + EPSILON) {
-    return buildChargeDispatch(slot, slotPermissions, socEnd - socStart, feedInCapKwh)
+    return buildChargeDispatch(slot, slotPermissions, socEnd - socStart, feedInCapKwh, sharedAcOutputCapKwh)
   }
 
   if (socEnd < socStart - EPSILON) {
@@ -1040,10 +1081,11 @@ function buildDispatch(
       slotPermissions,
       (socStart - socEnd) * roundTripEff,
       feedInCapKwh,
+      sharedAcOutputCapKwh,
     )
   }
 
-  return buildChargeDispatch(slot, slotPermissions, 0, feedInCapKwh)
+  return buildChargeDispatch(slot, slotPermissions, 0, feedInCapKwh, sharedAcOutputCapKwh)
 }
 
 export function getAvailablePvBatteryYears(
@@ -1290,17 +1332,21 @@ export function optimizePvBatteryWithOptions(
   const chargeLimitKwh = scenario.maxChargeKw * slotHours
   const dischargeLimitKwh = scenario.maxDischargeKw * slotHours
   const feedInCapKwh = scenario.feedInCapKw * slotHours
+  const sharedAcOutputCapKwh = Number.isFinite(scenario.sharedAcOutputCapKw ?? Number.POSITIVE_INFINITY)
+    ? Math.max(0, scenario.sharedAcOutputCapKw ?? 0) * slotHours
+    : Number.POSITIVE_INFINITY
   const capacity = clamp(scenario.usableKwh, 0, 20)
   const roundTripEff = clamp(scenario.roundTripEff, 0, 1)
   const permissions = normalizeFlowPermissions(scenario.flowPermissions)
-  const stateCount = Math.max(1, Math.floor(capacity / SOC_STEP_KWH + 1e-9) + 1)
+  const socStepKwh = clamp(options.socStepKwh ?? SOC_STEP_KWH, 0.05, 1)
+  const stateCount = Math.max(1, Math.floor(capacity / socStepKwh + 1e-9) + 1)
   const bestNext = Array.from({ length: inputs.length }, () => new Uint16Array(stateCount))
-  const initialStateIndex = Math.min(stateCount - 1, Math.max(0, socToStateIndex(options.initialSocKwh ?? 0, capacity)))
-  const initialSocKwh = initialStateIndex * SOC_STEP_KWH
+  const initialStateIndex = Math.min(stateCount - 1, Math.max(0, socToStateIndex(options.initialSocKwh ?? 0, capacity, socStepKwh)))
+  const initialSocKwh = initialStateIndex * socStepKwh
   const targetTerminalIndex = options.terminalSocKwh === null || options.terminalSocKwh === undefined
     ? null
-    : Math.min(stateCount - 1, Math.max(0, socToStateIndex(options.terminalSocKwh, capacity)))
-  const terminalSocKwh = targetTerminalIndex === null ? null : targetTerminalIndex * SOC_STEP_KWH
+    : Math.min(stateCount - 1, Math.max(0, socToStateIndex(options.terminalSocKwh, capacity, socStepKwh)))
+  const terminalSocKwh = targetTerminalIndex === null ? null : targetTerminalIndex * socStepKwh
   const runProvenance = resolveRunProvenance(
     inputs,
     planningModel,
@@ -1321,15 +1367,15 @@ export function optimizePvBatteryWithOptions(
     const slot = inputs[slotIndex]
 
     for (let stateIndex = 0; stateIndex < stateCount; stateIndex++) {
-      const soc = stateIndex * SOC_STEP_KWH
+      const soc = stateIndex * socStepKwh
       let bestValue = Number.POSITIVE_INFINITY
       let bestStateIndex = stateIndex
 
       const maxChargeKwh = Math.min(chargeLimitKwh, capacity - soc)
-      const maxChargeIndex = Math.min(stateCount - 1, Math.floor((soc + maxChargeKwh + 1e-9) / SOC_STEP_KWH))
+      const maxChargeIndex = Math.min(stateCount - 1, Math.floor((soc + maxChargeKwh + 1e-9) / socStepKwh))
       for (let nextIndex = stateIndex; nextIndex <= maxChargeIndex; nextIndex++) {
-        const nextSoc = nextIndex * SOC_STEP_KWH
-        const dispatch = buildDispatch(slot, permissions, soc, nextSoc, roundTripEff, feedInCapKwh)
+        const nextSoc = nextIndex * socStepKwh
+        const dispatch = buildDispatch(slot, permissions, soc, nextSoc, roundTripEff, feedInCapKwh, sharedAcOutputCapKwh)
         if (!dispatch) continue
 
         const candidate = dispatch.netCostEur + nextValues[nextIndex]
@@ -1347,11 +1393,11 @@ export function optimizePvBatteryWithOptions(
       if (roundTripEff > EPSILON) {
         const maxDischargeKwh = Math.min(dischargeLimitKwh, soc * roundTripEff)
         const minNextSoc = Math.max(0, soc - maxDischargeKwh / roundTripEff)
-        const minNextIndex = Math.max(0, Math.ceil((minNextSoc - 1e-9) / SOC_STEP_KWH))
+        const minNextIndex = Math.max(0, Math.ceil((minNextSoc - 1e-9) / socStepKwh))
 
         for (let nextIndex = minNextIndex; nextIndex < stateIndex; nextIndex++) {
-          const nextSoc = nextIndex * SOC_STEP_KWH
-          const dispatch = buildDispatch(slot, permissions, soc, nextSoc, roundTripEff, feedInCapKwh)
+          const nextSoc = nextIndex * socStepKwh
+          const dispatch = buildDispatch(slot, permissions, soc, nextSoc, roundTripEff, feedInCapKwh, sharedAcOutputCapKwh)
           if (!dispatch) continue
 
           const candidate = dispatch.netCostEur + nextValues[nextIndex]
@@ -1410,10 +1456,10 @@ export function optimizePvBatteryWithOptions(
 
   for (let slotIndex = 0; slotIndex < inputs.length; slotIndex++) {
     const slot = inputs[slotIndex]
-    const socStart = stateIndex * SOC_STEP_KWH
+    const socStart = stateIndex * socStepKwh
     const nextIndex = bestNext[slotIndex][stateIndex]
-    const socEnd = nextIndex * SOC_STEP_KWH
-    const dispatch = buildDispatch(slot, permissions, socStart, socEnd, roundTripEff, feedInCapKwh)
+    const socEnd = nextIndex * socStepKwh
+    const dispatch = buildDispatch(slot, permissions, socStart, socEnd, roundTripEff, feedInCapKwh, sharedAcOutputCapKwh)
     if (!dispatch) {
       throw new Error(`optimizePvBattery: infeasible dispatch reconstruction at slot ${slotIndex}`)
     }
@@ -1431,6 +1477,7 @@ export function optimizePvBatteryWithOptions(
         getEffectiveSlotPermissions(slot, permissions),
         dispatch,
         feedInCapKwh,
+        sharedAcOutputCapKwh,
       )
     }
     if (dispatch.gridToBatteryKwh > EPSILON) {

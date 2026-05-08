@@ -23,6 +23,15 @@ const DE_POSTAL_REGIONS: Record<string, { lat: number; lon: number; region: stri
   '9': { lat: 49.45, lon: 11.07, region: 'Nuremberg/South' },
 }
 
+function isPlausibleGermanCoordinate(lat: number, lon: number): boolean {
+  return Number.isFinite(lat)
+    && Number.isFinite(lon)
+    && lat >= 47
+    && lat <= 56
+    && lon >= 5
+    && lon <= 16
+}
+
 /**
  * Convert German zip code to approximate lat/lon
  * Uses the first digit to determine the postal region
@@ -44,7 +53,7 @@ async function fetchZipCodeLocation(zipCode: string): Promise<{ lat: number; lon
     const place = data?.places?.[0]
     const lat = Number(place?.latitude)
     const lon = Number(place?.longitude)
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+    if (!isPlausibleGermanCoordinate(lat, lon)) return null
 
     const placeName = place?.['place name'] ?? 'Germany'
     const state = place?.state

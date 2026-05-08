@@ -179,6 +179,20 @@ async function fetchSmardBatch(startDate: Date, endDate: Date, resolution: 'hour
 
 // ─── Other Source Functions ──────────────────────────────────────────
 
+const loggedFallbackDiagnostics = new Set<string>()
+
+function getFallbackErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function logExpectedFallback(source: string, error: unknown) {
+  const message = getFallbackErrorMessage(error)
+  const key = `${source}:${message}`
+  if (loggedFallbackDiagnostics.has(key)) return
+  loggedFallbackDiagnostics.add(key)
+  console.warn(`${source} unavailable; falling back to next price source: ${message}`)
+}
+
 async function fetchAwattarBatch(startDate: Date, endDate: Date): Promise<PricePoint[] | null> {
   try {
     const prices = await fetchAwattarRange(startDate, endDate)
@@ -194,7 +208,7 @@ async function fetchEntsoeBatch(startDate: Date, endDate: Date): Promise<PricePo
     const prices = await fetchEntsoeRange(startDate, endDate)
     return prices.length > 0 ? prices : null
   } catch (error) {
-    console.error('ENTSO-E batch error:', error)
+    logExpectedFallback('ENTSO-E batch', error)
     return null
   }
 }
@@ -204,7 +218,7 @@ async function fetchEnergyChartsBatch(startDate: Date, endDate: Date): Promise<P
     const prices = await fetchEnergyChartsRange(startDate, endDate)
     return prices.length > 0 ? prices : null
   } catch (error) {
-    console.error('Energy-Charts batch error:', error)
+    logExpectedFallback('Energy-Charts batch', error)
     return null
   }
 }

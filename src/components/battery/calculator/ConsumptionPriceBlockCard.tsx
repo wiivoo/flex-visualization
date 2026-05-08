@@ -54,6 +54,10 @@ interface HistogramDatum {
 
 const BLOCK_KWH = 0.05
 const EPSILON = 1e-6
+const BATTERY_PV_BASE = '#2563EB'
+const BATTERY_GRID_BASE = '#1D4ED8'
+const BATTERY_PV_STRIPE = '#E9B94A'
+const BATTERY_GRID_STRIPE = 'rgba(148,163,184,0.78)'
 
 const SOURCE_STYLES: Record<DeliveredSourceKey, { label: string; base: string; stripe?: string }> = {
   gridDirect: {
@@ -66,13 +70,13 @@ const SOURCE_STYLES: Record<DeliveredSourceKey, { label: string; base: string; s
   },
   batteryPv: {
     label: 'PV -> battery -> load',
-    base: '#D9B24E',
-    stripe: 'rgba(47,111,179,0.42)',
+    base: BATTERY_PV_BASE,
+    stripe: BATTERY_PV_STRIPE,
   },
   batteryGrid: {
     label: 'Grid -> battery -> load',
-    base: '#8A93A3',
-    stripe: 'rgba(47,111,179,0.58)',
+    base: BATTERY_GRID_BASE,
+    stripe: BATTERY_GRID_STRIPE,
   },
 }
 
@@ -257,7 +261,7 @@ function getSourceFill(source: DeliveredSourceKey): string {
 function getTooltipSwatch(source: DeliveredSourceKey): string {
   const style = SOURCE_STYLES[source]
   if (!style.stripe) return style.base
-  return `repeating-linear-gradient(135deg, ${style.base} 0 4px, ${style.stripe} 4px 7px)`
+  return `repeating-linear-gradient(135deg, ${style.base} 0 7px, ${style.stripe} 7px 9px)`
 }
 
 function SourceFillDefs() {
@@ -268,9 +272,9 @@ function SourceFillDefs() {
         if (!style.stripe) return null
 
         return (
-          <pattern key={key} id={`consumption-${key}-stripe`} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
-            <rect width="8" height="8" fill={style.base} />
-            <rect x="0" y="0" width="3" height="8" fill={style.stripe} />
+          <pattern key={key} id={`consumption-${key}-stripe`} width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+            <rect width="9" height="9" fill={style.base} />
+            <rect x="0" y="0" width="2" height="9" fill={style.stripe} />
           </pattern>
         )
       })}
@@ -697,8 +701,8 @@ export function ConsumptionPriceBlockCard({
           {distributionView === 'chronological' ? (
             <>
               <div>
-                <div className="h-[390px]">
-                  <ResponsiveContainer width="100%" height="100%">
+                <div className="h-[390px] min-h-[390px] min-w-0">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={390} initialDimension={{ width: 1, height: 390 }}>
                     <BarChart
                       data={slotDataWithIntensity}
                       margin={{ top: 14, right: 12, bottom: 32, left: 2 }}
@@ -769,8 +773,8 @@ export function ConsumptionPriceBlockCard({
                 <span className="w-6 text-right text-[11px] font-semibold tabular-nums text-slate-700">{histogramBinCount}</span>
               </div>
 
-              <div className="h-[390px]">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="h-[390px] min-h-[390px] min-w-0">
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={390} initialDimension={{ width: 1, height: 390 }}>
                   <BarChart
                     data={sortedHistogramData}
                     margin={{ top: 14, right: 10, bottom: 24, left: 0 }}

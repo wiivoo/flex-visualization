@@ -1,16 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import { Suspense, type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, Pause, Play, SunMedium, Zap, type LucideIcon } from 'lucide-react'
+import { Suspense, type KeyboardEvent, type ReactNode, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { Battery, BatteryCharging, CircleHelp, Gauge, Home, LineChart, LoaderCircle, Pause, Play, SunMedium, Zap, type LucideIcon } from 'lucide-react'
 
 import { ConsumptionPriceBlockCard } from '@/components/battery/calculator/ConsumptionPriceBlockCard'
 import { PvBatteryDayChart } from '@/components/battery/calculator/PvBatteryDayChart'
 import { DateStrip } from '@/components/v2/DateStrip'
 import { Card, CardContent } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { usePvRadiation } from '@/lib/use-pv-radiation'
+import { usePvRadiation, type PvRadiationData } from '@/lib/use-pv-radiation'
 import {
   DE_BATTERY_LOAD_PROFILES,
   type BatteryLoadProfileId,
@@ -46,8 +46,12 @@ type FlowPermissionKey =
 
 type FlowPermissions = PvBatteryFlowPermissions
 type BatteryConnectionMode = 'plugin' | 'wired'
+type PvInstallationMode = 'rooftop' | 'balcony'
 type DayFlowByRoute = Record<FlowPermissionKey | 'gridToHome', number>
+type SavingsSummaryRange = 'day' | 'last365' | 'calendar'
+type SavingsSummaryCalendarYear = 2026 | 2025 | 2024
 const CALCULATOR_COUNTRY: PvBatteryCountry = 'DE'
+const SAVINGS_SUMMARY_CALENDAR_YEARS: SavingsSummaryCalendarYear[] = [2026, 2025, 2024]
 
 const FLOW_PERMISSION_QUERY_KEYS: Record<FlowPermissionKey, string> = {
   pvToLoad: 'pvLoad',
@@ -61,7 +65,7 @@ const FLOW_PERMISSION_QUERY_KEYS: Record<FlowPermissionKey, string> = {
 const DEFAULT_FLOW_PERMISSIONS: FlowPermissions = {
   pvToLoad: true,
   pvToBattery: true,
-  gridToBattery: false,
+  gridToBattery: true,
   batteryToLoad: true,
   pvToGrid: true,
   batteryToGrid: true,
@@ -74,6 +78,21 @@ const BATTERY_POWER_MAX_KW = 15
 const BATTERY_POWER_STEP_KW = 0.1
 const PLUGIN_ROUND_TRIP_EFF = 0.88
 const WIRED_ROUND_TRIP_EFF = 0.9
+
+function getEffectiveFlowPermissions(state: Pick<CalculatorState, 'flowPermissions' | 'pvCapacityWp' | 'usableKwh' | 'pvInstallationMode'>): FlowPermissions {
+  const hasPv = state.pvCapacityWp > 0
+  const hasBattery = state.usableKwh > 0
+  const isBalconyPv = state.pvInstallationMode === 'balcony'
+
+  return {
+    pvToLoad: hasPv && state.flowPermissions.pvToLoad,
+    pvToBattery: hasPv && hasBattery && state.flowPermissions.pvToBattery,
+    gridToBattery: hasBattery && state.flowPermissions.gridToBattery,
+    batteryToLoad: hasBattery && state.flowPermissions.batteryToLoad,
+    pvToGrid: !isBalconyPv && hasPv && state.flowPermissions.pvToGrid,
+    batteryToGrid: !isBalconyPv && hasPv && hasBattery && state.flowPermissions.batteryToGrid,
+  }
+}
 
 const FLOW_PERMISSION_OPTIONS: Array<{
   key: FlowPermissionKey
@@ -124,14 +143,17 @@ type FlowNodeKey = 'pv' | 'battery' | 'home' | 'grid'
 const ALLOCATION_FLOW_COLORS = {
   gridDirect: '#7D8797',
   pvDirect: '#E9B94A',
-  pvStored: '#D9B24E',
-  gridStored: '#2F6FB3',
+  pvStored: '#2563EB',
+  gridStored: '#1D4ED8',
   pvExport: '#D6B04B',
-  batteryPvExport: '#D9B24E',
-  batteryGridExport: '#8A93A3',
-  batteryExport: '#2F6FB3',
+  batteryPvExport: '#2563EB',
+  batteryGridExport: '#1D4ED8',
+  batteryExport: '#1D4ED8',
   household: '#111827',
 } as const
+
+const ALLOCATION_BATTERY_PV_STRIPE = '#E9B94A'
+const ALLOCATION_BATTERY_GRID_STRIPE = 'rgba(148,163,184,0.78)'
 
 type AllocationNodeMetric = {
   label: string
@@ -224,8 +246,10 @@ interface CalculatorState {
   annualLoadKwh: number
   pvCapacityWp: number
   pvZipCode: string
+  pvInstallationMode: PvInstallationMode
   batteryConnectionMode: BatteryConnectionMode
   usableKwh: number
+  batteryCRate: number
   initialSocKwh: number
   maxChargeKw: number
   maxDischargeKw: number
@@ -245,6 +269,29 @@ interface TariffComponentsLookup {
   cached?: boolean
 }
 
+function buildRegionalSurchargesForYear(
+  year: number,
+  tariffComponents: TariffComponentsLookup | null,
+): Surcharges | null {
+  if (!tariffComponents) return null
+
+  const base = surchargesForYear(year)
+  const supplierMarkupInTaxes = 2.15
+  return {
+    ...base,
+    gridFee: tariffComponents.gridFeeNetto,
+    konzessionsabgabe: Math.max(
+      0,
+      tariffComponents.taxesNetto -
+        supplierMarkupInTaxes -
+        base.stromsteuer -
+        base.kwkg -
+        base.offshore -
+        base.par19,
+    ),
+  }
+}
+
 function sameState(a: CalculatorState, b: CalculatorState): boolean {
   return a.country === b.country
     && a.tariffId === b.tariffId
@@ -257,8 +304,10 @@ function sameState(a: CalculatorState, b: CalculatorState): boolean {
     && a.annualLoadKwh === b.annualLoadKwh
     && a.pvCapacityWp === b.pvCapacityWp
     && a.pvZipCode === b.pvZipCode
+    && a.pvInstallationMode === b.pvInstallationMode
     && a.batteryConnectionMode === b.batteryConnectionMode
     && a.usableKwh === b.usableKwh
+    && a.batteryCRate === b.batteryCRate
     && a.initialSocKwh === b.initialSocKwh
     && a.maxChargeKw === b.maxChargeKw
     && a.maxDischargeKw === b.maxDischargeKw
@@ -271,7 +320,7 @@ function sameState(a: CalculatorState, b: CalculatorState): boolean {
 const DEFAULT_STATE: CalculatorState = {
   country: CALCULATOR_COUNTRY,
   tariffId: 'tibber-de',
-  planningModel: 'deterministic',
+  planningModel: 'rolling',
   year: 0,
   viewHours: 24,
   resolution: 'quarterhour',
@@ -280,8 +329,10 @@ const DEFAULT_STATE: CalculatorState = {
   annualLoadKwh: 4500,
   pvCapacityWp: 8000,
   pvZipCode: '',
+  pvInstallationMode: 'rooftop',
   batteryConnectionMode: 'wired',
   usableKwh: 10,
+  batteryCRate: DEFAULT_BATTERY_C_RATE,
   initialSocKwh: 5,
   maxChargeKw: 5,
   maxDischargeKw: 5,
@@ -301,13 +352,13 @@ function roundToStep(value: number, step: number): number {
   return Number((Math.round(value / step) * step).toFixed(3))
 }
 
-function defaultBatteryChargeKw(usableKwh: number): number {
-  return clamp(roundToStep(usableKwh * DEFAULT_BATTERY_C_RATE, BATTERY_POWER_STEP_KW), BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW)
+function defaultBatteryChargeKw(usableKwh: number, cRate = DEFAULT_BATTERY_C_RATE): number {
+  return clamp(roundToStep(usableKwh * cRate, BATTERY_POWER_STEP_KW), BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW)
 }
 
-function defaultBatteryDischargeKw(mode: BatteryConnectionMode, usableKwh: number): number {
+function defaultBatteryDischargeKw(mode: BatteryConnectionMode, usableKwh: number, cRate = DEFAULT_BATTERY_C_RATE): number {
   if (mode === 'plugin') return PLUGIN_DISCHARGE_LIMIT_KW
-  return defaultBatteryChargeKw(usableKwh)
+  return defaultBatteryChargeKw(usableKwh, cRate)
 }
 
 function defaultBatteryEfficiency(mode: BatteryConnectionMode): number {
@@ -318,10 +369,21 @@ function applyBatteryConnectionDefaults(state: CalculatorState, mode: BatteryCon
   return {
     ...state,
     batteryConnectionMode: mode,
-    maxChargeKw: defaultBatteryChargeKw(state.usableKwh),
-    maxDischargeKw: defaultBatteryDischargeKw(mode, state.usableKwh),
+    maxChargeKw: defaultBatteryChargeKw(state.usableKwh, state.batteryCRate),
+    maxDischargeKw: defaultBatteryDischargeKw(mode, state.usableKwh, state.batteryCRate),
     roundTripEff: defaultBatteryEfficiency(mode),
   }
+}
+
+function applyPvInstallationDefaults(state: CalculatorState, mode: PvInstallationMode): CalculatorState {
+  const nextState = { ...state, pvInstallationMode: mode }
+  if (state.usableKwh <= 0) return nextState
+  return applyBatteryConnectionDefaults(nextState, mode === 'balcony' ? 'plugin' : 'wired')
+}
+
+function applyBatteryOnlyDefaults(state: CalculatorState): CalculatorState {
+  if (state.usableKwh <= 0) return state
+  return applyBatteryConnectionDefaults(state, 'plugin')
 }
 
 function getDefaultTariffForCountry(country: PvBatteryCountry): string {
@@ -360,7 +422,13 @@ function formatFlowPermissionList(keys: FlowPermissionKey[]): string {
 }
 
 function formatKwh(value: number): string {
-  return `${Math.round(value).toLocaleString()} kWh`
+  const absValue = Math.abs(value)
+  const formatted = absValue > 0 && absValue < 10
+    ? value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : absValue < 100
+      ? value.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      : Math.round(value).toLocaleString()
+  return `${formatted} kWh`
 }
 
 function formatCompactFlowKwh(value: number): string {
@@ -420,7 +488,7 @@ function getDisabledFlowConsequences(flowPermissions: FlowPermissions): string[]
 function parseState(params: URLSearchParams): CalculatorState {
   const country: PvBatteryCountry = CALCULATOR_COUNTRY
   const loadProfileId = getDefaultCalculatorLoadProfileId(country)
-  const planningModel: PvBatteryPlanningModel = params.get('model') === 'rolling' ? 'rolling' : 'deterministic'
+  const planningModel: PvBatteryPlanningModel = params.get('model') === 'deterministic' ? 'deterministic' : 'rolling'
   const parsedYear = Number(params.get('year'))
   const tariffIds = new Set(getTariffsFor(country).map((tariff) => tariff.id))
   const tariffId = tariffIds.has(params.get('tariff') ?? '')
@@ -441,11 +509,13 @@ function parseState(params: URLSearchParams): CalculatorState {
 
   const zipCodeRaw = params.get('pvzip') ?? ''
   const pvZipCode = /^\d{5}$/.test(zipCodeRaw) ? zipCodeRaw : ''
+  const pvInstallationMode: PvInstallationMode = params.get('pvMode') === 'balcony' ? 'balcony' : 'rooftop'
   const batteryConnectionMode: BatteryConnectionMode = params.get('batteryMode') === 'plugin' ? 'plugin' : 'wired'
   const usableKwh = getNum('battery', DEFAULT_STATE.usableKwh, 0, 20)
+  const batteryCRate = getNum('cRate', DEFAULT_STATE.batteryCRate, 0.1, 2)
   const initialSocDefault = usableKwh > 0 ? usableKwh / 2 : 0
-  const defaultChargeKw = defaultBatteryChargeKw(usableKwh)
-  const defaultDischargeKw = defaultBatteryDischargeKw(batteryConnectionMode, usableKwh)
+  const defaultChargeKw = defaultBatteryChargeKw(usableKwh, batteryCRate)
+  const defaultDischargeKw = defaultBatteryDischargeKw(batteryConnectionMode, usableKwh, batteryCRate)
 
   return {
     country,
@@ -459,8 +529,10 @@ function parseState(params: URLSearchParams): CalculatorState {
     annualLoadKwh: getNum('load', DEFAULT_STATE.annualLoadKwh, 1500, 15000),
     pvCapacityWp: getNum('pv', DEFAULT_STATE.pvCapacityWp, 0, 20000),
     pvZipCode,
+    pvInstallationMode,
     batteryConnectionMode,
     usableKwh,
+    batteryCRate,
     initialSocKwh: getNum('soc', initialSocDefault, 0, Math.max(usableKwh, 0)),
     maxChargeKw: getNum('charge', defaultChargeKw, BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW),
     maxDischargeKw: getNum('discharge', defaultDischargeKw, BATTERY_POWER_MIN_KW, BATTERY_POWER_MAX_KW),
@@ -599,18 +671,35 @@ function ControlBlock({
   value,
   icon,
   children,
+  tone = 'neutral',
 }: {
   label: string
   value?: string
   icon?: ReactNode
   children: ReactNode
+  tone?: 'neutral' | 'pv' | 'battery'
 }) {
   return (
-    <Card className="overflow-hidden shadow-sm border-gray-200/80">
-      <div className="border-b border-gray-100 bg-gray-50/80 px-5 py-2.5">
+    <Card className={cn(
+      'overflow-hidden shadow-sm',
+      tone === 'pv' && 'border-amber-300 bg-amber-50/35 shadow-amber-100/70',
+      tone === 'battery' && 'border-sky-300 bg-sky-50/35 shadow-sky-100/70',
+      tone === 'neutral' && 'border-gray-200/80 bg-white',
+    )}>
+      <div className={cn(
+        'border-b px-5 py-2.5',
+        tone === 'pv' && 'border-amber-200 bg-amber-100/70',
+        tone === 'battery' && 'border-sky-200 bg-sky-100/70',
+        tone === 'neutral' && 'border-gray-100 bg-gray-50/80',
+      )}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold tracking-widest uppercase text-gray-400">{label}</p>
+            <p className={cn(
+              'text-[10px] font-semibold tracking-widest uppercase',
+              tone === 'pv' && 'text-amber-800',
+              tone === 'battery' && 'text-sky-800',
+              tone === 'neutral' && 'text-gray-400',
+            )}>{label}</p>
             {value ? <p className="mt-1 text-xl font-bold text-[#313131] tabular-nums">{value}</p> : null}
           </div>
           {icon}
@@ -938,6 +1027,8 @@ function buildScenario(
   state: CalculatorState,
   regionalSurcharges?: Surcharges | null,
 ): PvBatteryCalculatorScenario {
+  const flowPermissions = getEffectiveFlowPermissions(state)
+
   return {
     country: state.country,
     tariffId: state.tariffId,
@@ -948,10 +1039,11 @@ function buildScenario(
     maxDischargeKw: state.maxDischargeKw,
     roundTripEff: state.roundTripEff,
     feedInCapKw: state.feedInCapKw,
+    sharedAcOutputCapKw: state.pvInstallationMode === 'balcony' ? PLUGIN_DISCHARGE_LIMIT_KW : null,
     exportCompensationPct: MARKET_EXPORT_COMPENSATION_PCT,
     regionalSurcharges,
     curtailPvAtNegativePrices: state.curtailPvAtNegativePrices,
-    flowPermissions: state.flowPermissions,
+    flowPermissions,
   }
 }
 
@@ -1015,6 +1107,8 @@ interface AnnualAccountingSummary {
   batteryPvExportKwh: number
   batteryPvExportRevenueEur: number
   batteryPvExportAvgCt: number
+  batteryLoadSavingsEur: number
+  batteryGridLoadSavingsEur: number
   batteryGridExportKwh: number
   batteryGridExportRevenueEur: number
   batteryGridExportNetEur: number
@@ -1054,6 +1148,7 @@ function summarizeAnnualAccounting(annual: PvBatteryAnnualResult): AnnualAccount
     acc.directExportRevenueEur += (slot.directExportKwh * slot.exportPriceCtKwh) / 100
     acc.batteryPvExportKwh += slot.batteryPvExportKwh
     acc.batteryPvExportRevenueEur += (slot.batteryPvExportKwh * slot.exportPriceCtKwh) / 100
+    acc.batteryLoadSavingsEur += slot.batteryLoadSavingsEur
     acc.batteryGridExportKwh += slot.batteryGridExportKwh
     acc.batteryGridExportRevenueEur += (slot.batteryGridExportKwh * slot.exportPriceCtKwh) / 100
     acc.batteryGridExportNetEur += slot.batteryGridExportSavingsEur
@@ -1077,6 +1172,7 @@ function summarizeAnnualAccounting(annual: PvBatteryAnnualResult): AnnualAccount
     directExportRevenueEur: 0,
     batteryPvExportKwh: 0,
     batteryPvExportRevenueEur: 0,
+    batteryLoadSavingsEur: 0,
     batteryGridExportKwh: 0,
     batteryGridExportRevenueEur: 0,
     batteryGridExportNetEur: 0,
@@ -1087,6 +1183,7 @@ function summarizeAnnualAccounting(annual: PvBatteryAnnualResult): AnnualAccount
   const exportedEnergyKwh = annual.directExportKwh + annual.batteryExportKwh
   const pvToHouseholdKwh = annual.directSelfConsumedKwh + totals.pvBatteryToLoadKwh
   const pvAvoidedImportEur = totals.directPvAvoidedImportEur + totals.pvBatteryAvoidedImportEur
+  const batteryGridLoadSavingsEur = totals.batteryLoadSavingsEur - totals.pvBatteryAvoidedImportEur
 
   return {
     consumptionImportSavingsEur: annual.baselineCostEur - annual.gridImportCostEur,
@@ -1119,6 +1216,8 @@ function summarizeAnnualAccounting(annual: PvBatteryAnnualResult): AnnualAccount
     batteryPvExportKwh: totals.batteryPvExportKwh,
     batteryPvExportRevenueEur: totals.batteryPvExportRevenueEur,
     batteryPvExportAvgCt: totals.batteryPvExportKwh > 0 ? (totals.batteryPvExportRevenueEur * 100) / totals.batteryPvExportKwh : 0,
+    batteryLoadSavingsEur: totals.batteryLoadSavingsEur,
+    batteryGridLoadSavingsEur,
     batteryGridExportKwh: totals.batteryGridExportKwh,
     batteryGridExportRevenueEur: totals.batteryGridExportRevenueEur,
     batteryGridExportNetEur: totals.batteryGridExportNetEur,
@@ -1133,7 +1232,13 @@ function summarizeAnnualAccounting(annual: PvBatteryAnnualResult): AnnualAccount
 
 function formatCurrencyAmount(value: number, units: ReturnType<typeof getPriceUnits>, options?: { signed?: boolean }) {
   const sign = options?.signed && value > 0 ? '+' : value < 0 ? '-' : ''
-  return `${sign}${units.currencySym}${Math.round(Math.abs(value)).toLocaleString()}`
+  const absValue = Math.abs(value)
+  const formatted = absValue > 0 && absValue < 10
+    ? absValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : absValue < 100
+      ? absValue.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+      : Math.round(absValue).toLocaleString()
+  return `${sign}${units.currencySym}${formatted}`
 }
 
 function formatPriceAmount(value: number, units: ReturnType<typeof getPriceUnits>) {
@@ -1150,6 +1255,18 @@ function mutedDash(label = '—') {
   return <span className="text-gray-300">{label}</span>
 }
 
+function formatCyclesPerDay(value: number) {
+  if (!Number.isFinite(value)) return 'n/a'
+  if (value >= 10) return `${value.toFixed(1)} cycles/day`
+  return `${value.toFixed(2)} cycles/day`
+}
+
+const ANNUAL_ROW_EPSILON = 1e-6
+
+function hasAnnualAmount(value: number) {
+  return Math.abs(value) > ANNUAL_ROW_EPSILON
+}
+
 function AnnualRowIcon({ icon: Icon, tone = 'neutral' }: { icon: LucideIcon; tone?: 'neutral' | 'home' | 'pv' | 'battery' | 'grid' | 'total' }) {
   return (
     <span
@@ -1158,7 +1275,7 @@ function AnnualRowIcon({ icon: Icon, tone = 'neutral' }: { icon: LucideIcon; ton
         tone === 'home' && 'border-slate-200 bg-slate-50 text-slate-600',
         tone === 'pv' && 'border-amber-200 bg-amber-50 text-amber-600',
         tone === 'battery' && 'border-sky-200 bg-sky-50 text-sky-600',
-        tone === 'grid' && 'border-violet-200 bg-violet-50 text-violet-600',
+        tone === 'grid' && 'border-slate-200 bg-slate-50 text-slate-600',
         tone === 'total' && 'border-emerald-200 bg-emerald-50 text-emerald-700',
         tone === 'neutral' && 'border-gray-200 bg-gray-50 text-gray-500',
       )}
@@ -1168,56 +1285,114 @@ function AnnualRowIcon({ icon: Icon, tone = 'neutral' }: { icon: LucideIcon; ton
   )
 }
 
+function handleExpandableRowKeyDown(event: KeyboardEvent<HTMLTableRowElement>, onToggle: () => void) {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  onToggle()
+}
+
 function AnnualBreakdownSectionRow({
   label,
   icon,
   open,
   onToggle,
-  summary,
+  energy,
+  cost,
+  value,
+  avg,
   tone = 'neutral',
 }: {
   label: string
   icon: LucideIcon
   open: boolean
   onToggle: () => void
-  summary?: ReactNode
+  energy?: ReactNode
+  cost?: ReactNode
+  value?: ReactNode
+  avg?: ReactNode
   tone?: 'neutral' | 'home' | 'pv' | 'battery' | 'grid' | 'total'
 }) {
   const Icon = icon
 
   return (
-    <tr>
+    <tr
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      onClick={onToggle}
+      onKeyDown={(event) => handleExpandableRowKeyDown(event, onToggle)}
+      className={cn(
+        'cursor-pointer border-t transition-colors first:border-t-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-slate-300',
+        tone === 'home' && 'border-slate-200 bg-slate-50 text-slate-500',
+        tone === 'pv' && 'border-amber-100 bg-amber-50/35 text-gray-800 hover:bg-amber-50/60',
+        tone === 'battery' && 'border-sky-100 bg-sky-50/35 text-gray-800 hover:bg-sky-50/60',
+        tone === 'grid' && 'border-slate-200 bg-slate-50/70 text-gray-800 hover:bg-slate-100',
+        tone === 'total' && 'border-emerald-200 bg-emerald-50/90 text-emerald-700',
+        tone === 'neutral' && 'border-gray-200 bg-gray-50 text-gray-400',
+      )}
+    >
       <th
         scope="rowgroup"
-        colSpan={4}
-        className={cn(
-          'border-t px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.16em] first:border-t-0',
-          tone === 'home' && 'border-slate-200 bg-slate-50 text-slate-500',
-          tone === 'pv' && 'border-amber-200 bg-amber-50/80 text-amber-700',
-          tone === 'battery' && 'border-sky-200 bg-sky-50/80 text-sky-700',
-          tone === 'grid' && 'border-violet-200 bg-violet-50/80 text-violet-700',
-          tone === 'total' && 'border-emerald-200 bg-emerald-50/90 text-emerald-700',
-          tone === 'neutral' && 'border-gray-200 bg-gray-50 text-gray-400',
-        )}
+        className="px-4 py-2.5 text-left text-sm font-semibold"
       >
-        <button
-          type="button"
-          className="flex w-full items-center justify-between gap-3 text-left"
-          aria-expanded={open}
-          onClick={onToggle}
-        >
-          <span className="inline-flex items-center gap-2">
-            <AnnualRowIcon icon={Icon} tone={tone} />
-            <span>{label}</span>
-          </span>
-          <span className="inline-flex items-center gap-3 text-[13px] font-semibold normal-case tracking-normal opacity-70">
-            {summary ? <span className="hidden tabular-nums sm:inline">{summary}</span> : null}
-            <span aria-hidden="true">{open ? '▾' : '▸'}</span>
-          </span>
-        </button>
+        <span className="flex w-full items-center gap-2 text-left">
+          <span className="w-4 shrink-0 text-base font-bold leading-none text-gray-400" aria-hidden="true">{open ? '▾' : '▸'}</span>
+          <AnnualRowIcon icon={Icon} tone={tone} />
+          <span>{label}</span>
+        </span>
       </th>
+      <td className="px-4 py-2.5 text-right align-middle text-sm font-semibold tabular-nums text-gray-800">
+        {energy ?? mutedDash()}
+      </td>
+      <td className="px-4 py-2.5 text-right align-middle text-sm font-semibold tabular-nums text-gray-800">
+        {cost ?? mutedDash()}
+      </td>
+      {value !== undefined ? (
+        <td className="px-4 py-2.5 text-right align-middle text-sm font-semibold tabular-nums text-gray-800">
+          {value}
+        </td>
+      ) : null}
+      <td className="px-4 py-2.5 text-right align-middle text-sm font-semibold tabular-nums text-gray-800">
+        {avg ?? mutedDash()}
+      </td>
     </tr>
   )
+}
+
+function MutedCostAmount({
+  value,
+  units,
+  label,
+}: {
+  value: number
+  units: ReturnType<typeof getPriceUnits>
+  label: string
+}) {
+  return (
+    <span className="text-gray-500">
+      {formatCurrencyAmount(value, units)} <span className="text-gray-400">{label}</span>
+    </span>
+  )
+}
+
+function ExportCreditAmount({
+  value,
+  units,
+  label = 'export credit',
+}: {
+  value: number
+  units: ReturnType<typeof getPriceUnits>
+  label?: string
+}) {
+  return (
+    <span className="font-semibold text-emerald-700">
+      -{formatCurrencyAmount(value, units)} <span className="font-medium text-emerald-600/70">{label}</span>
+    </span>
+  )
+}
+
+function OptimizedCostLabel() {
+  return <span className="text-gray-900">optimized cost</span>
 }
 
 function AnnualBreakdownRow({
@@ -1225,38 +1400,65 @@ function AnnualBreakdownRow({
   detail,
   energy,
   cost,
+  value,
   avg,
   indent = false,
   total = false,
   tone = 'neutral',
+  open,
+  onToggle,
 }: {
   label: string
   detail?: string
   energy: ReactNode
   cost?: ReactNode
+  value?: ReactNode
   avg?: ReactNode
   indent?: boolean
   total?: boolean
   tone?: 'neutral' | 'optimized' | 'muted'
+  open?: boolean
+  onToggle?: () => void
 }) {
+  const isToggle = typeof onToggle === 'function'
+  const labelContent = (
+    <span className="flex items-start gap-2">
+      {isToggle ? <span className="mt-0.5 w-3 text-gray-400" aria-hidden="true">{open ? '▾' : '▸'}</span> : indent ? <span className="mt-0.5 w-3 text-gray-300" aria-hidden="true">↳</span> : null}
+      <span className="min-w-0">
+        <span className={cn('block text-sm text-gray-800', total ? 'font-semibold' : 'font-medium')}>{label}</span>
+        {detail ? <span className="mt-1 block text-[11px] font-normal leading-4 text-gray-400">{detail}</span> : null}
+      </span>
+    </span>
+  )
+
   return (
-    <tr className={cn('border-t border-gray-200', total && 'border-t-gray-300')}>
-      <th scope="row" className={cn('px-4 py-3 text-left align-top', indent && 'pl-8')}>
-        <span className="flex items-start gap-2">
-          {indent ? <span className="mt-0.5 text-gray-300">↳</span> : null}
-          <span className="min-w-0">
-            <span className={cn('block text-sm text-gray-800', total ? 'font-semibold' : 'font-medium')}>{label}</span>
-            {detail ? <span className="mt-1 block text-[11px] font-normal leading-4 text-gray-400">{detail}</span> : null}
-          </span>
-        </span>
+    <tr
+      role={isToggle ? 'button' : undefined}
+      tabIndex={isToggle ? 0 : undefined}
+      aria-expanded={isToggle ? open : undefined}
+      onClick={isToggle ? onToggle : undefined}
+      onKeyDown={isToggle && onToggle ? (event) => handleExpandableRowKeyDown(event, onToggle) : undefined}
+      className={cn(
+        'border-t border-gray-200',
+        total && 'border-t-gray-300',
+        isToggle && 'cursor-pointer transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-slate-300',
+      )}
+    >
+      <th scope="row" className={cn('px-4 py-2.5 text-left align-top', indent && 'pl-8')}>
+        {labelContent}
       </th>
-      <td className={cn('px-4 py-3 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'muted' && 'text-gray-500')}>
+      <td className={cn('px-4 py-2.5 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'muted' && 'text-gray-500')}>
         {energy}
       </td>
-      <td className={cn('px-4 py-3 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
+      <td className={cn('px-4 py-2.5 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
         {cost ?? mutedDash()}
       </td>
-      <td className={cn('px-4 py-3 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
+      {value !== undefined ? (
+        <td className={cn('px-4 py-2.5 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
+          {value}
+        </td>
+      ) : null}
+      <td className={cn('px-4 py-2.5 text-right align-top text-sm tabular-nums text-gray-800', total && 'font-semibold text-gray-900', tone === 'optimized' && 'font-semibold text-emerald-800', tone === 'muted' && 'text-gray-500')}>
         {avg ?? mutedDash()}
       </td>
     </tr>
@@ -1327,440 +1529,705 @@ function AnnualBillCard({
   units,
   pvCapacityWp,
   usableKwh,
+  curtailPvAtNegativePrices,
+  periodLabel,
+  controls,
 }: {
   annual: PvBatteryAnnualResult
   units: ReturnType<typeof getPriceUnits>
   pvCapacityWp: number
   usableKwh: number
+  curtailPvAtNegativePrices: boolean
+  periodLabel: string
+  controls?: ReactNode
 }) {
   const accounting = summarizeAnnualAccounting(annual)
   const batteryGridToLoadKwh = annual.slots.reduce((sum, slot) => sum + slot.batteryGridToLoadKwh, 0)
-  const batteryGridLoadInputCostEur = annual.slots.reduce((sum, slot) => sum + slot.batteryGridLoadInputCostEur, 0)
-  const batteryToLoadValueEur = accounting.pvBatteryAvoidedImportEur + batteryGridLoadInputCostEur
   const [openSections, setOpenSections] = useState({
-    setup: true,
-    pv: true,
-    battery: true,
-    grid: true,
-    total: true,
+    setup: false,
+    setupConsumption: false,
+    optimized: false,
+    pv: false,
+    pvHousehold: false,
+    pvGrid: false,
+    battery: false,
+    batteryHousehold: false,
+    batteryGrid: false,
+    grid: false,
+    gridHousehold: false,
+    gridBattery: false,
+    total: false,
   })
   const toggleSection = (key: keyof typeof openSections) => {
     setOpenSections((current) => ({ ...current, [key]: !current[key] }))
   }
   const pvToGridKwh = annual.directExportKwh + accounting.batteryPvExportKwh
   const pvExportRevenueEur = accounting.directExportRevenueEur + accounting.batteryPvExportRevenueEur
-  const pvSubtotalValueEur = accounting.pvAvoidedImportEur + pvExportRevenueEur + accounting.curtailedAvoidedCostEur
+  const curtailedAvoidedCostEur = curtailPvAtNegativePrices ? accounting.curtailedAvoidedCostEur : 0
+  const curtailedAvoidedCostAvgCt = curtailPvAtNegativePrices ? accounting.curtailedAvoidedCostAvgCt : 0
+  const pvSubtotalValueEur = accounting.pvAvoidedImportEur + pvExportRevenueEur + curtailedAvoidedCostEur
   const batteryExportRevenueEur = accounting.batteryPvExportRevenueEur + accounting.batteryGridExportRevenueEur
-  const batterySubtotalValueEur = batteryToLoadValueEur + batteryExportRevenueEur
+  const batterySubtotalValueEur = accounting.batteryLoadSavingsEur + batteryExportRevenueEur
+  const batteryArbitrageEur = accounting.batteryGridLoadSavingsEur + accounting.batteryGridExportNetEur
+  const batteryThroughputKwh = annual.batteryToLoadKwh + annual.batteryExportKwh
+  const modeledDayCount = new Set(annual.slots.map((slot) => slot.date)).size
+  const batteryCyclesPerDay = usableKwh > 0 && modeledDayCount > 0
+    ? (batteryThroughputKwh / usableKwh) / modeledDayCount
+    : 0
+  const pvToHouseholdKwh = annual.directSelfConsumedKwh + accounting.pvBatteryToLoadKwh
+  const hasPvHousehold = hasAnnualAmount(pvToHouseholdKwh) || hasAnnualAmount(accounting.pvAvoidedImportEur)
+  const hasPvDirectHousehold = hasAnnualAmount(annual.directSelfConsumedKwh) || hasAnnualAmount(accounting.directPvAvoidedImportEur)
+  const hasPvBatteryHousehold = hasAnnualAmount(accounting.pvBatteryToLoadKwh) || hasAnnualAmount(accounting.pvBatteryAvoidedImportEur)
+  const hasPvGrid = hasAnnualAmount(pvToGridKwh) || hasAnnualAmount(pvExportRevenueEur)
+  const hasDirectPvGrid = hasAnnualAmount(annual.directExportKwh) || hasAnnualAmount(accounting.directExportRevenueEur)
+  const hasBatteryPvGrid = hasAnnualAmount(accounting.batteryPvExportKwh) || hasAnnualAmount(accounting.batteryPvExportRevenueEur)
+  const hasCurtailed = curtailPvAtNegativePrices && (hasAnnualAmount(annual.curtailedKwh) || hasAnnualAmount(curtailedAvoidedCostEur))
+  const hasPvSection = pvCapacityWp > 0 && (hasPvHousehold || hasPvGrid || hasCurtailed || hasAnnualAmount(pvSubtotalValueEur))
+  const hasBatteryLoad = hasAnnualAmount(annual.batteryToLoadKwh) || hasAnnualAmount(accounting.batteryLoadSavingsEur)
+  const hasBatteryGridLoad = hasAnnualAmount(batteryGridToLoadKwh) || hasAnnualAmount(accounting.batteryGridLoadSavingsEur)
+  const hasBatteryExport = hasAnnualAmount(annual.batteryExportKwh) || hasAnnualAmount(batteryExportRevenueEur)
+  const hasBatteryPvExport = hasAnnualAmount(accounting.batteryPvExportKwh) || hasAnnualAmount(accounting.batteryPvExportRevenueEur)
+  const hasBatteryGridExport = hasAnnualAmount(accounting.batteryGridExportKwh) || hasAnnualAmount(accounting.batteryGridExportRevenueEur) || hasAnnualAmount(accounting.batteryGridExportNetEur)
+  const hasBatteryArbitrage = hasBatteryGridLoad || hasBatteryGridExport || hasAnnualAmount(batteryArbitrageEur)
+  const hasBatterySection = usableKwh > 0 && (hasBatteryLoad || hasBatteryExport || hasBatteryArbitrage || hasAnnualAmount(batterySubtotalValueEur))
+  const hasGridHousehold = hasAnnualAmount(accounting.gridToLoadKwh) || hasAnnualAmount(accounting.gridToLoadCostEur)
+  const hasGridBattery = usableKwh > 0 && (hasAnnualAmount(annual.gridToBatteryKwh) || hasAnnualAmount(accounting.gridToBatteryCostEur))
+  const hasGridSection = hasGridHousehold || hasGridBattery || hasAnnualAmount(accounting.totalGridImportKwh) || hasAnnualAmount(accounting.totalGridImportCostEur)
+  const hasExportCredit = hasAnnualAmount(accounting.exportedEnergyKwh) || hasAnnualAmount(annual.exportRevenueEur)
+  const optimizedSubtitle = hasExportCredit
+    ? `${formatCurrencyAmount(accounting.totalGridImportCostEur, units)} import - ${formatCurrencyAmount(annual.exportRevenueEur, units)} export credit.`
+    : `${formatCurrencyAmount(accounting.totalGridImportCostEur, units)} import.`
 
   return (
     <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
       <CardContent className="p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Baseline vs optimized bill</p>
-            <h3 className="mt-1 text-lg font-semibold text-gray-900">Retail import accounting</h3>
+            <h3 className="text-lg font-semibold text-gray-900">Savings Summary</h3>
           </div>
-          <p className="max-w-2xl text-xs leading-5 text-gray-500">
-            Energy flows are shown first. Costs appear only on imported grid energy, split into spot energy and retail add-ons for each use.
-          </p>
+          {controls ? <div className="flex flex-wrap justify-start gap-2 sm:justify-end">{controls}</div> : null}
         </div>
 
         <div className="mt-5 overflow-hidden rounded-lg border border-gray-200 bg-white">
-          <div className="grid gap-0 divide-y divide-gray-200">
-            <button
-              type="button"
-              className="flex flex-col gap-2 bg-gray-50/80 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
-              aria-expanded={openSections.setup}
-              onClick={() => toggleSection('setup')}
-            >
-              <div className="flex items-center gap-3">
-                <AnnualRowIcon icon={Home} tone="home" />
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Baseline</p>
-                  <p className="mt-0.5 text-xs text-gray-500">All household demand imported from grid.</p>
-                </div>
-              </div>
-              <span className="inline-flex items-center gap-3 text-2xl font-semibold tabular-nums text-gray-900">
-                {formatCurrencyAmount(annual.baselineCostEur, units)}
-                <span className="text-base text-gray-400" aria-hidden="true">{openSections.setup ? '▾' : '▸'}</span>
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className="flex flex-col gap-2 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
-              aria-expanded={openSections.grid}
-              onClick={() => setOpenSections((current) => ({
-                ...current,
-                pv: !current.pv || !current.battery || !current.grid ? true : false,
-                battery: !current.pv || !current.battery || !current.grid ? true : false,
-                grid: !current.pv || !current.battery || !current.grid ? true : false,
-              }))}
-            >
-              <div className="flex items-center gap-3">
-                <AnnualRowIcon icon={Gauge} tone="grid" />
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-700">Optimized household</p>
-                  <p className="mt-0.5 text-xs text-gray-500">
-                    {formatCurrencyAmount(accounting.totalGridImportCostEur, units)} import - {formatCurrencyAmount(annual.exportRevenueEur, units)} export credit.
-                  </p>
-                </div>
-              </div>
-              <div className="text-left sm:text-right">
-                <p className="text-2xl font-semibold tabular-nums text-gray-900">{formatCurrencyAmount(annual.netCostEur, units)}</p>
-                <p className="mt-0.5 text-xs tabular-nums text-gray-500">
-                  net after export <span className="text-gray-400" aria-hidden="true">{openSections.pv && openSections.battery && openSections.grid ? '▾' : '▸'}</span>
+          <button
+            type="button"
+            className="flex w-full flex-col gap-2 bg-slate-200/80 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
+            aria-expanded={openSections.setup}
+            onClick={() => toggleSection('setup')}
+          >
+            <div className="flex items-center gap-3">
+              <AnnualRowIcon icon={Home} tone="home" />
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Baseline</p>
+                <p className="mt-0.5 text-xs leading-4 text-gray-500">
+                  Energy cost for {periodLabel}.<br />
+                  All household demand imported from grid.
                 </p>
               </div>
-            </button>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-2xl font-semibold tabular-nums text-gray-900">{formatCurrencyAmount(annual.baselineCostEur, units)}</p>
+              <p className="mt-0.5 text-xs font-semibold tabular-nums text-gray-700">
+                baseline energy cost · {periodLabel} <span className="inline-block w-4 text-base font-bold leading-none text-gray-400" aria-hidden="true">{openSections.setup ? '▾' : '▸'}</span>
+              </p>
+            </div>
+          </button>
 
-            <button
-              type="button"
-              className="flex flex-col gap-2 bg-emerald-50/70 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
-              aria-expanded={openSections.total}
-              onClick={() => toggleSection('total')}
-            >
-              <div className="flex items-center gap-3">
-                <AnnualRowIcon icon={Zap} tone="total" />
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Difference</p>
-                  <p className="mt-0.5 text-xs text-emerald-700/75">Baseline minus optimized net cost.</p>
-                </div>
-              </div>
-              <span className="inline-flex items-center gap-3 text-2xl font-semibold tabular-nums text-emerald-800">
-                {formatCurrencyAmount(annual.savingsEur, units)}
-                <span className="text-base text-emerald-700/60" aria-hidden="true">{openSections.total ? '▾' : '▸'}</span>
-              </span>
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-5 overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-[760px] w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-white">
-                <th scope="col" className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Category and flow</th>
-                <th scope="col" className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy / size</th>
-                <th scope="col" className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Value</th>
-                <th scope="col" className="px-4 py-3 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Avg value</th>
-              </tr>
-            </thead>
-            <tbody>
-              <AnnualBreakdownSectionRow label="Household setup" icon={Home} open={openSections.setup} onToggle={() => toggleSection('setup')} tone="home" summary={formatCurrencyAmount(annual.baselineCostEur, units)} />
-              {openSections.setup ? (
-                <>
+          {openSections.setup ? (
+            <div className="overflow-x-auto border-t border-gray-200">
+              <table className="min-w-[760px] w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-white">
+                    <th scope="col" className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy flow</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy / size</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Cost</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Avg price</th>
+                  </tr>
+                </thead>
+                <tbody>
                   <AnnualBreakdownRow
-                    label="Consumption"
+                    label="Household consumption"
                     energy={formatKwh(annual.loadKwh)}
                     cost={`${formatCurrencyAmount(annual.baselineCostEur, units)} baseline`}
                     avg={formatPriceAmount(accounting.baselineAvgCt, units)}
+                    total
+                    open={openSections.setupConsumption}
+                    onToggle={() => toggleSection('setupConsumption')}
                   />
-                  <AnnualBreakdownRow
-                    label="PV size"
-                    energy={`${formatSetupSize(pvCapacityWp / 1000)} kWp`}
-                    cost={mutedDash()}
-                    avg={`${formatKwh(annual.pvGenerationKwh)} generation`}
+                  {openSections.setupConsumption ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="Spot energy"
+                        detail="Grid-only at spot price."
+                        energy={formatKwh(annual.loadKwh)}
+                        cost={formatCurrencyAmount(accounting.baselineSpotEnergyCostEur, units)}
+                        avg={formatPriceAmount(annual.loadKwh > 0 ? (accounting.baselineSpotEnergyCostEur * 100) / annual.loadKwh : 0, units)}
+                        indent
+                      />
+                      <AnnualBreakdownRow
+                        label="Retail fees"
+                        detail="Grid fees, levies, supplier margin, and VAT uplift."
+                        energy={formatKwh(annual.loadKwh)}
+                        cost={formatCurrencyAmount(accounting.baselineRetailAddOnsEur, units)}
+                        avg={formatPriceAmount(accounting.baselineRetailAddOnsAvgCt, units)}
+                        indent
+                      />
+                    </>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="mt-5 overflow-hidden rounded-lg border border-gray-200 bg-white">
+          <button
+            type="button"
+            className="flex w-full flex-col gap-2 bg-emerald-100/80 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
+            aria-expanded={openSections.optimized}
+            onClick={() => toggleSection('optimized')}
+          >
+            <div className="flex items-center gap-3">
+              <AnnualRowIcon icon={Gauge} tone="total" />
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Optimized household</p>
+                <p className="mt-0.5 text-xs leading-4 text-gray-500">
+                  Energy cost for {periodLabel}.<br />
+                  {optimizedSubtitle}
+                </p>
+              </div>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-2xl font-semibold tabular-nums text-gray-900">{formatCurrencyAmount(annual.netCostEur, units)}</p>
+              <p className="mt-0.5 text-xs font-semibold tabular-nums text-gray-700">
+                optimized net energy cost · {periodLabel} <span className="inline-block w-4 text-base font-bold leading-none text-gray-400" aria-hidden="true">{openSections.optimized ? '▾' : '▸'}</span>
+              </p>
+            </div>
+          </button>
+
+        {openSections.optimized ? (
+        <div className="overflow-x-auto border-t border-gray-200">
+          <table className="min-w-[900px] w-full border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-gray-200 bg-white">
+                <th scope="col" className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy flow</th>
+                <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy / size</th>
+                <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Cost</th>
+                <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Value</th>
+                <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Avg price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {hasPvSection ? (
+                <>
+                  <AnnualBreakdownSectionRow
+                    label="PV usage"
+                    icon={SunMedium}
+                    open={openSections.pv}
+                    onToggle={() => toggleSection('pv')}
+                    tone="pv"
+                    energy={formatKwh(pvToHouseholdKwh + pvToGridKwh)}
+                    cost={<MutedCostAmount value={accounting.pvAvoidedImportEur + curtailedAvoidedCostEur} units={units} label="avoided" />}
+                    value={<ExportCreditAmount value={pvExportRevenueEur} units={units} label="export" />}
+                    avg={mutedDash()}
                   />
-                  <AnnualBreakdownRow
-                    label="Battery storage"
-                    energy={`${formatSetupSize(usableKwh)} kWh`}
-                    cost={mutedDash()}
-                    avg="configured usable capacity"
-                  />
+                  {openSections.pv && hasPvHousehold ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="Household consumption"
+                        energy={formatKwh(pvToHouseholdKwh)}
+                        cost={<MutedCostAmount value={accounting.pvAvoidedImportEur} units={units} label="avoided cost" />}
+                        value={mutedDash()}
+                        avg={formatPriceAmount(accounting.pvAvoidedImportAvgCt, units)}
+                        total
+                        open={openSections.pvHousehold}
+                        onToggle={() => toggleSection('pvHousehold')}
+                      />
+                      {openSections.pvHousehold ? (
+                        <>
+                          {hasPvDirectHousehold ? (
+                            <AnnualBreakdownRow
+                              label="Direct"
+                              energy={formatKwh(annual.directSelfConsumedKwh)}
+                              cost={<MutedCostAmount value={accounting.directPvAvoidedImportEur} units={units} label="avoided" />}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(annual.directSelfConsumedKwh > 0 ? (accounting.directPvAvoidedImportEur * 100) / annual.directSelfConsumedKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                          {hasPvBatteryHousehold ? (
+                            <AnnualBreakdownRow
+                              label="Via battery"
+                              energy={formatKwh(accounting.pvBatteryToLoadKwh)}
+                              cost={<MutedCostAmount value={accounting.pvBatteryAvoidedImportEur} units={units} label="avoided" />}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(accounting.pvBatteryToLoadKwh > 0 ? (accounting.pvBatteryAvoidedImportEur * 100) / accounting.pvBatteryToLoadKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {openSections.pv && hasPvGrid ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="Grid export"
+                        energy={formatKwh(pvToGridKwh)}
+                        cost={mutedDash()}
+                        value={<ExportCreditAmount value={pvExportRevenueEur} units={units} />}
+                        avg={formatPriceAmount(pvToGridKwh > 0 ? (pvExportRevenueEur * 100) / pvToGridKwh : 0, units)}
+                        total
+                        open={openSections.pvGrid}
+                        onToggle={() => toggleSection('pvGrid')}
+                      />
+                      {openSections.pvGrid ? (
+                        <>
+                          {hasDirectPvGrid ? (
+                            <AnnualBreakdownRow
+                              label="Direct"
+                              energy={formatKwh(annual.directExportKwh)}
+                              cost={mutedDash()}
+                              value={<ExportCreditAmount value={accounting.directExportRevenueEur} units={units} label="export" />}
+                              avg={formatPriceAmount(accounting.directExportAvgCt, units)}
+                              indent
+                            />
+                          ) : null}
+                          {hasBatteryPvGrid ? (
+                            <AnnualBreakdownRow
+                              label="Via battery"
+                              energy={formatKwh(accounting.batteryPvExportKwh)}
+                              cost={mutedDash()}
+                              value={<ExportCreditAmount value={accounting.batteryPvExportRevenueEur} units={units} label="export" />}
+                              avg={formatPriceAmount(accounting.batteryPvExportAvgCt, units)}
+                              indent
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {openSections.pv && hasCurtailed ? (
+                    <AnnualBreakdownRow
+                      label="Curtailed"
+                      energy={formatKwh(annual.curtailedKwh)}
+                      cost={<MutedCostAmount value={curtailedAvoidedCostEur} units={units} label="avoided negative export" />}
+                      value={mutedDash()}
+                      avg={formatPriceAmount(curtailedAvoidedCostAvgCt, units)}
+                      total
+                      tone="muted"
+                    />
+                  ) : null}
+                  {openSections.pv && (hasPvHousehold || hasPvGrid || hasCurtailed) ? (
+                    <AnnualBreakdownRow
+                      label="PV value subtotal"
+                      energy={`${formatKwh(pvToHouseholdKwh)} local / ${formatKwh(pvToGridKwh)} export`}
+                      cost={<MutedCostAmount value={accounting.pvAvoidedImportEur + curtailedAvoidedCostEur} units={units} label="avoided" />}
+                      value={<ExportCreditAmount value={pvExportRevenueEur} units={units} label="export" />}
+                      avg={mutedDash()}
+                      total
+                    />
+                  ) : null}
                 </>
               ) : null}
 
-              <AnnualBreakdownSectionRow label="PV usage" icon={SunMedium} open={openSections.pv} onToggle={() => toggleSection('pv')} tone="pv" summary={formatCurrencyAmount(pvSubtotalValueEur, units)} />
-              {openSections.pv ? (
+              {hasBatterySection ? (
                 <>
-                  <AnnualBreakdownRow
-                    label="To household"
-                    detail="PV consumed by the home directly or after battery storage."
-                    energy={formatKwh(annual.directSelfConsumedKwh + accounting.pvBatteryToLoadKwh)}
-                    cost={`${formatCurrencyAmount(accounting.pvAvoidedImportEur, units)} avoided grid cost`}
-                    avg={`${formatPriceAmount(accounting.pvAvoidedImportAvgCt, units)} / ${annual.selfConsumptionPct.toFixed(0)}% self-consumed`}
-                    tone="optimized"
-                    total
+                  <AnnualBreakdownSectionRow
+                    label="Battery usage"
+                    icon={Battery}
+                    open={openSections.battery}
+                    onToggle={() => toggleSection('battery')}
+                    tone="battery"
+                    energy={formatKwh(batteryThroughputKwh)}
+                    cost={<MutedCostAmount value={accounting.batteryLoadSavingsEur} units={units} label="avoided" />}
+                    value={<ExportCreditAmount value={batteryExportRevenueEur} units={units} label="export" />}
+                    avg={mutedDash()}
                   />
-                  <AnnualBreakdownRow
-                    label="Direct"
-                    energy={formatKwh(annual.directSelfConsumedKwh)}
-                    cost={formatCurrencyAmount(accounting.directPvAvoidedImportEur, units)}
-                    avg={formatPriceAmount(annual.directSelfConsumedKwh > 0 ? (accounting.directPvAvoidedImportEur * 100) / annual.directSelfConsumedKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Via battery"
-                    detail="Only appears when storing PV for later load beats direct PV use or export after battery losses."
-                    energy={formatKwh(accounting.pvBatteryToLoadKwh)}
-                    cost={formatCurrencyAmount(accounting.pvBatteryAvoidedImportEur, units)}
-                    avg={formatPriceAmount(accounting.pvBatteryToLoadKwh > 0 ? (accounting.pvBatteryAvoidedImportEur * 100) / accounting.pvBatteryToLoadKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="To grid"
-                    detail="PV exported directly or after battery storage."
-                    energy={formatKwh(pvToGridKwh)}
-                    cost={formatCurrencyAmount(pvExportRevenueEur, units)}
-                    avg={formatPriceAmount(pvToGridKwh > 0 ? (pvExportRevenueEur * 100) / pvToGridKwh : 0, units)}
-                    tone="optimized"
-                    total
-                  />
-                  <AnnualBreakdownRow
-                    label="Direct"
-                    energy={formatKwh(annual.directExportKwh)}
-                    cost={formatCurrencyAmount(accounting.directExportRevenueEur, units)}
-                    avg={formatPriceAmount(accounting.directExportAvgCt, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Via battery"
-                    energy={formatKwh(accounting.batteryPvExportKwh)}
-                    cost={formatCurrencyAmount(accounting.batteryPvExportRevenueEur, units)}
-                    avg={formatPriceAmount(accounting.batteryPvExportAvgCt, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Curtailed"
-                    detail="Avoided value from not exporting PV during negative export-price intervals. Informational, not export credit."
-                    energy={formatKwh(annual.curtailedKwh)}
-                    cost={`${formatCurrencyAmount(accounting.curtailedAvoidedCostEur, units)} avoided negative export cost`}
-                    avg={formatPriceAmount(accounting.curtailedAvoidedCostAvgCt, units)}
-                    tone="muted"
-                  />
-                  <AnnualBreakdownRow
-                    label="PV value subtotal"
-                    detail="Avoided grid import, PV export credit, and avoided negative export cost."
-                    energy={`${formatKwh(annual.directSelfConsumedKwh + accounting.pvBatteryToLoadKwh)} local / ${formatKwh(pvToGridKwh)} export`}
-                    cost={formatCurrencyAmount(pvSubtotalValueEur, units)}
-                    avg={`${formatCurrencyAmount(accounting.pvAvoidedImportEur, units)} local + ${formatCurrencyAmount(pvExportRevenueEur, units)} export + ${formatCurrencyAmount(accounting.curtailedAvoidedCostEur, units)} curtailed`}
-                    total
-                    tone="optimized"
-                  />
+                  {openSections.battery && batteryThroughputKwh > ANNUAL_ROW_EPSILON ? (
+                    <AnnualBreakdownRow
+                      label="Cycles per day"
+                      energy={formatCyclesPerDay(batteryCyclesPerDay)}
+                      cost={`${formatKwh(batteryThroughputKwh)} discharged`}
+                      value={mutedDash()}
+                      avg={`${modeledDayCount.toLocaleString()} day${modeledDayCount === 1 ? '' : 's'}`}
+                      total
+                    />
+                  ) : null}
+                  {openSections.battery && hasBatteryLoad ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="Household consumption"
+                        energy={formatKwh(annual.batteryToLoadKwh)}
+                        cost={<MutedCostAmount value={accounting.batteryLoadSavingsEur} units={units} label="avoided cost" />}
+                        value={mutedDash()}
+                        avg={formatPriceAmount(annual.batteryToLoadKwh > 0 ? (accounting.batteryLoadSavingsEur * 100) / annual.batteryToLoadKwh : 0, units)}
+                        total
+                        open={openSections.batteryHousehold}
+                        onToggle={() => toggleSection('batteryHousehold')}
+                      />
+                      {openSections.batteryHousehold ? (
+                        <>
+                          {hasPvBatteryHousehold ? (
+                            <AnnualBreakdownRow
+                              label="PV-charged"
+                              energy={formatKwh(accounting.pvBatteryToLoadKwh)}
+                              cost={<MutedCostAmount value={accounting.pvBatteryAvoidedImportEur} units={units} label="avoided" />}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(accounting.pvBatteryToLoadKwh > 0 ? (accounting.pvBatteryAvoidedImportEur * 100) / accounting.pvBatteryToLoadKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                          {hasBatteryGridLoad ? (
+                            <AnnualBreakdownRow
+                              label="Grid-charged"
+                              energy={formatKwh(batteryGridToLoadKwh)}
+                              cost={<MutedCostAmount value={accounting.batteryGridLoadSavingsEur} units={units} label="avoided" />}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(batteryGridToLoadKwh > 0 ? (accounting.batteryGridLoadSavingsEur * 100) / batteryGridToLoadKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {openSections.battery && hasBatteryExport ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="Grid export"
+                        energy={formatKwh(annual.batteryExportKwh)}
+                        cost={mutedDash()}
+                        value={<ExportCreditAmount value={batteryExportRevenueEur} units={units} />}
+                        avg={formatPriceAmount(annual.batteryExportKwh > 0 ? (batteryExportRevenueEur * 100) / annual.batteryExportKwh : 0, units)}
+                        total
+                        open={openSections.batteryGrid}
+                        onToggle={() => toggleSection('batteryGrid')}
+                      />
+                      {openSections.batteryGrid ? (
+                        <>
+                          {hasBatteryPvExport ? (
+                            <AnnualBreakdownRow
+                              label="PV-charged export"
+                              energy={formatKwh(accounting.batteryPvExportKwh)}
+                              cost={mutedDash()}
+                              value={<ExportCreditAmount value={accounting.batteryPvExportRevenueEur} units={units} label="export" />}
+                              avg={formatPriceAmount(accounting.batteryPvExportAvgCt, units)}
+                              indent
+                            />
+                          ) : null}
+                          {hasBatteryGridExport ? (
+                            <AnnualBreakdownRow
+                              label="Grid battery export"
+                              energy={formatKwh(accounting.batteryGridExportKwh)}
+                              cost={<MutedCostAmount value={Math.max(0, accounting.batteryGridExportRevenueEur - accounting.batteryGridExportNetEur)} units={units} label="charge cost" />}
+                              value={<ExportCreditAmount value={accounting.batteryGridExportRevenueEur} units={units} label="gross export" />}
+                              avg={formatPriceAmount(accounting.batteryGridExportNetAvgCt, units)}
+                              indent
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {openSections.battery && (hasBatteryLoad || hasBatteryExport) ? (
+                    <AnnualBreakdownRow
+                      label="Battery value subtotal"
+                      energy={`${formatKwh(annual.batteryToLoadKwh)} load / ${formatKwh(annual.batteryExportKwh)} export`}
+                      cost={<MutedCostAmount value={accounting.batteryLoadSavingsEur} units={units} label="avoided" />}
+                      value={<ExportCreditAmount value={batteryExportRevenueEur} units={units} label="export" />}
+                      avg={mutedDash()}
+                      total
+                    />
+                  ) : null}
+                  {openSections.battery && hasBatteryArbitrage ? (
+                    <AnnualBreakdownRow
+                      label="Battery arbitrage"
+                      energy={`${formatKwh(batteryGridToLoadKwh)} load / ${formatKwh(accounting.batteryGridExportKwh)} export`}
+                      cost={<MutedCostAmount value={accounting.batteryGridLoadSavingsEur} units={units} label="avoided" />}
+                      value={<ExportCreditAmount value={accounting.batteryGridExportRevenueEur} units={units} label="export" />}
+                      avg={mutedDash('included above')}
+                      total
+                    />
+                  ) : null}
                 </>
               ) : null}
 
-              <AnnualBreakdownSectionRow label="Battery usage" icon={Battery} open={openSections.battery} onToggle={() => toggleSection('battery')} tone="battery" summary={formatCurrencyAmount(batterySubtotalValueEur, units)} />
-              {openSections.battery ? (
+              {hasGridSection ? (
                 <>
-                  <AnnualBreakdownRow
-                    label="To household"
-                    detail="Battery output serving household load, split by original charge source."
-                    energy={formatKwh(annual.batteryToLoadKwh)}
-                    cost={formatCurrencyAmount(batteryToLoadValueEur, units)}
-                    avg={formatPriceAmount(annual.batteryToLoadKwh > 0 ? (batteryToLoadValueEur * 100) / annual.batteryToLoadKwh : 0, units)}
-                    total
-                  />
-                  <AnnualBreakdownRow
-                    label="PV-charged"
-                    energy={formatKwh(accounting.pvBatteryToLoadKwh)}
-                    cost={`${formatCurrencyAmount(accounting.pvBatteryAvoidedImportEur, units)} avoided grid cost`}
-                    avg={formatPriceAmount(accounting.pvBatteryToLoadKwh > 0 ? (accounting.pvBatteryAvoidedImportEur * 100) / accounting.pvBatteryToLoadKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Grid-charged"
-                    energy={formatKwh(batteryGridToLoadKwh)}
-                    cost="included in grid import"
-                    avg={formatPriceAmount(batteryGridToLoadKwh > 0 ? (batteryGridLoadInputCostEur * 100) / batteryGridToLoadKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="To grid"
-                    energy={formatKwh(annual.batteryExportKwh)}
-                    cost={formatCurrencyAmount(batteryExportRevenueEur, units)}
-                    avg={formatPriceAmount(annual.batteryExportKwh > 0 ? (batteryExportRevenueEur * 100) / annual.batteryExportKwh : 0, units)}
-                    total
-                  />
-                  <AnnualBreakdownRow
-                    label="PV-charged export"
-                    energy={formatKwh(accounting.batteryPvExportKwh)}
-                    cost={formatCurrencyAmount(accounting.batteryPvExportRevenueEur, units)}
-                    avg={formatPriceAmount(accounting.batteryPvExportAvgCt, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Grid-charged export"
-                    energy={formatKwh(accounting.batteryGridExportKwh)}
-                    cost={formatCurrencyAmount(accounting.batteryGridExportRevenueEur, units)}
-                    avg={formatPriceAmount(accounting.batteryGridExportGrossAvgCt, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Battery value subtotal"
-                    detail="Battery load value plus gross battery export credit. Grid-charge input cost is still shown under grid import."
-                    energy={`${formatKwh(annual.batteryToLoadKwh)} load / ${formatKwh(annual.batteryExportKwh)} export`}
-                    cost={formatCurrencyAmount(batterySubtotalValueEur, units)}
-                    avg={`${formatCurrencyAmount(batteryToLoadValueEur, units)} load + ${formatCurrencyAmount(batteryExportRevenueEur, units)} export`}
-                    total
-                    tone="optimized"
-                  />
-                </>
-              ) : null}
-
-              <AnnualBreakdownSectionRow label="Grid import" icon={Zap} open={openSections.grid} onToggle={() => toggleSection('grid')} tone="grid" summary={formatCurrencyAmount(accounting.totalGridImportCostEur, units)} />
-              {openSections.grid ? (
-                <>
-                  <AnnualBreakdownRow
-                    label="To household"
-                    detail="Imported kWh serving household demand directly."
-                    energy={formatKwhWithShare(accounting.gridToLoadKwh, annual.loadKwh)}
-                    cost={formatCurrencyAmount(accounting.gridToLoadCostEur, units)}
-                    avg={formatPriceAmount(accounting.gridToLoadAvgCt, units)}
-                    total
-                  />
-                  <AnnualBreakdownRow
-                    label="Spot energy"
-                    energy={formatKwh(accounting.gridToLoadKwh)}
-                    cost={formatCurrencyAmount(accounting.gridToLoadSpotCostEur, units)}
-                    avg={formatPriceAmount(accounting.gridToLoadKwh > 0 ? (accounting.gridToLoadSpotCostEur * 100) / accounting.gridToLoadKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Retail add-ons"
-                    detail="Grid fees, levies, supplier margin, and VAT uplift."
-                    energy={formatKwh(accounting.gridToLoadKwh)}
-                    cost={formatCurrencyAmount(accounting.gridToLoadRetailAddOnsEur, units)}
-                    avg={formatPriceAmount(accounting.gridToLoadKwh > 0 ? (accounting.gridToLoadRetailAddOnsEur * 100) / accounting.gridToLoadKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="To battery"
-                    detail="Grid-charged battery kWh on the same retail tariff basis."
-                    energy={formatKwh(annual.gridToBatteryKwh)}
-                    cost={formatCurrencyAmount(accounting.gridToBatteryCostEur, units)}
-                    avg={formatPriceAmount(accounting.gridToBatteryAvgCt, units)}
-                    total
-                  />
-                  <AnnualBreakdownRow
-                    label="Spot energy"
-                    energy={formatKwh(annual.gridToBatteryKwh)}
-                    cost={formatCurrencyAmount(accounting.gridToBatterySpotCostEur, units)}
-                    avg={formatPriceAmount(annual.gridToBatteryKwh > 0 ? (accounting.gridToBatterySpotCostEur * 100) / annual.gridToBatteryKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Retail add-ons"
-                    detail="Same retail add-on stack as household grid import."
-                    energy={formatKwh(annual.gridToBatteryKwh)}
-                    cost={formatCurrencyAmount(accounting.gridToBatteryRetailAddOnsEur, units)}
-                    avg={formatPriceAmount(annual.gridToBatteryKwh > 0 ? (accounting.gridToBatteryRetailAddOnsEur * 100) / annual.gridToBatteryKwh : 0, units)}
-                    indent
-                  />
-                  <AnnualBreakdownRow
-                    label="Total grid import"
+                  <AnnualBreakdownSectionRow
+                    label="Grid import"
+                    icon={Zap}
+                    open={openSections.grid}
+                    onToggle={() => toggleSection('grid')}
+                    tone="grid"
                     energy={formatKwh(accounting.totalGridImportKwh)}
-                    cost={formatCurrencyAmount(accounting.totalGridImportCostEur, units)}
+                    cost={<>{formatCurrencyAmount(accounting.totalGridImportCostEur, units)} <OptimizedCostLabel /></>}
+                    value={mutedDash()}
                     avg={formatPriceAmount(accounting.totalGridImportAvgCt, units)}
-                    total
-                    tone="optimized"
                   />
+                  {openSections.grid && hasGridHousehold ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="Household consumption"
+                        energy={formatKwhWithShare(accounting.gridToLoadKwh, annual.loadKwh)}
+                        cost={<>{formatCurrencyAmount(accounting.gridToLoadCostEur, units)} <OptimizedCostLabel /></>}
+                        value={mutedDash()}
+                        avg={formatPriceAmount(accounting.gridToLoadAvgCt, units)}
+                        total
+                        open={openSections.gridHousehold}
+                        onToggle={() => toggleSection('gridHousehold')}
+                      />
+                      {openSections.gridHousehold ? (
+                        <>
+                          {hasAnnualAmount(accounting.gridToLoadSpotCostEur) ? (
+                            <AnnualBreakdownRow
+                              label="Spot energy"
+                              energy={formatKwh(accounting.gridToLoadKwh)}
+                              cost={formatCurrencyAmount(accounting.gridToLoadSpotCostEur, units)}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(accounting.gridToLoadKwh > 0 ? (accounting.gridToLoadSpotCostEur * 100) / accounting.gridToLoadKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                          {hasAnnualAmount(accounting.gridToLoadRetailAddOnsEur) ? (
+                            <AnnualBreakdownRow
+                              label="Retail add-ons"
+                              detail="Grid fees, levies, supplier margin, and VAT uplift."
+                              energy={formatKwh(accounting.gridToLoadKwh)}
+                              cost={formatCurrencyAmount(accounting.gridToLoadRetailAddOnsEur, units)}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(accounting.gridToLoadKwh > 0 ? (accounting.gridToLoadRetailAddOnsEur * 100) / accounting.gridToLoadKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {openSections.grid && hasGridBattery ? (
+                    <>
+                      <AnnualBreakdownRow
+                        label="To battery"
+                        energy={formatKwh(annual.gridToBatteryKwh)}
+                        cost={<>{formatCurrencyAmount(accounting.gridToBatteryCostEur, units)} <OptimizedCostLabel /></>}
+                        value={mutedDash()}
+                        avg={formatPriceAmount(accounting.gridToBatteryAvgCt, units)}
+                        total
+                        open={openSections.gridBattery}
+                        onToggle={() => toggleSection('gridBattery')}
+                      />
+                      {openSections.gridBattery ? (
+                        <>
+                          {hasAnnualAmount(accounting.gridToBatterySpotCostEur) ? (
+                            <AnnualBreakdownRow
+                              label="Spot energy"
+                              energy={formatKwh(annual.gridToBatteryKwh)}
+                              cost={formatCurrencyAmount(accounting.gridToBatterySpotCostEur, units)}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(annual.gridToBatteryKwh > 0 ? (accounting.gridToBatterySpotCostEur * 100) / annual.gridToBatteryKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                          {hasAnnualAmount(accounting.gridToBatteryRetailAddOnsEur) ? (
+                            <AnnualBreakdownRow
+                              label="Retail add-ons"
+                              detail="Same retail add-on stack as household grid import."
+                              energy={formatKwh(annual.gridToBatteryKwh)}
+                              cost={formatCurrencyAmount(accounting.gridToBatteryRetailAddOnsEur, units)}
+                              value={mutedDash()}
+                              avg={formatPriceAmount(annual.gridToBatteryKwh > 0 ? (accounting.gridToBatteryRetailAddOnsEur * 100) / annual.gridToBatteryKwh : 0, units)}
+                              indent
+                            />
+                          ) : null}
+                        </>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {openSections.grid ? (
+                    <AnnualBreakdownRow
+                      label="Total optimized grid import"
+                      energy={formatKwh(accounting.totalGridImportKwh)}
+                      cost={<>{formatCurrencyAmount(accounting.totalGridImportCostEur, units)} <OptimizedCostLabel /></>}
+                      value={mutedDash()}
+                      avg={formatPriceAmount(accounting.totalGridImportAvgCt, units)}
+                      total
+                    />
+                  ) : null}
                 </>
               ) : null}
 
-              <AnnualBreakdownSectionRow label="Annual total" icon={Gauge} open={openSections.total} onToggle={() => toggleSection('total')} tone="total" summary={formatCurrencyAmount(annual.savingsEur, units)} />
-              {openSections.total ? (
-                <AnnualBreakdownRow
-                  label="Total annual benefit"
-                  detail="Consumption/import savings plus export credit. Curtailed PV avoided negative export cost remains informational."
-                  energy={`${formatKwh(accounting.totalGridImportKwh)} import / ${formatKwh(accounting.exportedEnergyKwh)} export`}
-                  cost={formatCurrencyAmount(annual.savingsEur, units)}
-                  avg={`${formatCurrencyAmount(accounting.consumptionImportSavingsEur, units)} savings + ${formatCurrencyAmount(annual.exportRevenueEur, units)} export`}
-                  total
-                  tone="optimized"
-                />
-              ) : null}
             </tbody>
           </table>
+        </div>
+        ) : null}
+        </div>
+
+        <div className="mt-5 overflow-hidden rounded-lg border border-emerald-600 bg-emerald-600 shadow-sm">
+          <button
+            type="button"
+            className="flex w-full flex-col gap-2 p-4 text-left sm:flex-row sm:items-center sm:justify-between"
+            aria-expanded={openSections.total}
+            onClick={() => toggleSection('total')}
+          >
+            <div className="flex items-center gap-3">
+              <AnnualRowIcon icon={Zap} tone="total" />
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white">Total Savings</p>
+                <p className="mt-0.5 text-xs leading-4 text-emerald-50/85">
+                  Energy cost savings for {periodLabel}.<br />
+                  Baseline minus optimized net cost.
+                </p>
+              </div>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-2xl font-semibold tabular-nums text-white">{formatCurrencyAmount(annual.savingsEur, units)}</p>
+              <p className="mt-0.5 text-xs font-semibold tabular-nums text-emerald-50">
+                energy cost savings · {periodLabel} <span className="inline-block w-4 text-base font-bold leading-none text-emerald-50/75" aria-hidden="true">{openSections.total ? '▾' : '▸'}</span>
+              </p>
+            </div>
+          </button>
+
+          {openSections.total ? (
+            <div className="overflow-x-auto border-t border-emerald-500 bg-white">
+              <table className="min-w-[900px] w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-white">
+                    <th scope="col" className="px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy flow</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Energy / size</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Cost</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Value</th>
+                    <th scope="col" className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">Avg price</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <AnnualBreakdownRow
+                    label="Baseline cost"
+                    energy={formatKwh(annual.loadKwh)}
+                    cost={formatCurrencyAmount(annual.baselineCostEur, units)}
+                    value={mutedDash()}
+                    avg={formatPriceAmount(accounting.baselineAvgCt, units)}
+                  />
+                  <AnnualBreakdownRow
+                    label="Optimized import cost"
+                    energy={formatKwh(accounting.totalGridImportKwh)}
+                    cost={formatCurrencyAmount(accounting.totalGridImportCostEur, units)}
+                    value={mutedDash()}
+                    avg={formatPriceAmount(accounting.totalGridImportAvgCt, units)}
+                  />
+                  {hasExportCredit ? (
+                    <AnnualBreakdownRow
+                      label="Export credit"
+                      energy={formatKwh(accounting.exportedEnergyKwh)}
+                      cost={mutedDash()}
+                      value={<ExportCreditAmount value={annual.exportRevenueEur} units={units} />}
+                      avg={formatPriceAmount(accounting.exportAvgCt, units)}
+                    />
+                  ) : null}
+                  <AnnualBreakdownRow
+                    label="Optimized net cost"
+                    energy={`${formatKwh(accounting.totalGridImportKwh)} import / ${formatKwh(accounting.exportedEnergyKwh)} export`}
+                    cost={formatCurrencyAmount(annual.netCostEur, units)}
+                    value={mutedDash()}
+                    avg={mutedDash()}
+                    total
+                  />
+                  {hasBatteryArbitrage ? (
+                    <AnnualBreakdownRow
+                      label="Battery arbitrage"
+                      energy={`${formatKwh(batteryGridToLoadKwh)} load / ${formatKwh(accounting.batteryGridExportKwh)} export`}
+                      cost={<MutedCostAmount value={accounting.batteryGridLoadSavingsEur} units={units} label="avoided" />}
+                      value={<ExportCreditAmount value={accounting.batteryGridExportRevenueEur} units={units} label="export" />}
+                      avg={mutedDash('included in optimized net')}
+                    />
+                  ) : null}
+                  <AnnualBreakdownRow
+                    label="Total annual benefit"
+                    energy={`${formatKwh(accounting.totalGridImportKwh)} import / ${formatKwh(accounting.exportedEnergyKwh)} export`}
+                    cost={formatCurrencyAmount(annual.savingsEur, units)}
+                    value={<ExportCreditAmount value={annual.exportRevenueEur} units={units} label="export" />}
+                    avg={<>{formatCurrencyAmount(accounting.consumptionImportSavingsEur, units)} <span className="text-gray-400">avoided</span></>}
+                    total
+                    tone="optimized"
+                  />
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </div>
       </CardContent>
     </Card>
   )
 }
 
-function AnnualExportCreditCard({
-  annual,
-  units,
+function LocationZipControl({
+  committedZip,
+  onCommit,
+  radiationData,
+  radiationLoading,
+  tariffComponentsError,
 }: {
-  annual: PvBatteryAnnualResult
-  units: ReturnType<typeof getPriceUnits>
+  committedZip: string
+  onCommit: (zipCode: string) => void
+  radiationData: PvRadiationData | null
+  radiationLoading: boolean
+  tariffComponentsError: string | null
 }) {
-  const accounting = summarizeAnnualAccounting(annual)
+  const [draftZip, setDraftZip] = useState(committedZip)
+  const isCommitted = draftZip === committedZip && /^\d{5}$/.test(committedZip)
+
+  useEffect(() => {
+    // External URL changes need to replace the local ZIP draft.
+    setDraftZip(committedZip)
+  }, [committedZip])
+
+  useEffect(() => {
+    const nextZip = /^\d{5}$/.test(draftZip)
+      ? draftZip
+      : draftZip.length === 0
+        ? ''
+        : null
+    if (nextZip === null || nextZip === committedZip) return
+
+    const timeoutId = window.setTimeout(() => {
+      onCommit(nextZip)
+    }, 500)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [committedZip, draftZip, onCommit])
 
   return (
-    <Card className="overflow-hidden border-gray-200/80 bg-white shadow-sm">
-      <CardContent className="p-5 sm:p-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">Export credit</p>
-            <h3 className="mt-1 text-lg font-semibold text-gray-900">Export kept separate from household consumption</h3>
-          </div>
-          <p className="max-w-xl text-xs leading-5 text-gray-500">
-            Grid-charged battery export shows gross revenue and net result. The total export credit remains gross export revenue because grid charging cost is already inside optimized import cost.
-          </p>
-        </div>
-
-        <div className="mt-5 overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-[760px] w-full border-collapse text-sm">
-            <thead className="bg-gray-50 text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
-              <tr>
-                <th scope="col" className="px-4 py-3 text-left">Flow</th>
-                <th scope="col" className="px-4 py-3 text-right">Energy</th>
-                <th scope="col" className="px-4 py-3 text-right">Gross credit</th>
-                <th scope="col" className="px-4 py-3 text-right">Net result</th>
-                <th scope="col" className="px-4 py-3 text-right">Avg value</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 bg-white">
-              <tr>
-                <th scope="row" className="px-4 py-3 text-left font-medium text-gray-800">Direct PV export</th>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatKwh(annual.directExportKwh)}</td>
-                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.directExportRevenueEur, units)}</td>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-500">same as gross</td>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatPriceAmount(accounting.directExportAvgCt, units)}</td>
-              </tr>
-              <tr>
-                <th scope="row" className="px-4 py-3 text-left font-medium text-gray-800">PV battery export</th>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatKwh(accounting.batteryPvExportKwh)}</td>
-                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.batteryPvExportRevenueEur, units)}</td>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-500">same as gross</td>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-700">{formatPriceAmount(accounting.batteryPvExportAvgCt, units)}</td>
-              </tr>
-              <tr>
-                <th scope="row" className="px-4 py-3 text-left align-top font-medium text-gray-800">
-                  Grid battery export
-                  <p className="mt-1 max-w-[240px] text-[11px] font-normal leading-4 text-gray-400">Net result subtracts attributed grid charge cost already included in optimized import cost.</p>
-                </th>
-                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-700">{formatKwh(accounting.batteryGridExportKwh)}</td>
-                <td className="px-4 py-3 text-right align-top tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.batteryGridExportRevenueEur, units)}</td>
-                <td className="px-4 py-3 text-right align-top tabular-nums font-semibold text-gray-900">{formatCurrencyAmount(accounting.batteryGridExportNetEur, units, { signed: true })}</td>
-                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-700">{formatPriceAmount(accounting.batteryGridExportNetAvgCt, units)}</td>
-              </tr>
-              <tr className="bg-gray-50/70">
-                <th scope="row" className="px-4 py-3 text-left align-top font-medium text-gray-600">
-                  Curtailed PV
-                  <p className="mt-1 max-w-[280px] text-[11px] font-normal leading-4 text-gray-400">Avoided cost is summed per interval from curtailed kWh and that interval&apos;s negative export price. Not export credit.</p>
-                </th>
-                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-600">{formatKwh(annual.curtailedKwh)}</td>
-                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-400">{mutedDash('not applicable')}</td>
-                <td className="px-4 py-3 text-right align-top tabular-nums font-semibold text-gray-600">{formatCurrencyAmount(accounting.curtailedAvoidedCostEur, units)} avoided</td>
-                <td className="px-4 py-3 text-right align-top tabular-nums text-gray-600">{formatPriceAmount(accounting.curtailedAvoidedCostAvgCt, units)}</td>
-              </tr>
-            </tbody>
-            <tfoot className="border-t border-gray-300 bg-white">
-              <tr>
-                <th scope="row" className="px-4 py-3 text-left font-semibold text-gray-900">Total export credit</th>
-                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatKwh(accounting.exportedEnergyKwh)}</td>
-                <td className="px-4 py-3 text-right tabular-nums font-semibold text-emerald-700">{formatCurrencyAmount(annual.exportRevenueEur, units)}</td>
-                <td className="px-4 py-3 text-right tabular-nums text-gray-500">before import-cost offset</td>
-                <td className="px-4 py-3 text-right tabular-nums font-semibold text-gray-900">{formatPriceAmount(accounting.exportAvgCt, units)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          Location
+        </label>
+        {isCommitted && radiationData ? (
+          <span className="text-[10px] text-gray-400">{radiationData.location.region}</span>
+        ) : null}
+      </div>
+      <input
+        type="text"
+        maxLength={5}
+        placeholder="ZIP code, e.g. 10115"
+        value={draftZip}
+        onChange={(event) => {
+          setDraftZip(event.target.value.replace(/\D/g, '').slice(0, 5))
+        }}
+        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+      />
+      {draftZip.length > 0 && draftZip.length < 5 ? (
+        <p className="text-[10px] text-gray-400">Enter 5 digits to load regional values.</p>
+      ) : null}
+      {isCommitted && radiationLoading ? (
+        <p className="text-[10px] text-gray-400">Loading PV radiation data...</p>
+      ) : null}
+      {isCommitted && tariffComponentsError ? (
+        <p className="text-[10px] leading-4 text-amber-600">
+          Regional grid fees unavailable; using default German tariff assumptions.
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -1882,7 +2349,7 @@ function formatBraceDetailLabel(
 }
 
 function stripedFill(color: string, stripeColor = 'rgba(255,255,255,0.55)'): string {
-  return `repeating-linear-gradient(-45deg, ${color} 0px, ${color} 8px, ${stripeColor} 8px, ${stripeColor} 12px)`
+  return `repeating-linear-gradient(45deg, ${color} 0px, ${color} 7px, ${stripeColor} 7px, ${stripeColor} 9px)`
 }
 
 function formatNetResultLabel(valueEur: number, currencySym: string): string {
@@ -1896,7 +2363,7 @@ function getAllocationFillSegment(bucket: AllocationBucket): NonNullable<Waterfa
       color: ALLOCATION_FLOW_COLORS.batteryPvExport,
       ratio: 1,
       striped: true,
-      stripeColor: 'rgba(47,111,179,0.42)',
+      stripeColor: ALLOCATION_BATTERY_PV_STRIPE,
     }
   }
 
@@ -1905,7 +2372,7 @@ function getAllocationFillSegment(bucket: AllocationBucket): NonNullable<Waterfa
       color: ALLOCATION_FLOW_COLORS.batteryGridExport,
       ratio: 1,
       striped: true,
-      stripeColor: 'rgba(47,111,179,0.58)',
+      stripeColor: ALLOCATION_BATTERY_GRID_STRIPE,
     }
   }
 
@@ -2285,7 +2752,7 @@ function DeliveredAllocationScene({
     ],
   }
 
-  const laneSpecs: AllocationSceneLaneSpec[] = visibleBuckets.flatMap((bucket) => {
+  const laneSpecs: AllocationSceneLaneSpec[] = visibleBuckets.flatMap((bucket): AllocationSceneLaneSpec[] => {
     const laneWidth = getAllocationSceneWidth(bucket.sharePct, maxSharePct)
     const laneKwh = formatSceneKwh(bucket.kwh)
     if (bucket.key === 'gridDirect') {
@@ -2317,12 +2784,14 @@ function DeliveredAllocationScene({
           path: 'M500 166 L500 390',
           color: bucket.color,
           width: laneWidth,
+          striped: true,
         },
         {
           key: `${bucket.key}-serve`,
           path: 'M540 412 C604 350 652 332 704 332',
           color: bucket.color,
           width: laneWidth,
+          striped: true,
           label: laneKwh,
           labelX: 642,
           labelY: 316,
@@ -2335,6 +2804,7 @@ function DeliveredAllocationScene({
         path: 'M228 318 C318 318 370 390 458 414',
         color: bucket.color,
         width: laneWidth,
+        striped: true,
         label: laneKwh,
         labelX: 340,
         labelY: 350,
@@ -2344,6 +2814,7 @@ function DeliveredAllocationScene({
         path: 'M540 438 C610 384 656 370 704 370',
         color: bucket.color,
         width: laneWidth,
+        striped: true,
         label: laneKwh,
         labelX: 632,
         labelY: 402,
@@ -2360,6 +2831,7 @@ function DeliveredAllocationScene({
     color: bucket.color,
     badge: formatScenePriceBadge({ kind: 'bucket', bucket }, units),
     tooltip: bucket.detail,
+    striped: bucket.key === 'pvStored' || bucket.key === 'gridStored',
   }))
 
   if (showExportBucket) {
@@ -2549,6 +3021,7 @@ function DeliveredAllocationCard({
   title = 'Delivered allocation',
   controls,
   timeline,
+  sectionMode = 'all',
 }: {
   annual: PvBatteryAnnualResult
   units: ReturnType<typeof getPriceUnits>
@@ -2560,6 +3033,7 @@ function DeliveredAllocationCard({
   title?: string
   controls?: ReactNode
   timeline?: ReactNode
+  sectionMode?: 'all' | 'scene' | 'breakdown'
 }) {
   const [displayMode, setDisplayMode] = useState<AllocationDisplayMode>('volume')
   const [volumeMode, setVolumeMode] = useState<AllocationVolumeMode>('abs')
@@ -2827,13 +3301,13 @@ function DeliveredAllocationCard({
               color: ALLOCATION_FLOW_COLORS.batteryPvExport,
               ratio: batteryPvExportRatio,
               striped: true,
-              stripeColor: 'rgba(47,111,179,0.42)',
+              stripeColor: ALLOCATION_BATTERY_PV_STRIPE,
             },
             {
               color: ALLOCATION_FLOW_COLORS.batteryGridExport,
               ratio: batteryGridExportRatio,
               striped: true,
-              stripeColor: 'rgba(47,111,179,0.58)',
+              stripeColor: ALLOCATION_BATTERY_GRID_STRIPE,
             },
           ],
           segmentBraces: [
@@ -2980,6 +3454,11 @@ function DeliveredAllocationCard({
   const usesBridgeBraceLabels = displayMode === 'volume'
   const chartHeightPx = 420
   const minBraceHeightPct = 2.6
+  const chartColumnGridWidthPct = `${Math.min(100, (Math.max(chartSeries.columns.length, 1) / 4) * 100)}%`
+  const chartColumnGridStyle = {
+    gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))`,
+    width: chartColumnGridWidthPct,
+  }
   const graphControls = (
     <div className="flex flex-wrap items-center gap-2">
       <SegmentedPillGroup
@@ -3017,6 +3496,7 @@ function DeliveredAllocationCard({
 
   return (
     <div className="space-y-4">
+      {sectionMode !== 'breakdown' ? (
       <Card className="border-gray-200/80 bg-white shadow-sm">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-5 sm:px-7">
@@ -3045,7 +3525,9 @@ function DeliveredAllocationCard({
           </div>
         </CardContent>
       </Card>
+      ) : null}
 
+      {sectionMode !== 'scene' ? (
       <Card className="border-gray-200/80 bg-white shadow-sm">
         <CardContent className="p-0">
           <div className="border-b border-gray-100 px-5 py-5 sm:px-7">
@@ -3096,8 +3578,8 @@ function DeliveredAllocationCard({
                   />
 
                   <div
-                    className="absolute inset-0 grid gap-2 sm:gap-3"
-                    style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                    className="absolute bottom-0 left-1/2 top-0 grid -translate-x-1/2 gap-2 sm:gap-3"
+                    style={chartColumnGridStyle}
                   >
                     {chartSeries.columns.map((column, index) => {
                           const previousColumn = index > 0 ? chartSeries.columns[index - 1] : null
@@ -3421,8 +3903,8 @@ function DeliveredAllocationCard({
                 </div>
 
                 <div
-                  className="grid gap-2 sm:gap-3"
-                  style={{ gridTemplateColumns: `repeat(${chartSeries.columns.length}, minmax(0, 1fr))` }}
+                  className="mx-auto grid gap-2 sm:gap-3"
+                  style={chartColumnGridStyle}
                 >
                   {chartSeries.columns.map((column) => (
                     <div
@@ -3461,6 +3943,7 @@ function DeliveredAllocationCard({
           </div>
         </CardContent>
       </Card>
+      ) : null}
     </div>
   )
 }
@@ -3480,6 +3963,7 @@ function normalizeCalculatorState(
     ? state.year
     : availableYears[0]
   const usableKwh = clamp(state.usableKwh, 0, 20)
+  const batteryCRate = clamp(state.batteryCRate, 0.1, 2)
   const initialSocKwh = clamp(state.initialSocKwh, 0, usableKwh)
   const feedInCapKw = 5
 
@@ -3488,6 +3972,7 @@ function normalizeCalculatorState(
     loadProfileId === state.loadProfileId &&
     tariffId === state.tariffId &&
     usableKwh === state.usableKwh &&
+    batteryCRate === state.batteryCRate &&
     initialSocKwh === state.initialSocKwh &&
     feedInCapKw === state.feedInCapKw
   ) {
@@ -3500,6 +3985,7 @@ function normalizeCalculatorState(
     loadProfileId,
     tariffId,
     usableKwh,
+    batteryCRate,
     initialSocKwh,
     feedInCapKw,
   }
@@ -3580,6 +4066,38 @@ function StatusCard({
         <p className={cn('mt-2 text-sm leading-6', tone === 'warning' ? 'text-amber-800' : 'text-gray-600')}>{body}</p>
       </CardContent>
     </Card>
+  )
+}
+
+function CalculationStatusBanner({
+  active,
+  label,
+}: {
+  active: boolean
+  label: string
+}) {
+  if (!active) return null
+
+  return (
+    <div
+      className="sticky top-[5.25rem] z-20 overflow-hidden rounded-lg border border-sky-200 bg-sky-50/95 px-4 py-3 shadow-sm backdrop-blur"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-[12px] font-semibold text-sky-950">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          Calculating
+        </span>
+        <span className="text-[11px] font-medium text-sky-700">{label}</span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-sky-100">
+        <div className="h-full w-1/2 animate-[pulse_1s_ease-in-out_infinite] rounded-full bg-sky-600" />
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-sky-800">
+        The visible results are from the previous completed run until this finishes.
+      </p>
+    </div>
   )
 }
 
@@ -3742,7 +4260,6 @@ function PlannerAssumptionsCard({
 }
 
 function PvBatteryCalculatorInner() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const searchParamsString = searchParams.toString()
   const lastSyncedQueryRef = useRef(searchParamsString)
@@ -3751,10 +4268,13 @@ function PvBatteryCalculatorInner() {
     [searchParamsString],
   )
   const [draftState, setDraftState] = useState<CalculatorState>(initialState)
+  const [savingsSummaryRange, setSavingsSummaryRange] = useState<SavingsSummaryRange>('day')
+  const [savingsSummaryCalendarYear, setSavingsSummaryCalendarYear] = useState<SavingsSummaryCalendarYear>(2026)
   const [allocationWindow, setAllocationWindow] = useState<'day' | 'last365'>('day')
   const [allocationDayView, setAllocationDayView] = useState<'quarterHour' | 'fullDay'>('fullDay')
   const [selectedAllocationTimestamp, setSelectedAllocationTimestamp] = useState<number | null>(null)
   const [isAllocationTimelapsePlaying, setIsAllocationTimelapsePlaying] = useState(false)
+  const [isAnalysisWindowPending, startAnalysisWindowTransition] = useTransition()
 
   useEffect(() => {
     lastSyncedQueryRef.current = searchParamsString
@@ -3778,33 +4298,34 @@ function PvBatteryCalculatorInner() {
     () => normalizeCalculatorState(draftState, availableYears),
     [draftState, availableYears],
   )
-  const [zipInput, setZipInput] = useState(state.pvZipCode)
-  const isZipInputCommitted = zipInput === state.pvZipCode && /^\d{5}$/.test(state.pvZipCode)
+  const effectiveFlowPermissions = useMemo(() => getEffectiveFlowPermissions(state), [state])
   const rollingInitialSocKwh = state.usableKwh * 0.5
 
-  useEffect(() => {
-    // External URL changes need to replace the local ZIP draft.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setZipInput(state.pvZipCode)
-  }, [state.pvZipCode])
-
   const deferredState = useDeferredValue(state)
+  const calculationState = deferredState
+  const isOptimizationPending = !sameState(state, calculationState)
   const effectiveYear = state.year || availableYears[0] || new Date().getUTCFullYear()
+  const calculationEffectiveYear = calculationState.year || availableYears[0] || new Date().getUTCFullYear()
+  const calculationRollingInitialSocKwh = calculationState.usableKwh * 0.5
 
   const tariffs = useMemo(() => getTariffsFor(CALCULATOR_COUNTRY), [])
   const activeLoadProfileId: BatteryLoadProfileId = 'H25'
   const activeLoadProfile = DE_BATTERY_LOAD_PROFILES.find((profile) => profile.id === activeLoadProfileId)
   const activeLoadProfileLabel = activeLoadProfile?.label ?? activeLoadProfileId
   const selectedTariff = tariffs.find((tariff) => tariff.id === state.tariffId)
+  const calculationSelectedTariff = tariffs.find((tariff) => tariff.id === calculationState.tariffId)
   const isPvSelected = state.pvCapacityWp > 0
   const isBatterySelected = state.usableKwh > 0
   const { loadProfile, pvProfile, loading: profilesLoading, error: profilesError } = useBatteryProfiles(
     CALCULATOR_COUNTRY,
     activeLoadProfileId,
-    effectiveYear,
+    calculationEffectiveYear,
   )
   const selectedDateYear = Number(selectedDate?.slice(0, 4))
-  const selectedDayProfileYear = Number.isFinite(selectedDateYear) ? selectedDateYear : effectiveYear
+  const selectedDayProfileYear = Number.isFinite(selectedDateYear) ? selectedDateYear : calculationEffectiveYear
+  const trailingStartDate = selectedDate ? addDays(selectedDate, -364) : ''
+  const trailingStartYear = Number(trailingStartDate.slice(0, 4))
+  const trailingStartProfileYear = Number.isFinite(trailingStartYear) ? trailingStartYear : calculationEffectiveYear
   const {
     loadProfile: selectedDayLoadProfile,
     pvProfile: selectedDayPvProfile,
@@ -3814,6 +4335,26 @@ function PvBatteryCalculatorInner() {
     CALCULATOR_COUNTRY,
     activeLoadProfileId,
     selectedDayProfileYear,
+  )
+  const {
+    loadProfile: trailingStartLoadProfile,
+    pvProfile: trailingStartPvProfile,
+    loading: trailingStartProfilesLoading,
+    error: trailingStartProfilesError,
+  } = useBatteryProfiles(
+    CALCULATOR_COUNTRY,
+    activeLoadProfileId,
+    trailingStartProfileYear,
+  )
+  const {
+    loadProfile: savingsSummaryLoadProfile,
+    pvProfile: savingsSummaryPvProfile,
+    loading: savingsSummaryProfilesLoading,
+    error: savingsSummaryProfilesError,
+  } = useBatteryProfiles(
+    CALCULATOR_COUNTRY,
+    activeLoadProfileId,
+    savingsSummaryCalendarYear,
   )
   const { data: radiationData, loading: radiationLoading } = usePvRadiation(
     state.pvZipCode || null,
@@ -3835,6 +4376,7 @@ function PvBatteryCalculatorInner() {
 
     const controller = new AbortController()
     setTariffComponentsLoading(true)
+    setTariffComponents(null)
     setTariffComponentsError(null)
 
     fetch(`/api/tariff-components?plz=${state.pvZipCode}`, { signal: controller.signal })
@@ -3882,8 +4424,10 @@ function PvBatteryCalculatorInner() {
     params.set('load', String(Math.round(state.annualLoadKwh)))
     params.set('pv', String(Math.round(state.pvCapacityWp)))
     if (state.pvZipCode) params.set('pvzip', state.pvZipCode)
+    params.set('pvMode', state.pvInstallationMode)
     params.set('batteryMode', state.batteryConnectionMode)
     params.set('battery', String(state.usableKwh))
+    params.set('cRate', String(Number(state.batteryCRate.toFixed(2))))
     params.set('soc', String(Number(rollingInitialSocKwh.toFixed(2))))
     params.set('charge', String(state.maxChargeKw))
     params.set('discharge', String(state.maxDischargeKw))
@@ -3895,14 +4439,16 @@ function PvBatteryCalculatorInner() {
     })
     if (selectedDate) params.set('date', selectedDate)
     const nextQuery = params.toString()
-    if (nextQuery === searchParamsString) return
-    if (nextQuery === lastSyncedQueryRef.current) return
     const timeoutId = window.setTimeout(() => {
+      const currentQuery = window.location.search.startsWith('?')
+        ? window.location.search.slice(1)
+        : window.location.search
+      if (nextQuery === currentQuery) return
       lastSyncedQueryRef.current = nextQuery
-      router.replace(`/battery/calculator?${nextQuery}`, { scroll: false })
+      window.history.replaceState(null, '', `/battery/calculator?${nextQuery}`)
     }, 180)
     return () => window.clearTimeout(timeoutId)
-  }, [rollingInitialSocKwh, router, searchParamsString, selectedDate, state])
+  }, [rollingInitialSocKwh, selectedDate, state])
 
   useEffect(() => {
     const urlDate = new URLSearchParams(searchParamsString).get('date')
@@ -3912,28 +4458,12 @@ function PvBatteryCalculatorInner() {
   }, [searchParamsString, selectedDateOptions, setSelectedDate])
 
   const regionalSurcharges = useMemo<Surcharges | null>(() => {
-    if (!tariffComponents) return null
-
-    const base = surchargesForYear(effectiveYear)
-    const supplierMarkupInTaxes = 2.15
-    return {
-      ...base,
-      gridFee: tariffComponents.gridFeeNetto,
-      konzessionsabgabe: Math.max(
-        0,
-        tariffComponents.taxesNetto -
-          supplierMarkupInTaxes -
-          base.stromsteuer -
-          base.kwkg -
-          base.offshore -
-          base.par19,
-      ),
-    }
-  }, [effectiveYear, tariffComponents])
+    return buildRegionalSurchargesForYear(calculationEffectiveYear, tariffComponents)
+  }, [calculationEffectiveYear, tariffComponents])
 
   const scenario = useMemo(
-    () => buildScenario(deferredState, regionalSurcharges),
-    [deferredState, regionalSurcharges],
+    () => buildScenario(calculationState, regionalSurcharges),
+    [calculationState, regionalSurcharges],
   )
   const activeTariffSurcharges = useMemo(() => {
     const supplierMargin = selectedTariff?.supplierFeeModel === 'margin'
@@ -3955,16 +4485,27 @@ function PvBatteryCalculatorInner() {
   ], [activeTariffSurcharges, selectedTariff?.supplierFeeModel, tariffComponents])
 
   const annualSource = useMemo(() => {
-    if (state.resolution !== 'quarterhour') return prices.hourly
-    return prices.hourlyQH.length > 0 ? prices.hourlyQH : prices.hourly
-  }, [prices.hourly, prices.hourlyQH, state.resolution])
+    return prices.hourly
+  }, [prices.hourly])
 
   const annualPrices = useMemo(() => {
     return annualSource
-      .filter((point) => point.date.slice(0, 4) === String(effectiveYear))
+      .filter((point) => point.date.slice(0, 4) === String(calculationEffectiveYear))
       .filter((point) => !prices.lastRealDate || point.date <= prices.lastRealDate)
-  }, [annualSource, effectiveYear, prices.lastRealDate])
-  const selectedDaySource = annualSource
+  }, [annualSource, calculationEffectiveYear, prices.lastRealDate])
+  const savingsSummaryCalendarOptions = useMemo(() => {
+    return SAVINGS_SUMMARY_CALENDAR_YEARS.map((year) => {
+      const hasPrices = annualSource.some((point) => (
+        point.date.slice(0, 4) === String(year) &&
+        (!prices.lastRealDate || point.date <= prices.lastRealDate)
+      ))
+      return {
+        year,
+        label: year === 2026 ? '2026 YTD' : String(year),
+        disabled: !hasPrices,
+      }
+    })
+  }, [annualSource, prices.lastRealDate])
 
   const radiationAdjustment = useMemo(() => {
     if (!radiationData) return null
@@ -3976,31 +4517,32 @@ function PvBatteryCalculatorInner() {
     return { monthlyFactors }
   }, [radiationData])
   const planningModelLabel = getPlanningModelLabel(state.planningModel)
+  const calculationPlanningModelLabel = getPlanningModelLabel(calculationState.planningModel)
   const plannerAssumptions = useMemo(
     () => buildPlannerAssumptions({
-      planningModel: state.planningModel,
+      planningModel: calculationState.planningModel,
       loadProfileLabel: activeLoadProfileLabel,
-      tariffLabel: selectedTariff?.label ?? 'Selected dynamic tariff',
-      pvZipCode: state.pvZipCode,
+      tariffLabel: calculationSelectedTariff?.label ?? 'Selected dynamic tariff',
+      pvZipCode: calculationState.pvZipCode,
     }),
-    [activeLoadProfileLabel, selectedTariff?.label, state.planningModel, state.pvZipCode],
+    [activeLoadProfileLabel, calculationSelectedTariff?.label, calculationState.planningModel, calculationState.pvZipCode],
   )
 
   const annualResult = useMemo(() => {
     if (!loadProfile || !pvProfile || annualPrices.length === 0) return null
     const inputs = buildPvBatteryInputs(annualPrices, loadProfile, pvProfile, scenario, radiationAdjustment)
 
-    if (state.planningModel === 'rolling') {
+    if (calculationState.planningModel === 'rolling') {
       return optimizePvBatteryRollingReplay(inputs, scenario, {
-        initialSocKwh: rollingInitialSocKwh,
-        modelLabel: planningModelLabel,
+        initialSocKwh: calculationRollingInitialSocKwh,
+        modelLabel: calculationPlanningModelLabel,
         assumptions: plannerAssumptions,
       })
     }
 
     return optimizePvBatteryWithOptions(inputs, scenario, {
       planningModel: 'deterministic',
-      modelLabel: planningModelLabel,
+      modelLabel: calculationPlanningModelLabel,
       assumptions: plannerAssumptions,
       run: {
         runId: 'deterministic-annual-replay',
@@ -4010,82 +4552,133 @@ function PvBatteryCalculatorInner() {
   }, [
     annualPrices,
     loadProfile,
+    calculationRollingInitialSocKwh,
+    calculationPlanningModelLabel,
+    calculationState.planningModel,
     plannerAssumptions,
-    planningModelLabel,
     pvProfile,
     radiationAdjustment,
-    rollingInitialSocKwh,
     scenario,
-    state.planningModel,
   ])
 
-  const dayResult = useMemo(() => {
-    const slotsPerHour = state.resolution === 'quarterhour' ? 4 : 1
-    const targetCount = state.viewHours * slotsPerHour
-    if (!prices.selectedDate) return null
+  const buildAuxiliaryYearResult = useCallback((
+    year: number,
+    yearLoadProfile: number[] | null,
+    yearPvProfile: number[] | null,
+    runLabelPrefix: string,
+  ) => {
+    const yearPrices = annualSource
+      .filter((point) => point.date.slice(0, 4) === String(year))
+      .filter((point) => !prices.lastRealDate || point.date <= prices.lastRealDate)
 
-    if (annualResult) {
-      const firstIndex = annualResult.slots.findIndex((slot) => slot.date === prices.selectedDate)
-      if (firstIndex >= 0) {
-        const middayIndex = state.viewHours === 36
-          ? findMiddaySlotIndex(annualResult.slots, prices.selectedDate)
-          : -1
-        const windowStartIndex = middayIndex >= 0 ? middayIndex : firstIndex
-        const slots = annualResult.slots.slice(windowStartIndex, windowStartIndex + targetCount)
-        if (slots.length === 0) return null
-        return {
-          ...annualResult,
-          months: [],
-          slots,
-        }
-      }
+    if (yearPrices.length === 0 || !yearLoadProfile || !yearPvProfile) return null
+
+    if (year === calculationEffectiveYear && annualResult) {
+      const yearSlots = annualResult.slots.filter((slot) => slot.date.slice(0, 4) === String(year))
+      return slicePvBatteryResult(annualResult, yearSlots) ?? annualResult
     }
 
-    if (!selectedDayLoadProfile || !selectedDayPvProfile) return null
-    const candidateWindowPrices = selectedDaySource
-      .filter((point) => point.date >= prices.selectedDate)
-      .filter((point) => !prices.lastRealDate || point.date <= prices.lastRealDate)
-    const middayPriceIndex = state.viewHours === 36
-      ? findMiddaySlotIndex(candidateWindowPrices, prices.selectedDate)
-      : -1
-    const windowPrices = candidateWindowPrices.slice(
-      Math.max(0, middayPriceIndex),
-      Math.max(0, middayPriceIndex) + targetCount,
-    )
+    const yearState = {
+      ...calculationState,
+      year,
+    }
+    const yearRegionalSurcharges = buildRegionalSurchargesForYear(year, tariffComponents)
+    const yearScenario = buildScenario(yearState, yearRegionalSurcharges)
+    const yearPlanningModelLabel = getPlanningModelLabel(yearState.planningModel)
+    const yearAssumptions = buildPlannerAssumptions({
+      planningModel: yearState.planningModel,
+      loadProfileLabel: activeLoadProfileLabel,
+      tariffLabel: calculationSelectedTariff?.label ?? 'Selected dynamic tariff',
+      pvZipCode: yearState.pvZipCode,
+    })
+    const inputs = buildPvBatteryInputs(yearPrices, yearLoadProfile, yearPvProfile, yearScenario, radiationAdjustment)
 
-    if (windowPrices.length === 0) return null
-    const inputs = buildPvBatteryInputs(windowPrices, selectedDayLoadProfile, selectedDayPvProfile, scenario, radiationAdjustment)
-    const result = optimizePvBatteryWithOptions(inputs, scenario, {
-      planningModel: state.planningModel,
-      modelLabel: planningModelLabel,
-      assumptions: plannerAssumptions,
-      initialSocKwh: state.planningModel === 'rolling' ? rollingInitialSocKwh : undefined,
+    if (yearState.planningModel === 'rolling') {
+      return optimizePvBatteryRollingReplay(inputs, yearScenario, {
+        initialSocKwh: yearState.usableKwh * 0.5,
+        modelLabel: yearPlanningModelLabel,
+        assumptions: yearAssumptions,
+      })
+    }
+
+    return optimizePvBatteryWithOptions(inputs, yearScenario, {
+      planningModel: 'deterministic',
+      modelLabel: yearPlanningModelLabel,
+      assumptions: yearAssumptions,
       run: {
-        runId: `${state.planningModel}-selected-day-replay`,
-        runLabel: `${planningModelLabel} selected-day replay`,
+        runId: `deterministic-${runLabelPrefix}-${year}-replay`,
+        runLabel: `${runLabelPrefix} ${year} deterministic replay`,
       },
     })
-    const slots = result.slots.slice(0, targetCount)
+  }, [
+    activeLoadProfileLabel,
+    annualResult,
+    annualSource,
+    calculationEffectiveYear,
+    calculationSelectedTariff?.label,
+    calculationState,
+    prices.lastRealDate,
+    radiationAdjustment,
+    tariffComponents,
+  ])
+
+  const savingsSummaryCalendarResult = useMemo(() => {
+    return buildAuxiliaryYearResult(
+      savingsSummaryCalendarYear,
+      savingsSummaryLoadProfile,
+      savingsSummaryPvProfile,
+      'calendar',
+    )
+  }, [
+    buildAuxiliaryYearResult,
+    savingsSummaryCalendarYear,
+    savingsSummaryLoadProfile,
+    savingsSummaryPvProfile,
+  ])
+
+  const selectedDateYearResult = useMemo(() => {
+    if (!Number.isFinite(selectedDayProfileYear)) return null
+    return buildAuxiliaryYearResult(
+      selectedDayProfileYear,
+      selectedDayLoadProfile,
+      selectedDayPvProfile,
+      'selected-date',
+    )
+  }, [buildAuxiliaryYearResult, selectedDayLoadProfile, selectedDayProfileYear, selectedDayPvProfile])
+
+  const trailingStartYearResult = useMemo(() => {
+    if (!Number.isFinite(trailingStartProfileYear)) return null
+    return buildAuxiliaryYearResult(
+      trailingStartProfileYear,
+      trailingStartLoadProfile,
+      trailingStartPvProfile,
+      'last-365-start',
+    )
+  }, [buildAuxiliaryYearResult, trailingStartLoadProfile, trailingStartProfileYear, trailingStartPvProfile])
+
+  const dayResult = useMemo(() => {
+    if (!prices.selectedDate) return null
+    const replayResult = selectedDateYearResult ?? annualResult
+    if (!replayResult) return null
+    const slotsPerHour = replayResult.slots.some((slot) => (slot.minute ?? 0) > 0) ? 4 : 1
+    const targetCount = state.viewHours * slotsPerHour
+    const firstIndex = replayResult.slots.findIndex((slot) => slot.date === prices.selectedDate)
+    if (firstIndex < 0) return null
+    const middayIndex = state.viewHours === 36
+      ? findMiddaySlotIndex(replayResult.slots, prices.selectedDate)
+      : -1
+    const windowStartIndex = middayIndex >= 0 ? middayIndex : firstIndex
+    const slots = replayResult.slots.slice(windowStartIndex, windowStartIndex + targetCount)
     if (slots.length === 0) return null
     return {
-      ...result,
+      ...replayResult,
       months: [],
       slots,
     }
   }, [
     annualResult,
-    plannerAssumptions,
-    planningModelLabel,
-    prices.lastRealDate,
     prices.selectedDate,
-    radiationAdjustment,
-    rollingInitialSocKwh,
-    scenario,
-    selectedDayLoadProfile,
-    selectedDayPvProfile,
-    selectedDaySource,
-    state.planningModel,
-    state.resolution,
+    selectedDateYearResult,
     state.viewHours,
   ])
   const selectedDayAllocationResult = useMemo(() => {
@@ -4125,14 +4718,86 @@ function PvBatteryCalculatorInner() {
     if (!dayResult || !effectiveAllocationSlot) return selectedDayAllocationResult
     return slicePvBatteryResult(dayResult, [effectiveAllocationSlot]) ?? selectedDayAllocationResult
   }, [dayResult, effectiveAllocationSlot, selectedDayAllocationResult])
-  const trailingAllocationResult = useMemo(() => {
-    if (!annualResult || !prices.selectedDate) return selectedDayAllocationResult
+  const trailingSavingsResult = useMemo(() => {
+    if (!prices.selectedDate) return selectedDayAllocationResult
     const startDate = addDays(prices.selectedDate, -364)
-    return slicePvBatteryResult(
-      annualResult,
-      annualResult.slots.filter((slot) => slot.date >= startDate && slot.date <= prices.selectedDate),
-    ) ?? selectedDayAllocationResult
-  }, [annualResult, prices.selectedDate, selectedDayAllocationResult])
+    const slotsByTimestamp = new Map<number, PvBatteryAnnualResult['slots'][number]>()
+    const sourceResults = [trailingStartYearResult, selectedDateYearResult]
+    for (const result of sourceResults) {
+      for (const slot of result?.slots ?? []) slotsByTimestamp.set(slot.timestamp, slot)
+    }
+    const slots = [...slotsByTimestamp.values()]
+      .filter((slot) => slot.date >= startDate && slot.date <= prices.selectedDate)
+      .sort((a, b) => a.timestamp - b.timestamp)
+    const baseResult = selectedDateYearResult ?? trailingStartYearResult ?? annualResult
+    if (!baseResult) return selectedDayAllocationResult
+    return slicePvBatteryResult(baseResult, slots) ?? selectedDayAllocationResult
+  }, [annualResult, prices.selectedDate, selectedDateYearResult, selectedDayAllocationResult, trailingStartYearResult])
+  const trailingAllocationResult = trailingSavingsResult ?? selectedDayAllocationResult
+  const savingsSummaryResult = (
+    savingsSummaryRange === 'day'
+      ? selectedDayAllocationResult
+      : savingsSummaryRange === 'last365'
+        ? trailingSavingsResult
+        : savingsSummaryCalendarResult
+  ) ?? annualResult
+  const savingsSummaryPeriodLabel = savingsSummaryRange === 'day'
+    ? formatDayLabel(prices.selectedDate)
+    : savingsSummaryRange === 'last365'
+      ? 'last 365 days'
+      : savingsSummaryCalendarYear === 2026
+        ? '2026 year to date'
+        : String(savingsSummaryCalendarYear)
+  const handleSavingsSummaryRangeChange = useCallback((range: SavingsSummaryRange) => {
+    startAnalysisWindowTransition(() => {
+      setSavingsSummaryRange(range)
+      if (range === 'day' || range === 'last365') {
+        setAllocationWindow(range)
+      }
+    })
+  }, [startAnalysisWindowTransition])
+  const handleAllocationWindowChange = useCallback((nextWindow: 'day' | 'last365') => {
+    startAnalysisWindowTransition(() => {
+      setAllocationWindow(nextWindow)
+      setSavingsSummaryRange(nextWindow)
+    })
+  }, [startAnalysisWindowTransition])
+  const savingsSummaryControls = (
+    <>
+      <SegmentedPillGroup
+        options={[
+          {
+            label: 'Selected Day',
+            active: savingsSummaryRange === 'day',
+            disabled: !selectedDayAllocationResult,
+            onClick: () => handleSavingsSummaryRangeChange('day'),
+          },
+          {
+            label: 'Last 365 Days',
+            active: savingsSummaryRange === 'last365',
+            disabled: !trailingSavingsResult,
+            onClick: () => handleSavingsSummaryRangeChange('last365'),
+          },
+          {
+            label: 'Calendar Year',
+            active: savingsSummaryRange === 'calendar',
+            disabled: !savingsSummaryCalendarResult && savingsSummaryProfilesLoading,
+            onClick: () => handleSavingsSummaryRangeChange('calendar'),
+          },
+        ]}
+      />
+      {savingsSummaryRange === 'calendar' ? (
+        <SegmentedPillGroup
+          options={savingsSummaryCalendarOptions.map((option) => ({
+            label: option.label,
+            active: savingsSummaryCalendarYear === option.year,
+            disabled: option.disabled,
+            onClick: () => setSavingsSummaryCalendarYear(option.year),
+          }))}
+        />
+      ) : null}
+    </>
+  )
   const allocationResult = allocationWindow === 'day'
     ? allocationDayView === 'quarterHour'
       ? selectedSlotAllocationResult
@@ -4251,8 +4916,17 @@ function PvBatteryCalculatorInner() {
     </div>
   ) : null
 
-  const loading = prices.loading || profilesLoading || selectedDayProfilesLoading
-  const combinedProfilesError = profilesError ?? selectedDayProfilesError
+  const loading = prices.loading || profilesLoading || selectedDayProfilesLoading || trailingStartProfilesLoading
+  const calculationStatusLabel = isOptimizationPending
+    ? 'Recalculating dispatch with the latest settings...'
+    : isAnalysisWindowPending
+      ? 'Updating the selected analysis window...'
+    : radiationLoading
+      ? 'Refreshing PV radiation adjustment...'
+      : tariffComponentsLoading
+        ? 'Refreshing regional tariff components...'
+        : null
+  const combinedProfilesError = profilesError ?? selectedDayProfilesError ?? trailingStartProfilesError ?? (savingsSummaryRange === 'calendar' ? savingsSummaryProfilesError : null)
   const noYearData = !loading && !prices.error && availableYears.length === 0 && selectedDateOptions.length === 0
   const pendingFlowPermissionKeys = FLOW_PERMISSION_OPTIONS
     .filter(({ key }) => state.flowPermissions[key] !== DEFAULT_FLOW_PERMISSIONS[key])
@@ -4317,17 +4991,12 @@ function PvBatteryCalculatorInner() {
     </div>
   )
   const showPlannerCards = false
-  const batteryDefaultChargeKw = defaultBatteryChargeKw(state.usableKwh)
-  const batteryDefaultDischargeKw = defaultBatteryDischargeKw(state.batteryConnectionMode, state.usableKwh)
-  const batteryModeSummary = state.batteryConnectionMode === 'plugin'
-    ? 'Plug-in defaults: 0.8 kW discharge, 0.5 C charge, 88% efficiency'
-    : 'Wired defaults: 0.5 C charge/discharge, 90% efficiency'
   const handleBatteryCapacityChange = (value: number) => {
     setDraftState((current) => {
-      const previousDefaultChargeKw = defaultBatteryChargeKw(current.usableKwh)
-      const previousDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, current.usableKwh)
-      const nextDefaultChargeKw = defaultBatteryChargeKw(value)
-      const nextDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, value)
+      const previousDefaultChargeKw = defaultBatteryChargeKw(current.usableKwh, current.batteryCRate)
+      const previousDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, current.usableKwh, current.batteryCRate)
+      const nextDefaultChargeKw = defaultBatteryChargeKw(value, current.batteryCRate)
+      const nextDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, value, current.batteryCRate)
       const followsChargeDefault = Math.abs(current.maxChargeKw - previousDefaultChargeKw) <= BATTERY_POWER_STEP_KW / 2
       const followsDischargeDefault = Math.abs(current.maxDischargeKw - previousDefaultDischargeKw) <= BATTERY_POWER_STEP_KW / 2
 
@@ -4340,8 +5009,26 @@ function PvBatteryCalculatorInner() {
       }
     })
   }
+  const handleBatteryCRateChange = (value: number) => {
+    setDraftState((current) => {
+      const batteryCRate = Number(value.toFixed(2))
+      const previousDefaultChargeKw = defaultBatteryChargeKw(current.usableKwh, current.batteryCRate)
+      const previousDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, current.usableKwh, current.batteryCRate)
+      const nextDefaultChargeKw = defaultBatteryChargeKw(current.usableKwh, batteryCRate)
+      const nextDefaultDischargeKw = defaultBatteryDischargeKw(current.batteryConnectionMode, current.usableKwh, batteryCRate)
+      const followsChargeDefault = Math.abs(current.maxChargeKw - previousDefaultChargeKw) <= BATTERY_POWER_STEP_KW / 2
+      const followsDischargeDefault = Math.abs(current.maxDischargeKw - previousDefaultDischargeKw) <= BATTERY_POWER_STEP_KW / 2
+
+      return {
+        ...current,
+        batteryCRate,
+        maxChargeKw: followsChargeDefault ? nextDefaultChargeKw : current.maxChargeKw,
+        maxDischargeKw: followsDischargeDefault ? nextDefaultDischargeKw : current.maxDischargeKw,
+      }
+    })
+  }
   const activeFlowKeys = FLOW_PERMISSION_OPTIONS
-    .filter(({ key }) => state.flowPermissions[key])
+    .filter(({ key }) => effectiveFlowPermissions[key])
     .map(({ key }) => key)
   const activeFlowSummary = formatFlowPermissionList(activeFlowKeys)
   const disabledFlowConsequences = getDisabledFlowConsequences(state.flowPermissions)
@@ -4369,6 +5056,90 @@ function PvBatteryCalculatorInner() {
       gridToHome: sumAnnualSlotMetric(dayResult, 'gridToLoadKwh'),
     }
   }, [dayResult])
+  const handleZipCommit = useCallback((zipCode: string) => {
+    setDraftState((current) => (
+      current.pvZipCode === zipCode
+        ? current
+        : { ...current, pvZipCode: zipCode }
+    ))
+  }, [])
+  const locationControl = (
+    <LocationZipControl
+      committedZip={state.pvZipCode}
+      onCommit={handleZipCommit}
+      radiationData={radiationData}
+      radiationLoading={radiationLoading}
+      tariffComponentsError={tariffComponentsError}
+    />
+  )
+  const tariffControls = (
+    <div className="border-t border-gray-200 pt-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Dynamic tariff
+          </label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button type="button" className="rounded-full text-gray-400 transition-colors hover:text-gray-700" aria-label="Dynamic tariff cost breakdown">
+                <CircleHelp className="h-3.5 w-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="max-w-[320px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
+              <div className="space-y-2">
+                <div>
+                  <p className="font-semibold text-slate-900">{selectedTariff?.label ?? 'Selected dynamic tariff'}</p>
+                  <p className="text-[10px] text-gray-500">
+                    End-customer import price = spot market + surcharges + grid fees + VAT.
+                  </p>
+                </div>
+                <div className="space-y-1 border-t border-gray-100 pt-2">
+                  {tariffBreakdownRows.map((row) => (
+                    <div key={row.label} className="flex items-center justify-between gap-3">
+                      <span>{row.label}</span>
+                      <span className="shrink-0 font-semibold tabular-nums text-slate-900">
+                        {row.value.toFixed(2)} ct/kWh
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-1 font-semibold text-slate-900">
+                    <span>Total netto add-on</span>
+                    <span className="shrink-0 tabular-nums">{totalSurchargesNetto(activeTariffSurcharges).toFixed(2)} ct/kWh</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-gray-500">
+                  {tariffComponents
+                    ? `ZIP ${tariffComponents.plz}: ${tariffComponents.location}${tariffComponents.dso ? ` · ${tariffComponents.dso}` : ''}.`
+                    : 'Enter a ZIP code to replace default grid fee and concession assumptions.'}
+                </p>
+              </div>
+            </TooltipContent>
+          </Tooltip>
+        </div>
+        {tariffComponentsLoading ? (
+          <span className="text-[10px] text-gray-400">Loading fees...</span>
+        ) : tariffComponents ? (
+          <span className="text-[10px] text-emerald-700">Local fees active</span>
+        ) : null}
+      </div>
+      {tariffComponents ? (
+        <p className="text-[10px] leading-4 text-emerald-700">
+          Regional tariff add-on: grid {tariffComponents.gridFeeNetto.toFixed(2)} ct/kWh, taxes {tariffComponents.taxesNetto.toFixed(2)} ct/kWh
+        </p>
+      ) : null}
+      <select
+        value={state.tariffId}
+        onChange={(event) => setDraftState((current) => ({ ...current, tariffId: event.target.value }))}
+        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
+      >
+        {tariffs.map((tariff) => (
+          <option key={tariff.id} value={tariff.id}>
+            {tariff.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
   return (
     <TooltipProvider delayDuration={120}>
       <div className="min-h-screen bg-[#F5F5F2]">
@@ -4423,6 +5194,8 @@ function PvBatteryCalculatorInner() {
                       maxLabel="15,000"
                     />
 
+                    {locationControl}
+
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -4433,18 +5206,20 @@ function PvBatteryCalculatorInner() {
                       <SegmentedPillGroup
                         options={[
                           {
-                            label: 'Full',
-                            active: state.planningModel === 'deterministic',
-                            onClick: () => setDraftState((current) => ({ ...current, planningModel: 'deterministic' })),
-                          },
-                          {
                             label: 'Day-Ahead',
                             active: state.planningModel === 'rolling',
                             onClick: () => setDraftState((current) => ({ ...current, planningModel: 'rolling' })),
                           },
+                          {
+                            label: 'Full',
+                            active: state.planningModel === 'deterministic',
+                            onClick: () => setDraftState((current) => ({ ...current, planningModel: 'deterministic' })),
+                          },
                         ]}
                       />
                     </div>
+
+                    {tariffControls}
 
                     {/* Horizontal line + Assets toggles */}
                     <div className="border-t border-gray-200 pt-4">
@@ -4456,32 +5231,40 @@ function PvBatteryCalculatorInner() {
                           type="button"
                           onClick={() => {
                             if (isPvSelected) {
-                              setDraftState((current) => ({ ...current, pvCapacityWp: 0 }))
+                              setDraftState((current) => applyBatteryOnlyDefaults({ ...current, pvCapacityWp: 0 }))
                               return
                             }
                             if (state.pvCapacityWp === 0) {
-                              setDraftState((current) => ({ ...current, pvCapacityWp: 8000 }))
+                              setDraftState((current) => applyPvInstallationDefaults({ ...current, pvCapacityWp: 8000 }, 'rooftop'))
                             }
                           }}
                           className={cn(
                             'flex w-full items-center justify-between rounded-lg border px-4 py-3 transition-colors',
                             isPvSelected
-                              ? 'border-gray-900 bg-gray-50 text-gray-900'
+                              ? 'border-amber-300 bg-amber-100/80 text-amber-950 shadow-sm shadow-amber-100 ring-1 ring-amber-200'
                               : 'border-gray-200 bg-white text-gray-900 hover:border-gray-300 hover:bg-gray-50',
                           )}
                         >
                           <div className="flex items-center gap-3">
-                            <SunMedium className={cn('h-5 w-5', isPvSelected ? 'text-gray-900' : 'text-gray-500')} />
+                            <span className={cn(
+                              'flex h-9 w-9 items-center justify-center rounded-full border transition-colors',
+                              isPvSelected ? 'border-amber-300 bg-amber-200/80' : 'border-gray-200 bg-gray-50',
+                            )}>
+                              <SunMedium className={cn('h-5 w-5', isPvSelected ? 'text-amber-700' : 'text-gray-500')} />
+                            </span>
                             <div className="text-left">
-                              <p className={cn('text-sm font-semibold', isPvSelected ? 'text-gray-900' : 'text-gray-700')}>
+                              <p className={cn('text-sm font-semibold', isPvSelected ? 'text-amber-950' : 'text-gray-700')}>
                                 PV system
                               </p>
-                              <p className="text-[11px] text-gray-500">
+                              <p className={cn('text-[11px]', isPvSelected ? 'text-amber-800/75' : 'text-gray-500')}>
                                 {isPvSelected ? `${(state.pvCapacityWp / 1000).toFixed(1)} kWp configured` : 'Not selected'}
                               </p>
                             </div>
                           </div>
-                          <span className={cn('text-xs font-medium', isPvSelected ? 'text-gray-900' : 'text-gray-500')}>
+                          <span className={cn(
+                            'inline-flex h-6 w-6 items-center justify-center rounded-full border text-sm font-semibold transition-colors',
+                            isPvSelected ? 'border-amber-300 bg-amber-200/80 text-amber-800' : 'border-transparent bg-gray-100 text-gray-500',
+                          )}>
                             {isPvSelected ? '−' : '+'}
                           </span>
                         </button>
@@ -4496,159 +5279,56 @@ function PvBatteryCalculatorInner() {
                             if (state.usableKwh === 0) {
                               setDraftState((current) => {
                                 const usableKwh = 10
-                                return {
+                                let batteryConnectionMode: BatteryConnectionMode = 'plugin'
+                                if (current.pvCapacityWp > 0 && current.pvInstallationMode === 'rooftop') {
+                                  batteryConnectionMode = 'wired'
+                                }
+                                const nextState = {
                                   ...current,
+                                  batteryConnectionMode,
                                   usableKwh,
                                   initialSocKwh: usableKwh / 2,
-                                  maxChargeKw: defaultBatteryChargeKw(usableKwh),
-                                  maxDischargeKw: defaultBatteryDischargeKw(current.batteryConnectionMode, usableKwh),
-                                  roundTripEff: defaultBatteryEfficiency(current.batteryConnectionMode),
+                                  maxChargeKw: defaultBatteryChargeKw(usableKwh, current.batteryCRate),
+                                  maxDischargeKw: defaultBatteryDischargeKw(batteryConnectionMode, usableKwh, current.batteryCRate),
+                                  roundTripEff: defaultBatteryEfficiency(batteryConnectionMode),
                                 }
+                                return nextState
                               })
                             }
                           }}
                           className={cn(
                             'flex w-full items-center justify-between rounded-lg border px-4 py-3 transition-colors',
                             isBatterySelected
-                              ? 'border-gray-900 bg-gray-50 text-gray-900'
+                              ? 'border-sky-300 bg-sky-100/80 text-sky-950 shadow-sm shadow-sky-100 ring-1 ring-sky-200'
                               : 'border-gray-200 bg-white text-gray-900 hover:border-gray-300 hover:bg-gray-50',
                           )}
                         >
                           <div className="flex items-center gap-3">
-                            <BatteryCharging className={cn('h-5 w-5', isBatterySelected ? 'text-gray-900' : 'text-gray-500')} />
+                            <span className={cn(
+                              'flex h-9 w-9 items-center justify-center rounded-full border transition-colors',
+                              isBatterySelected ? 'border-sky-300 bg-sky-200/80' : 'border-gray-200 bg-gray-50',
+                            )}>
+                              <BatteryCharging className={cn('h-5 w-5', isBatterySelected ? 'text-sky-700' : 'text-gray-500')} />
+                            </span>
                             <div className="text-left">
-                              <p className={cn('text-sm font-semibold', isBatterySelected ? 'text-gray-900' : 'text-gray-700')}>
+                              <p className={cn('text-sm font-semibold', isBatterySelected ? 'text-sky-950' : 'text-gray-700')}>
                                 Battery storage
                               </p>
-                              <p className="text-[11px] text-gray-500">
+                              <p className={cn('text-[11px]', isBatterySelected ? 'text-sky-800/75' : 'text-gray-500')}>
                                 {isBatterySelected ? `${state.usableKwh.toFixed(1)} kWh configured` : 'Not selected'}
                               </p>
                             </div>
                           </div>
-                          <span className={cn('text-xs font-medium', isBatterySelected ? 'text-gray-900' : 'text-gray-500')}>
+                          <span className={cn(
+                            'inline-flex h-6 w-6 items-center justify-center rounded-full border text-sm font-semibold transition-colors',
+                            isBatterySelected ? 'border-sky-300 bg-sky-200/80 text-sky-800' : 'border-transparent bg-gray-100 text-gray-500',
+                          )}>
                             {isBatterySelected ? '−' : '+'}
                           </span>
                         </button>
                       </div>
                     </div>
 
-                    {/* Dynamic tariff - after horizontal line */}
-                    <div className="border-t border-gray-200 pt-4 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                            Dynamic tariff
-                          </label>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <button type="button" className="rounded-full text-gray-400 transition-colors hover:text-gray-700" aria-label="Dynamic tariff cost breakdown">
-                                <CircleHelp className="h-3.5 w-3.5" />
-                              </button>
-                            </TooltipTrigger>
-                            <TooltipContent side="right" className="max-w-[320px] rounded-2xl border-gray-200 bg-white p-3 text-[11px] leading-5 text-gray-600">
-                              <div className="space-y-2">
-                                <div>
-                                  <p className="font-semibold text-slate-900">{selectedTariff?.label ?? 'Selected dynamic tariff'}</p>
-                                  <p className="text-[10px] text-gray-500">
-                                    End-customer import price = spot market + surcharges + grid fees + VAT.
-                                  </p>
-                                </div>
-                                <div className="space-y-1 border-t border-gray-100 pt-2">
-                                  {tariffBreakdownRows.map((row) => (
-                                    <div key={row.label} className="flex items-center justify-between gap-3">
-                                      <span>{row.label}</span>
-                                      <span className="shrink-0 font-semibold tabular-nums text-slate-900">
-                                        {row.value.toFixed(2)} ct/kWh
-                                      </span>
-                                    </div>
-                                  ))}
-                                  <div className="flex items-center justify-between gap-3 border-t border-gray-100 pt-1 font-semibold text-slate-900">
-                                    <span>Total netto add-on</span>
-                                    <span className="shrink-0 tabular-nums">{totalSurchargesNetto(activeTariffSurcharges).toFixed(2)} ct/kWh</span>
-                                  </div>
-                                </div>
-                                <p className="text-[10px] text-gray-500">
-                                  {tariffComponents
-                                    ? `ZIP ${tariffComponents.plz}: ${tariffComponents.location}${tariffComponents.dso ? ` · ${tariffComponents.dso}` : ''}.`
-                                    : 'Enter a ZIP code to replace default grid fee and concession assumptions.'}
-                                </p>
-                              </div>
-                            </TooltipContent>
-                          </Tooltip>
-                        </div>
-                        {tariffComponentsLoading ? (
-                          <span className="text-[10px] text-gray-400">Loading fees...</span>
-                        ) : tariffComponents ? (
-                          <span className="text-[10px] text-emerald-700">ZIP fees active</span>
-                        ) : null}
-                      </div>
-                      <select
-                        value={state.tariffId}
-                        onChange={(event) => setDraftState((current) => ({ ...current, tariffId: event.target.value }))}
-                        className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
-                      >
-                        {tariffs.map((tariff) => (
-                          <option key={tariff.id} value={tariff.id}>
-                            {tariff.label}
-                          </option>
-                        ))}
-                      </select>
-
-                      <div className="space-y-2 pt-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                            Location
-                          </label>
-                          {isZipInputCommitted && radiationData ? (
-                            <span className="text-[10px] text-gray-400">{radiationData.location.region}</span>
-                          ) : null}
-                        </div>
-                        <input
-                          type="text"
-                          maxLength={5}
-                          placeholder="ZIP code, e.g. 10115"
-                          value={zipInput}
-                          onChange={(event) => {
-                            const value = event.target.value.replace(/\D/g, '').slice(0, 5)
-                            setZipInput(value)
-                            if (value.length === 5) {
-                              setDraftState((current) => ({ ...current, pvZipCode: value }))
-                              return
-                            }
-                            if (value.length === 0 || state.pvZipCode) {
-                              setDraftState((current) => ({ ...current, pvZipCode: '' }))
-                            }
-                          }}
-                          className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-sm font-medium text-gray-700 outline-none transition-colors focus:border-gray-400"
-                        />
-                        {zipInput.length > 0 && zipInput.length < 5 ? (
-                          <p className="text-[10px] text-gray-400">Enter 5 digits to load regional values.</p>
-                        ) : null}
-                        {isZipInputCommitted && radiationLoading ? (
-                          <p className="text-[10px] text-gray-400">Loading PV radiation data...</p>
-                        ) : null}
-                        {isZipInputCommitted && tariffComponents ? (
-                          <p className="text-[10px] leading-4 text-emerald-700">
-                            Regional tariff add-ons: grid {tariffComponents.gridFeeNetto.toFixed(2)} ct/kWh, taxes {tariffComponents.taxesNetto.toFixed(2)} ct/kWh
-                          </p>
-                        ) : null}
-                        {isZipInputCommitted && tariffComponentsError ? (
-                          <p className="text-[10px] leading-4 text-amber-600">
-                            Regional grid fees unavailable; using default German tariff assumptions.
-                          </p>
-                        ) : null}
-                        {isZipInputCommitted && radiationData && !radiationData.isDefault ? (
-                          <p className="text-[10px] leading-4 text-emerald-700">
-                            PVGIS yield: {Math.round(radiationData.annualTotal)} kWh/kWp
-                          </p>
-                        ) : null}
-                        {isZipInputCommitted && radiationData?.isDefault ? (
-                          <p className="text-[10px] leading-4 text-amber-600">
-                            PVGIS unavailable for this ZIP; using default German radiation values.
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -4657,9 +5337,52 @@ function PvBatteryCalculatorInner() {
               {isPvSelected && (
                 <ControlBlock
                   label="PV system"
-                  icon={<SunMedium className="h-5 w-5 text-gray-400" />}
+                  icon={<SunMedium className="h-5 w-5 text-amber-700" />}
+                  tone="pv"
                 >
                   <div className="space-y-4">
+                    <div className="rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 whitespace-nowrap">
+                            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Installation</span>
+                            {state.pvInstallationMode === 'balcony' ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button type="button" className="rounded-full text-amber-600 transition-colors hover:text-amber-800" aria-label="Balcony AC limit details">
+                                    <CircleHelp className="h-3.5 w-3.5" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="right" className="max-w-[280px] rounded-2xl border-amber-200 bg-white p-3 text-[11px] leading-5 text-amber-900">
+                                  PV and battery share an 800 W plug-in output cap. Surplus PV can charge the battery; remaining surplus is spillover instead of an export route.
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="inline-flex shrink-0 rounded-full bg-gray-100 p-0.5">
+                          {[
+                            { mode: 'rooftop' as const, label: 'Rooftop' },
+                            { mode: 'balcony' as const, label: 'Balcony' },
+                          ].map((option) => (
+                            <button
+                              key={option.mode}
+                              type="button"
+                              onClick={() => setDraftState((current) => applyPvInstallationDefaults(current, option.mode))}
+                              className={cn(
+                                'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors',
+                                state.pvInstallationMode === option.mode
+                                  ? 'bg-white text-gray-900 shadow-sm ring-1 ring-gray-200'
+                                  : 'text-gray-400 hover:text-gray-600',
+                              )}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
                     <RangeControl
                       label="PV capacity"
                       value={`${(state.pvCapacityWp / 1000).toFixed(1)} kWp`}
@@ -4672,33 +5395,46 @@ function PvBatteryCalculatorInner() {
                       maxLabel="20 kWp"
                     />
 
-                    <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="text-[11px] font-semibold text-gray-800">Curtail PV at negative prices</p>
-                      </div>
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-label="Curtail PV at negative prices"
-                        aria-checked={state.curtailPvAtNegativePrices}
-                        onClick={() => setDraftState((current) => ({
-                          ...current,
-                          curtailPvAtNegativePrices: !current.curtailPvAtNegativePrices,
-                        }))}
-                        className={cn(
-                          'relative h-5 w-9 shrink-0 rounded-full transition-colors',
-                          state.curtailPvAtNegativePrices ? 'bg-slate-700' : 'bg-gray-300',
-                        )}
-                        title="When enabled, PV surplus is curtailed instead of exported during negative spot-price slots."
-                      >
-                        <span
+                    {state.pvZipCode && radiationData && !radiationData.isDefault ? (
+                      <p className="text-[10px] leading-4 text-emerald-700">
+                        PVGIS yield: {Math.round(radiationData.annualTotal)} kWh/kWp
+                      </p>
+                    ) : null}
+                    {state.pvZipCode && radiationData?.isDefault ? (
+                      <p className="text-[10px] leading-4 text-amber-600">
+                        PVGIS unavailable for this ZIP; using default German radiation values.
+                      </p>
+                    ) : null}
+
+                    {state.pvInstallationMode === 'rooftop' ? (
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50/70 px-3 py-2">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-semibold text-gray-800">Curtail PV at negative prices</p>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-label="Curtail PV at negative prices"
+                          aria-checked={state.curtailPvAtNegativePrices}
+                          onClick={() => setDraftState((current) => ({
+                            ...current,
+                            curtailPvAtNegativePrices: !current.curtailPvAtNegativePrices,
+                          }))}
                           className={cn(
-                            'absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
-                            state.curtailPvAtNegativePrices ? 'translate-x-4' : 'translate-x-0',
+                            'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+                            state.curtailPvAtNegativePrices ? 'bg-slate-700' : 'bg-gray-300',
                           )}
-                        />
-                      </button>
-                    </div>
+                          title="When enabled, PV surplus is curtailed instead of exported during negative spot-price slots."
+                        >
+                          <span
+                            className={cn(
+                              'absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform',
+                              state.curtailPvAtNegativePrices ? 'translate-x-4' : 'translate-x-0',
+                            )}
+                          />
+                        </button>
+                      </div>
+                    ) : null}
 
                     <div className="pt-2">
                       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-400">PV flow routing</p>
@@ -4709,7 +5445,7 @@ function PvBatteryCalculatorInner() {
                           { target: 'battery', routeKey: 'pvToBattery' },
                           { target: 'grid', routeKey: 'pvToGrid' },
                         ]}
-                        permissions={state.flowPermissions}
+                        permissions={effectiveFlowPermissions}
                         flowValues={dayFlowValues}
                         onToggle={(key) => setDraftState((current) => ({
                           ...current,
@@ -4733,19 +5469,19 @@ function PvBatteryCalculatorInner() {
               {isBatterySelected && (
                 <ControlBlock
                   label="Battery storage"
-                  icon={<BatteryCharging className="h-5 w-5 text-gray-400" />}
+                  icon={<BatteryCharging className="h-5 w-5 text-sky-700" />}
+                  tone="battery"
                 >
                   <div className="space-y-3.5">
                     <div className="rounded-lg border border-gray-200 bg-gray-50/70 p-2.5">
                       <div className="flex items-center justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Connection</p>
-                          <p className="mt-0.5 text-[11px] leading-4 text-gray-500">{batteryModeSummary}</p>
+                          <p className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Connection</p>
                         </div>
                         <div className="inline-flex shrink-0 rounded-full bg-gray-100 p-0.5">
                           {[
-                            { mode: 'plugin' as const, label: 'Plug-in' },
                             { mode: 'wired' as const, label: 'Wired' },
+                            { mode: 'plugin' as const, label: 'Plug-in' },
                           ].map((option) => (
                             <button
                               key={option.mode}
@@ -4777,14 +5513,17 @@ function PvBatteryCalculatorInner() {
                       maxLabel="20 kWh"
                     />
 
-                    {state.planningModel === 'rolling' ? (
-                      <div
-                        className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2"
-                        title="Initial state is fixed for the stitched rolling planner."
-                      >
-                        <p className="text-[11px] font-semibold text-emerald-800">50% initial SoC · {rollingInitialSocKwh.toFixed(1)} kWh</p>
-                      </div>
-                    ) : null}
+                    <RangeControl
+                      label="C-Rating"
+                      value={`${state.batteryCRate.toFixed(2)} C`}
+                      min={0.1}
+                      max={2}
+                      step={0.05}
+                      sliderValue={state.batteryCRate}
+                      onChange={handleBatteryCRateChange}
+                      minLabel="0.1 C"
+                      maxLabel="2 C"
+                    />
 
                     <div className="grid gap-4 sm:grid-cols-2">
                       <RangeControl
@@ -4797,7 +5536,6 @@ function PvBatteryCalculatorInner() {
                         onChange={(value) => setDraftState((current) => ({ ...current, maxChargeKw: value }))}
                         minLabel="0.1"
                         maxLabel={`${BATTERY_POWER_MAX_KW} kW`}
-                        help={`Full-battery input cap. ${state.batteryConnectionMode === 'plugin' ? `Default is 0.5 C (${batteryDefaultChargeKw.toFixed(1)} kW here), but you can override it.` : 'PV charging and grid charging share this one limit.'}`}
                       />
 
                       <RangeControl
@@ -4810,7 +5548,6 @@ function PvBatteryCalculatorInner() {
                         onChange={(value) => setDraftState((current) => ({ ...current, maxDischargeKw: value }))}
                         minLabel="0.1"
                         maxLabel={`${BATTERY_POWER_MAX_KW} kW`}
-                        help={`Full-battery output cap. ${state.batteryConnectionMode === 'plugin' ? `Plug-in default is ${batteryDefaultDischargeKw.toFixed(1)} kW, but you can override it.` : 'Household discharge and grid export share this one limit.'}`}
                       />
                     </div>
 
@@ -4832,10 +5569,10 @@ function PvBatteryCalculatorInner() {
                         source="battery"
                         routes={[
                           { target: 'home', routeKey: 'batteryToLoad' },
-                          { target: 'grid', routeKey: 'batteryToGrid' },
+                          ...(isPvSelected ? [{ target: 'grid' as const, routeKey: 'batteryToGrid' as const }] : []),
                           { target: 'grid', routeKey: 'gridToBattery', arrowDirection: 'up' },
                         ]}
-                        permissions={state.flowPermissions}
+                        permissions={effectiveFlowPermissions}
                         flowValues={dayFlowValues}
                         onToggle={(key) => setDraftState((current) => ({
                           ...current,
@@ -4859,6 +5596,10 @@ function PvBatteryCalculatorInner() {
 
             <section className="order-1 space-y-4 lg:order-2 lg:col-span-3">
               {selectedDayControls}
+              <CalculationStatusBanner
+                active={Boolean(calculationStatusLabel) && Boolean(annualResult)}
+                label={calculationStatusLabel ?? ''}
+              />
               {loading ? (
                 <StatusCard title="Loading calculator inputs" body="Fetching German price history and bundled household profiles." />
               ) : prices.error ? (
@@ -4871,39 +5612,41 @@ function PvBatteryCalculatorInner() {
                   body="The calculator needs a full year of German market prices before it can build an annual estimate."
                   tone="warning"
                 />
-              ) : annualResult ? (
+              ) : annualResult && savingsSummaryResult ? (
                 <>
-                  <AnnualSummaryCard annual={annualResult} units={units} />
                   <AnnualBillCard
-                    annual={annualResult}
+                    annual={savingsSummaryResult}
                     units={units}
                     pvCapacityWp={state.pvCapacityWp}
                     usableKwh={state.usableKwh}
+                    curtailPvAtNegativePrices={state.curtailPvAtNegativePrices}
+                    periodLabel={savingsSummaryPeriodLabel}
+                    controls={savingsSummaryControls}
                   />
-                  <AnnualExportCreditCard annual={annualResult} units={units} />
                   {allocationResult ? (
                     <DeliveredAllocationCard
                       annual={allocationResult}
                       units={units}
-                      flowPermissions={state.flowPermissions}
+                      flowPermissions={effectiveFlowPermissions}
                       isPvSelected={isPvSelected}
                       isBatterySelected={isBatterySelected}
                       pvCapacityWp={state.pvCapacityWp}
                       usableKwh={state.usableKwh}
                       title="Energy Flows"
                       timeline={allocationTimeline}
+                      sectionMode="breakdown"
                       controls={(
                         <SegmentedPillGroup
                           options={[
                             {
                               label: 'Selected day',
                               active: allocationWindow === 'day',
-                              onClick: () => setAllocationWindow('day'),
+                              onClick: () => handleAllocationWindowChange('day'),
                             },
                             {
                               label: 'Last 365 days',
                               active: allocationWindow === 'last365',
-                              onClick: () => setAllocationWindow('last365'),
+                              onClick: () => handleAllocationWindowChange('last365'),
                             },
                           ]}
                         />
@@ -4925,6 +5668,9 @@ function PvBatteryCalculatorInner() {
                     priceCurveMode="spot"
                     windowControls={consumptionWindowControls}
                     mode="optimizationFlow"
+                    curtailPvAtNegativePrices={state.curtailPvAtNegativePrices}
+                    isPvSelected={isPvSelected}
+                    isBatterySelected={isBatterySelected}
                   />
                   {showPlannerCards ? (
                     <>
@@ -4938,6 +5684,36 @@ function PvBatteryCalculatorInner() {
                         initialSocKwh={rollingInitialSocKwh}
                       />
                     </>
+                  ) : null}
+                  {allocationResult ? (
+                    <DeliveredAllocationCard
+                      annual={allocationResult}
+                      units={units}
+                      flowPermissions={effectiveFlowPermissions}
+                      isPvSelected={isPvSelected}
+                      isBatterySelected={isBatterySelected}
+                      pvCapacityWp={state.pvCapacityWp}
+                      usableKwh={state.usableKwh}
+                      title="Energy Flows"
+                      timeline={allocationTimeline}
+                      sectionMode="scene"
+                      controls={(
+                        <SegmentedPillGroup
+                          options={[
+                            {
+                              label: 'Selected day',
+                              active: allocationWindow === 'day',
+                              onClick: () => handleAllocationWindowChange('day'),
+                            },
+                            {
+                              label: 'Last 365 days',
+                              active: allocationWindow === 'last365',
+                              onClick: () => handleAllocationWindowChange('last365'),
+                            },
+                          ]}
+                        />
+                      )}
+                    />
                   ) : null}
 
                 </>

@@ -569,3 +569,139 @@ Tradeoff: reduced apparent coverage in sparse data years, but materially stronge
 - **Bugs Found:** 1 total (0 critical, 0 high, 1 medium, 0 low)
 - **Security:** Pass for applicable local-route scope
 - **Production Ready:** NO if lint is required; YES for calculation/optimization logic after resolving the lint gate.
+
+## QA Test Results Addendum - 2026-05-08
+
+Detailed calculation QA and dependency map: `docs/battery/pv-battery-calculation-qa-2026-05-08.md`
+
+### Scope
+
+- Re-tested `/battery/calculator` after the calculation-summary and UI indicator changes.
+- Focused on calculation interdependencies between annual replay, selected-day replay, last-365 summaries, curtailment behavior, formatting, and responsive chart rendering.
+
+### Commands And Results
+
+- `npx vitest run src/lib/__tests__/pv-battery-calculator.test.ts`: PASS, 19/19 tests.
+- `npm run lint`: PASS.
+- `npm run build`: PASS.
+- Playwright browser probes: PASS for basic render and targeted scenario extraction; FAIL for the bugs listed below.
+
+### Calculation Findings
+
+- Battery-only last-365 sanity now passes: `PV = 0`, `10 kWh` battery, `5750 kWh` load produced about `2,129 kWh` battery-to-household discharge and `EUR 205` savings.
+- Curtailment annual/last-365 sanity passes: `8 kWp PV`, `10 kWh` battery produced `EUR 1,421` savings with curtailment on vs `EUR 1,411` with curtailment off.
+- Selected-day curtailment display remains ambiguous: selected-day values can render identically after whole-euro and whole-kWh rounding.
+
+### Bugs Found
+
+#### BUG-2026-05-08-1: Last-365 result depends on stale calendar-year selection
+- **Severity:** High
+- **Steps to Reproduce:**
+  1. Open `/battery/calculator` with `PV = 8 kWp`, `Battery = 10 kWh`, selected date `2026-05-07`.
+  2. Select `Calendar Year`.
+  3. Select `2024`.
+  4. Select `Last 365 Days`.
+- **Expected:** Last-365 result remains based only on selected date minus 364 days, independent of the calendar-year segment.
+- **Actual:** Last-365 savings drops to about `EUR 951` with `3,847 kWh` baseline load, versus the normal approximately `EUR 1,421` / `5,752 kWh` result.
+- **Likely Cause:** `trailingSavingsResult` merges `annualResult.slots` with `savingsSummaryCalendarResult?.slots`; the latter follows `savingsSummaryCalendarYear`.
+
+#### BUG-2026-05-08-2: Selected-day quarter-hour view is a separate optimization replay
+- **Severity:** High
+- **Steps to Reproduce:**
+  1. Use quarter-hour resolution.
+  2. Inspect `dayResult` in `PvBatteryCalculator.tsx`.
+- **Expected:** PROJ-43 says selected-day chart should be an explanatory slice of the annual optimized replay.
+- **Actual:** Quarter-hour selected-day mode calls `optimizePvBatteryWithOptions` over the selected window with a fine SoC step, so selected-day values can diverge from annual / last-365 replay semantics.
+- **Impact:** Selected-day charts may be physically more granular but are not a faithful slice of the annual result.
+
+#### BUG-2026-05-08-3: Whole-unit formatting hides selected-day calculation changes
+- **Severity:** Medium
+- **Steps to Reproduce:**
+  1. Use `PV = 8 kWp`, `Battery = 10 kWh`, selected day `2026-05-07`.
+  2. Toggle `Curtail PV at negative prices` on and off.
+- **Expected:** If the underlying economics change, day-level values show enough precision for the user to see it.
+- **Actual:** Selected-day headline values can remain visually identical, e.g. `EUR 5`, `0 kWh import`, `13 kWh export`.
+- **Likely Cause:** `formatCurrencyAmount` and `formatKwh` round every displayed value to whole units.
+
+#### BUG-2026-05-08-4: Chart container warnings at all tested widths
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. Browser-smoke `/battery/calculator` at `375`, `768`, and `1440` px widths.
+- **Expected:** No chart sizing warnings.
+- **Actual:** Recharts warns that `width(-1)` and `height(-1)` should be greater than zero.
+- **Impact:** Page renders, but repeated warnings reduce signal in QA logs.
+
+#### BUG-2026-05-08-5: Local price-fetch fallback logs noisy stack traces
+- **Severity:** Low
+- **Steps to Reproduce:**
+  1. Run local dev server without `ENTSOE_API_TOKEN`.
+  2. Open `/battery/calculator`.
+- **Expected:** Controlled fallback warning.
+- **Actual:** Repeated stack traces for missing ENTSO-E token and Energy-Charts 404, even though the API returns `200` via fallback.
+
+### Production Readiness
+
+- **Production Ready:** NO for calculation sign-off.
+- **Blockers:** BUG-2026-05-08-1 and BUG-2026-05-08-2.
+- **Reason:** The optimizer itself passes unit-level invariants, but UI result composition can show a wrong last-365 period and selected-day results that are not slices of the annual replay.
+
+## Fix Verification Addendum - 2026-05-08
+
+The bugs from the QA addendum above were fixed and re-tested.
+
+### Fixes
+
+- BUG-2026-05-08-1 fixed: `Last 365 Days` now uses selected-date-year and trailing-start-year replay results, not the stale calendar-year selection.
+- BUG-2026-05-08-2 fixed: selected-day views now slice the yearly replay result instead of running an independent selected-day optimization.
+- BUG-2026-05-08-3 fixed: small currency and kWh values now retain decimal precision.
+- BUG-2026-05-08-4 fixed: chart wrappers now provide stable minimum and initial dimensions; targeted browser probe reported `0` Recharts sizing warnings.
+- BUG-2026-05-08-5 fixed: expected price-source fallback failures now log concise one-time fallback warnings rather than repeated stack traces.
+
+### Verification
+
+- `npx vitest run src/lib/__tests__/pv-battery-calculator.test.ts`: PASS, 19/19 tests.
+- `npm run lint`: PASS.
+- `npm run build`: PASS.
+- Browser stale-calendar probe: `Last 365 Days` stayed at `EUR 1,418`, `EUR 1,754` baseline, and `5,752 kWh` load before and after selecting `Calendar Year -> 2024`.
+- Browser selected-day precision probe: day-level values rendered with decimals, including `EUR 5.38`, `EUR 8.17`, and `15.1 kWh`.
+- Browser chart warning probe: PASS, `0` Recharts `width(-1)` / `height(-1)` warnings.
+
+### Updated Production Readiness
+
+- **Production Ready:** YES for the scoped calculation-review blockers above.
+- **Remaining semantic note:** selected-day detail is now a yearly-replay slice. Annual quarter-hour replay remains a future enhancement if the product needs high-resolution selected-day charts without changing accounting semantics.
+
+## Balcony PV Constraint Addendum - 2026-05-08
+
+Balcony PV mode models Balkon-PV as a shared AC output envelope:
+
+- PV-to-household, PV-to-grid, battery-to-household, and battery-to-grid share the same `800 W` output cap.
+- PV may still charge the battery while the plug-in AC output is serving household load.
+- Battery charge and discharge in the same interval remains disallowed.
+- In balcony PV mode, grid export routes are forced off; surplus PV after household use, battery charging, and the 800 W output cap is treated as spillover rather than a remunerated export route.
+- The negative-price curtailment switch is hidden in balcony PV mode because surplus handling is governed by the balcony output cap and spillover behavior.
+
+Verification:
+
+- `npx vitest run src/lib/__tests__/pv-battery-calculator.test.ts`: PASS, 22/22 tests.
+- `npm run lint`: PASS.
+- `npm run build`: PASS.
+
+## Balcony PV Selector Addendum - 2026-05-08
+
+Balcony PV behavior is now controlled by an explicit PV installation selector:
+
+- Rooftop PV is the default and has no balcony AC output restriction.
+- Balcony PV applies the shared `800 W` AC output cap and disables grid export routes; surplus becomes spillover after household use and battery charging.
+- The PV installation selector uses the same segmented style as the battery connection selector, with Rooftop / Wired as the default left-side choices.
+- The balcony AC limit explanation is shown as a tooltip rather than a persistent note.
+- ZIP-derived regional tariff add-ons are shown under the Dynamic tariff header; PVGIS yield is shown under PV capacity in the PV System card.
+- PV installation mode synchronizes the default battery connection: Rooftop PV selects Wired, Balcony PV selects Plug-in, and battery-only starts as Plug-in.
+- Savings summary section rows split avoided-cost value from export value and use quieter neutral row backgrounds to reduce color load.
+- Compact PV installation and battery connection selectors are one-line rows.
+- Optimized household accounting separates cost and value columns: optimized/import costs remain dark, avoided costs are muted, and export credits render as negative green value.
+- Optimized household section rows now use real table cells for Energy / Cost / Value / Avg Value so numbers align with column headers.
+- Total Savings detail uses the same table headers and tighter row padding for a more compact first scan.
+- Savings summary cards and nested category rows are collapsed by default.
+- Baseline and optimized detail labels use `Household consumption` and `Grid export`; optimized and total headings use `Avg price` for consistency.
+- Expandable summary table rows toggle from the full row area and support Enter / Space keyboard activation.

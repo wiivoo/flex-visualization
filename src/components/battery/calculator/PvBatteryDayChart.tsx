@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useId, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import {
   Area,
   Bar,
@@ -47,6 +47,9 @@ interface Props {
   windowControls?: ReactNode
   priceCurveMode?: 'spot' | 'end'
   mode?: 'full' | 'optimizationFlow'
+  curtailPvAtNegativePrices?: boolean
+  isPvSelected?: boolean
+  isBatterySelected?: boolean
 }
 
 interface ReferenceLabelProps {
@@ -68,10 +71,10 @@ const FLOW_EPSILON = 1e-6
 
 const COLORS = {
   pvDirect: '#F2B705',
-  pvStored: '#C96C1C',
+  pvStored: '#2563EB',
   pvCharge: '#2563EB',
   gridDirect: '#7D8797',
-  gridStored: '#2F6FB3',
+  gridStored: '#1D4ED8',
   export: '#059669',
   curtailed: '#94A3B8',
   lineSpot: '#0F172A',
@@ -80,8 +83,8 @@ const COLORS = {
   bandCharge: '#D8E5F8',
   bandBattery: '#F8DFCA',
   bandPv: '#FCEFC8',
-  markerCharge: '#2F6FB3',
-  markerDischarge: '#C96C1C',
+  markerCharge: '#2563EB',
+  markerDischarge: '#1D4ED8',
   markerPvExport: '#059669',
   surface: '#FFFFFF',
   surfaceMuted: '#FFFFFF',
@@ -96,6 +99,17 @@ const COLORS = {
   textMuted: '#64748B',
   textSoft: '#94A3B8',
 } as const
+
+const BATTERY_PV_STRIPE = '#E9B94A'
+const BATTERY_GRID_STRIPE = 'rgba(148,163,184,0.78)'
+
+function batteryPvStripeBackground() {
+  return `repeating-linear-gradient(135deg, ${COLORS.pvCharge} 0 7px, ${BATTERY_PV_STRIPE} 7px 9px)`
+}
+
+function batteryGridStripeBackground() {
+  return `repeating-linear-gradient(135deg, ${COLORS.gridStored} 0 7px, ${BATTERY_GRID_STRIPE} 7px 9px)`
+}
 
 function buildPositiveAxis(maxValue: number, targetTicks = 5) {
   if (!Number.isFinite(maxValue) || maxValue <= 0) {
@@ -226,7 +240,7 @@ function formatMetricKwh(value: number): string {
 function InlinePillGroup({
   options,
 }: {
-  options: Array<{ label: string; active: boolean; onClick: () => void }>
+  options: Array<{ label: string; active: boolean; onClick: () => void; disabled?: boolean }>
 }) {
   return (
     <div className="inline-flex items-center gap-1 bg-gray-100 rounded-full p-0.5">
@@ -234,10 +248,12 @@ function InlinePillGroup({
         <button
           key={option.label}
           type="button"
+          disabled={option.disabled}
           onClick={option.onClick}
           className={cn(
             'rounded-full px-2.5 py-1 text-[11px] font-semibold transition-colors whitespace-nowrap',
             option.active ? 'bg-white text-[#313131] shadow-sm ring-1 ring-gray-200' : 'text-gray-400 hover:text-gray-600',
+            option.disabled && 'cursor-not-allowed opacity-40 hover:text-gray-400',
           )}
         >
           {option.label}
@@ -284,6 +300,7 @@ function buildSlotWhyLines(
   slot: PvBatterySlotResult,
   units: PriceUnits,
   planningModel: 'deterministic' | 'rolling',
+  curtailPvAtNegativePrices: boolean,
 ): string[] {
   const lines: string[] = []
 
@@ -303,7 +320,9 @@ function buildSlotWhyLines(
     lines.push('PV exported after load and storage options were satisfied or blocked by the active constraints and value trade-offs.')
   }
   if (slot.curtailedKwh > 0) {
-    lines.push('Some PV was curtailed because export limits, routing permissions, or battery limits left surplus with nowhere feasible to go.')
+    lines.push(curtailPvAtNegativePrices
+      ? 'Some PV was curtailed because negative export prices, export limits, routing permissions, or battery limits left surplus with nowhere feasible to go.'
+      : 'Some PV became unexported surplus because export limits, routing permissions, or battery limits left surplus with nowhere feasible to go.')
   }
   if (lines.length === 0 && planningModel === 'rolling') {
     lines.push('The planner largely held its position in this slot. In rolling mode that often means the current run saw more value in waiting for later slots while still respecting the terminal SoC rule.')
@@ -409,10 +428,18 @@ export function PvBatteryDayChart({
   windowControls,
   priceCurveMode = 'spot',
   mode = 'full',
+  curtailPvAtNegativePrices = true,
+  isPvSelected = true,
+  isBatterySelected = true,
 }: Props) {
   const patternIdPrefix = useId()
   const pvChargePatternId = `${patternIdPrefix}-battery-pv-charge-stripes`
   const gridChargePatternId = `${patternIdPrefix}-battery-grid-charge-stripes`
+  const [chartsReady, setChartsReady] = useState(false)
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => setChartsReady(true))
+    return () => window.cancelAnimationFrame(frame)
+  }, [])
   const slots = useMemo(() => annualResult?.slots ?? [], [annualResult])
   const slotSelectionKey = `${slots.length}:${slots[0]?.timestamp ?? ''}`
   const [selectedState, setSelectedState] = useState({ key: '', index: 0 })
@@ -421,6 +448,11 @@ export function PvBatteryDayChart({
     setSelectedState({ key: slotSelectionKey, index })
   }, [slotSelectionKey])
   const [assetView, setAssetView] = useState<AssetOptimizationView>('pv')
+  const effectiveAssetView: AssetOptimizationView = !isPvSelected && isBatterySelected
+    ? 'battery'
+    : isPvSelected && !isBatterySelected
+      ? 'pv'
+      : assetView
   const [visibleSeries, setVisibleSeries] = useState<Record<HouseholdSeriesKey, boolean>>({
     pvLoad: true,
     batteryLoad: true,
@@ -484,9 +516,9 @@ export function PvBatteryDayChart({
   }, [runMap, slots])
   const slotWhyLines = useMemo(
     () => selectedSlot
-      ? buildSlotWhyLines(selectedSlot, units, annualResult?.planningModel ?? 'deterministic')
+      ? buildSlotWhyLines(selectedSlot, units, annualResult?.planningModel ?? 'deterministic', curtailPvAtNegativePrices)
       : [],
-    [annualResult?.planningModel, selectedSlot, units],
+    [annualResult?.planningModel, curtailPvAtNegativePrices, selectedSlot, units],
   )
   const flowChartLayout = {
     height: 420,
@@ -594,7 +626,7 @@ export function PvBatteryDayChart({
       value: assetSummary.pvToBatteryKwh,
       color: COLORS.pvCharge,
       swatchStyle: {
-        background: `repeating-linear-gradient(135deg, ${COLORS.pvDirect} 0 5px, ${COLORS.pvCharge} 5px 7px, ${COLORS.pvDirect} 7px 12px)`,
+        background: batteryPvStripeBackground(),
       },
       detail: null,
     },
@@ -607,7 +639,7 @@ export function PvBatteryDayChart({
     },
     {
       key: 'pv-curtailed',
-      label: 'Curtailed',
+      label: curtailPvAtNegativePrices ? 'Curtailed' : 'Unexported surplus',
       value: assetSummary.pvCurtailedKwh,
       color: COLORS.curtailed,
       detail: null,
@@ -617,6 +649,7 @@ export function PvBatteryDayChart({
     assetSummary.pvExportedKwh,
     assetSummary.pvToBatteryKwh,
     assetSummary.pvToHouseholdKwh,
+    curtailPvAtNegativePrices,
     pvExportAvgCtKwh,
     units,
   ])
@@ -627,7 +660,7 @@ export function PvBatteryDayChart({
       value: assetSummary.pvToBatteryKwh,
       color: COLORS.pvCharge,
       swatchStyle: {
-        background: `repeating-linear-gradient(135deg, ${COLORS.pvDirect} 0 5px, ${COLORS.pvCharge} 5px 7px, ${COLORS.pvDirect} 7px 12px)`,
+        background: batteryPvStripeBackground(),
       },
     },
     {
@@ -636,7 +669,7 @@ export function PvBatteryDayChart({
       value: assetSummary.gridChargeKwh,
       color: COLORS.gridStored,
       swatchStyle: {
-        background: `repeating-linear-gradient(135deg, ${COLORS.gridDirect} 0 5px, ${COLORS.pvCharge} 5px 7px, ${COLORS.gridDirect} 7px 12px)`,
+        background: batteryGridStripeBackground(),
       },
     },
     {
@@ -933,8 +966,9 @@ export function PvBatteryDayChart({
               {householdControls ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{householdControls}</div> : null}
             </div>
             <div>
-              <div className="relative h-[420px]">
-                <ResponsiveContainer width="100%" height="100%">
+              <div className="relative h-[420px] min-h-[420px] min-w-0">
+                {chartsReady ? (
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={420} initialDimension={{ width: 1, height: 420 }}>
                   <ComposedChart
                     data={householdData}
                     margin={{ top: 8, right: 26, bottom: 20, left: 10 }}
@@ -944,13 +978,13 @@ export function PvBatteryDayChart({
                     onClick={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                   >
                   <defs>
-                    <pattern id={pvChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                      <rect width="8" height="8" fill={COLORS.pvDirect} />
-                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    <pattern id={pvChargePatternId} width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                      <rect width="9" height="9" fill={COLORS.pvCharge} />
+                      <rect x="0" y="0" width="2" height="9" fill={BATTERY_PV_STRIPE} fillOpacity="1" />
                     </pattern>
-                    <pattern id={gridChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                      <rect width="8" height="8" fill={COLORS.gridDirect} />
-                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    <pattern id={gridChargePatternId} width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                      <rect width="9" height="9" fill={COLORS.gridStored} />
+                      <rect x="0" y="0" width="2" height="9" fill={BATTERY_GRID_STRIPE} fillOpacity="1" />
                     </pattern>
                   </defs>
                   <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
@@ -1063,6 +1097,7 @@ export function PvBatteryDayChart({
 
                   </ComposedChart>
                 </ResponsiveContainer>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1084,12 +1119,14 @@ export function PvBatteryDayChart({
                     options={[
                       {
                         label: 'PV',
-                        active: assetView === 'pv',
+                        active: effectiveAssetView === 'pv',
+                        disabled: !isPvSelected,
                         onClick: () => setAssetView('pv'),
                       },
                       {
                         label: 'Battery',
-                        active: assetView === 'battery',
+                        active: effectiveAssetView === 'battery',
+                        disabled: !isBatterySelected,
                         onClick: () => setAssetView('battery'),
                       },
                     ]}
@@ -1104,8 +1141,8 @@ export function PvBatteryDayChart({
 
           <div className="px-4 pb-3 pt-3 sm:px-5">
             <div>
-              <div className="relative h-[420px]">
-                {assetView === 'pv' ? (
+              <div className="relative h-[420px] min-h-[420px] min-w-0">
+                {effectiveAssetView === 'pv' ? (
                   <div className="pointer-events-none absolute left-[72px] top-4 z-20 flex max-w-[calc(100%-5.5rem)] flex-col items-start gap-1.5">
                     {pvSummaryPills.map((item) => (
                       <div
@@ -1137,7 +1174,8 @@ export function PvBatteryDayChart({
                     ))}
                   </div>
                 )}
-                <ResponsiveContainer width="100%" height="100%">
+                {chartsReady ? (
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={420} initialDimension={{ width: 1, height: 420 }}>
                   <ComposedChart
                     data={batteryFlowData}
                     margin={{ top: flowChartLayout.marginTop, right: 8, bottom: flowChartLayout.marginBottom, left: 6 }}
@@ -1147,13 +1185,13 @@ export function PvBatteryDayChart({
                     onClick={(state) => syncSelectedIndex(state?.activeTooltipIndex)}
                   >
                   <defs>
-                    <pattern id={pvChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                      <rect width="8" height="8" fill={COLORS.pvDirect} />
-                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    <pattern id={pvChargePatternId} width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                      <rect width="9" height="9" fill={COLORS.pvCharge} />
+                      <rect x="0" y="0" width="2" height="9" fill={BATTERY_PV_STRIPE} fillOpacity="1" />
                     </pattern>
-                    <pattern id={gridChargePatternId} width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                      <rect width="8" height="8" fill={COLORS.gridDirect} />
-                      <rect x="0" y="0" width="3" height="8" fill={COLORS.pvCharge} fillOpacity="1" />
+                    <pattern id={gridChargePatternId} width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                      <rect width="9" height="9" fill={COLORS.gridStored} />
+                      <rect x="0" y="0" width="2" height="9" fill={BATTERY_GRID_STRIPE} fillOpacity="1" />
                     </pattern>
                   </defs>
                   <CartesianGrid stroke={COLORS.border} strokeDasharray="3 3" />
@@ -1175,13 +1213,13 @@ export function PvBatteryDayChart({
                     yAxisId="flow"
                     orientation="right"
                     width={66}
-                    domain={assetView === 'pv' ? pvGenerationAxis.domain : batteryFlowAxis.domain}
-                    ticks={assetView === 'pv' ? pvGenerationAxis.ticks : batteryFlowAxis.ticks}
+                    domain={effectiveAssetView === 'pv' ? pvGenerationAxis.domain : batteryFlowAxis.domain}
+                    ticks={effectiveAssetView === 'pv' ? pvGenerationAxis.ticks : batteryFlowAxis.ticks}
                     tick={{ fontSize: 11, fill: COLORS.axis }}
                     tickLine={{ stroke: COLORS.textSoft }}
                     axisLine={{ stroke: COLORS.textSoft }}
-                    tickFormatter={(value: number) => formatKwhAxisTick(value, assetView === 'pv' ? pvGenerationAxis.step : batteryFlowAxis.step)}
-                    label={{ value: assetView === 'pv' ? 'PV generation (kWh)' : 'Battery SoC (kWh)', angle: 90, position: 'insideRight', fill: COLORS.axis, fontSize: 11 }}
+                    tickFormatter={(value: number) => formatKwhAxisTick(value, effectiveAssetView === 'pv' ? pvGenerationAxis.step : batteryFlowAxis.step)}
+                    label={{ value: effectiveAssetView === 'pv' ? 'PV generation (kWh)' : 'Battery SoC (kWh)', angle: 90, position: 'insideRight', fill: COLORS.axis, fontSize: 11 }}
                   />
                   <YAxis
                     yAxisId="price"
@@ -1196,7 +1234,7 @@ export function PvBatteryDayChart({
                     label={{ value: units.priceUnit, angle: -90, position: 'insideLeft', fill: COLORS.axis, fontSize: 10 }}
                   />
                   <ReferenceLine x={effectiveSelectedIndex} stroke={COLORS.lineSpot} strokeOpacity={0.26} strokeDasharray="3 4" />
-                  {assetView === 'battery' ? (
+                  {effectiveAssetView === 'battery' ? (
                     <ReferenceLine yAxisId="flow" y={0} stroke={COLORS.axis} strokeOpacity={0.26} />
                   ) : null}
                   <ReferenceDot
@@ -1207,7 +1245,7 @@ export function PvBatteryDayChart({
                     ifOverflow="hidden"
                     label={renderStartLabel('Price curve', COLORS.lineSpot, -10)}
                   />
-                  {assetView === 'battery' ? (
+                  {effectiveAssetView === 'battery' ? (
                     <ReferenceDot
                       yAxisId="flow"
                       x={0}
@@ -1236,7 +1274,7 @@ export function PvBatteryDayChart({
                     }}
                   />
 
-                  {assetView === 'pv' ? (
+                  {effectiveAssetView === 'pv' ? (
                     <>
                       <Bar
                         yAxisId="flow"
@@ -1276,7 +1314,7 @@ export function PvBatteryDayChart({
                       />
                       <Bar
                         yAxisId="flow"
-                        name="PV curtailed"
+                        name={curtailPvAtNegativePrices ? 'PV curtailed' : 'Unexported surplus'}
                         dataKey="curtailedKwh"
                         stackId="pvAllocation"
                         fill={COLORS.curtailed}
@@ -1333,7 +1371,7 @@ export function PvBatteryDayChart({
                     dot={false}
                     isAnimationActive={false}
                   />
-                  {assetView === 'pv' ? (
+                  {effectiveAssetView === 'pv' ? (
                     <Line
                       yAxisId="price"
                       name="PV sale on price curve"
@@ -1382,6 +1420,7 @@ export function PvBatteryDayChart({
                   )}
                   </ComposedChart>
                 </ResponsiveContainer>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1504,7 +1543,7 @@ export function PvBatteryDayChart({
                     { label: 'Grid → load', value: selectedSlot.gridToLoadKwh },
                     { label: 'Battery → load', value: selectedSlot.batteryToLoadKwh },
                     { label: 'Battery → grid', value: selectedSlot.batteryExportKwh },
-                    { label: 'Curtailment', value: selectedSlot.curtailedKwh },
+                    { label: curtailPvAtNegativePrices ? 'Curtailment' : 'Unexported surplus', value: selectedSlot.curtailedKwh },
                     { label: 'Direct self-use', value: selectedSlot.directSelfKwh },
                   ].map((flow) => (
                     <div key={flow.label} className="rounded-xl border border-[#EEE8D8] bg-[#FCF8ED] px-3 py-2.5">
@@ -1623,7 +1662,7 @@ export function PvBatteryDayChart({
                     'Batt→Grid',
                     'Grid→Load',
                     'PV→Grid',
-                    'Curtail',
+                    curtailPvAtNegativePrices ? 'Curtail' : 'Unexported',
                     `Import ${units.currencySym}`,
                     `Export ${units.currencySym}`,
                     `Net ${units.currencySym}`,
