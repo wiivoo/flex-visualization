@@ -92,6 +92,11 @@ function healthOk() {
   })
 }
 
+function isAccessGateDisabled() {
+  const value = process.env.DISABLE_ACCESS_GATE?.toLowerCase()
+  return value === 'true' || value === '1' || value === 'yes'
+}
+
 function safeRedirectUrl(request: NextRequest, value: string | null) {
   const fallbackUrl = new URL(DEFAULT_REDIRECT_PATH, request.url)
 
@@ -123,6 +128,10 @@ export async function proxy(request: NextRequest) {
 
   if (pathname === '/healthz' || userAgent.includes(AZURE_APP_GATEWAY_USER_AGENT)) {
     return healthOk()
+  }
+
+  if (isAccessGateDisabled()) {
+    return NextResponse.next()
   }
 
   const accessToken = process.env.ACCESS_TOKEN

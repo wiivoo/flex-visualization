@@ -20,11 +20,13 @@ This is not Entra/SSO and does not identify individual users. It grants access t
 - The session cookie is stateless and expires after 90 days.
 - `/logout` clears the session cookie.
 - `/healthz` and Azure Application Gateway health probes return `200 OK` without granting app access.
+- When `DISABLE_ACCESS_GATE=true` is set, the gate is bypassed for temporary Azure test deployments.
 
 ## Required Server Environment Variables
 
 - `ACCESS_TOKEN` - long random token embedded in the private magic link
 - `SESSION_SECRET` - long random server-only secret used to sign and verify the session cookie
+- `DISABLE_ACCESS_GATE` - optional temporary test flag; set to `true`, `1`, or `yes` to bypass the gate entirely
 
 Do not commit either value to the repo.
 
