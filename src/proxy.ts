@@ -61,20 +61,22 @@ async function verifySessionCookie(cookieValue: string | undefined, secret: stri
   }
 }
 
-function notFound() {
-  return new NextResponse(null, {
-    status: 404,
+function accessDenied() {
+  return new NextResponse('Access denied', {
+    status: 403,
     headers: {
       'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
     },
   })
 }
 
 function misconfigured() {
-  return new NextResponse(null, {
+  return new NextResponse('Access denied', {
     status: 500,
     headers: {
       'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
     },
   })
 }
@@ -109,11 +111,11 @@ export async function proxy(request: NextRequest) {
   const sessionSecret = process.env.SESSION_SECRET
 
   if (!accessToken && !sessionSecret) {
-    return process.env.NODE_ENV === 'production' ? notFound() : NextResponse.next()
+    return process.env.NODE_ENV === 'production' ? accessDenied() : NextResponse.next()
   }
 
   if (!accessToken || !sessionSecret) {
-    return process.env.NODE_ENV === 'production' ? notFound() : misconfigured()
+    return process.env.NODE_ENV === 'production' ? accessDenied() : misconfigured()
   }
 
   const { pathname, searchParams } = request.nextUrl
@@ -121,7 +123,7 @@ export async function proxy(request: NextRequest) {
 
   if (requestedAccessToken !== null) {
     if (requestedAccessToken !== accessToken) {
-      return notFound()
+      return accessDenied()
     }
 
     const redirectUrl = safeRedirectUrl(request, searchParams.get('next'))
@@ -147,7 +149,7 @@ export async function proxy(request: NextRequest) {
 
   const isAuthorized = await verifySessionCookie(request.cookies.get(ACCESS_COOKIE_NAME)?.value, sessionSecret)
   if (!isAuthorized) {
-    return notFound()
+    return accessDenied()
   }
 
   return NextResponse.next()
