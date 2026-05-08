@@ -4,6 +4,7 @@ const ACCESS_COOKIE_NAME = 'flex_access'
 const ACCESS_PATH_PREFIX = '/access/'
 const DEFAULT_REDIRECT_PATH = '/v2'
 const SESSION_MAX_AGE_SECONDS = 90 * 24 * 60 * 60
+const AZURE_APP_GATEWAY_USER_AGENT = 'Azure-Application-Gateway'
 
 const encoder = new TextEncoder()
 
@@ -81,6 +82,16 @@ function misconfigured() {
   })
 }
 
+function healthOk() {
+  return new NextResponse('OK', {
+    status: 200,
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+  })
+}
+
 function safeRedirectUrl(request: NextRequest, value: string | null) {
   const fallbackUrl = new URL(DEFAULT_REDIRECT_PATH, request.url)
 
@@ -107,6 +118,13 @@ function readAccessToken(pathname: string) {
 }
 
 export async function proxy(request: NextRequest) {
+  const { pathname, searchParams } = request.nextUrl
+  const userAgent = request.headers.get('user-agent') ?? ''
+
+  if (pathname === '/healthz' || userAgent.includes(AZURE_APP_GATEWAY_USER_AGENT)) {
+    return healthOk()
+  }
+
   const accessToken = process.env.ACCESS_TOKEN
   const sessionSecret = process.env.SESSION_SECRET
 
@@ -118,7 +136,6 @@ export async function proxy(request: NextRequest) {
     return process.env.NODE_ENV === 'production' ? accessDenied() : misconfigured()
   }
 
-  const { pathname, searchParams } = request.nextUrl
   const requestedAccessToken = readAccessToken(pathname)
 
   if (requestedAccessToken !== null) {

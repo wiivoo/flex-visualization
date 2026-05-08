@@ -19,6 +19,7 @@ This is not Entra/SSO and does not identify individual users. It grants access t
 - `/access/<ACCESS_TOKEN>?next=/some-path` redirects to the supplied relative path after setting the cookie.
 - The session cookie is stateless and expires after 90 days.
 - `/logout` clears the session cookie.
+- `/healthz` and Azure Application Gateway health probes return `200 OK` without granting app access.
 
 ## Required Server Environment Variables
 
@@ -40,6 +41,7 @@ Do not commit either value to the repo.
 - [x] A valid `/access/<ACCESS_TOKEN>` request sets a signed 90-day session cookie and redirects to `/v2`.
 - [x] A valid signed session cookie allows subsequent normal app URLs without the magic link.
 - [x] Invalid access tokens return `403 Access denied` and do not set a session cookie.
+- [x] Azure health probes can receive `200 OK` without bypassing the app access gate.
 - [x] Session cookies are signed, `HttpOnly`, `Secure`, `SameSite=Lax`, path-scoped to `/`, and stateless.
 
 ## Key Files
