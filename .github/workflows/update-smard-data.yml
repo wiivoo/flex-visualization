@@ -47,7 +47,8 @@ jobs:
         run: node scripts/update-gb.mjs
 
       - name: Update GB intraday auctions (EPEX IDA1 / IDA2)
-        run: node scripts/update-gb-intraday-auctions.mjs
+        run: timeout 5m node scripts/update-gb-intraday-auctions.mjs
+        timeout-minutes: 6
         continue-on-error: true
 
       - name: Update static intraday continuous files (DE / NL / GB)
