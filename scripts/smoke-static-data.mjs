@@ -20,6 +20,10 @@ function shiftDay(dateStr, deltaDays) {
   return fmtDay(d)
 }
 
+function dayOfWeek(dateStr) {
+  return new Date(`${dateStr}T12:00:00Z`).getUTCDay()
+}
+
 function readArray(path) {
   if (!existsSync(path)) {
     throw new Error(`Missing file: ${path}`)
@@ -91,7 +95,8 @@ const gbIntraday = load('public/data/gb-intraday-continuous.json')
 check(gbDaa1Hour.latest >= today, `GB DAA1 hourly is stale: latest=${gbDaa1Hour.latest}, expected >= ${today}`)
 check(gbDaa1Qh.latest >= today, `GB DAA1 quarterhour is stale: latest=${gbDaa1Qh.latest}, expected >= ${today}`)
 
-const minAcceptableDaa2 = shiftDay(gbDaa1Hour.latest, -1)
+// GB DAA2 can remain on Saturday while DAA1 already has Monday delivery prices.
+const minAcceptableDaa2 = shiftDay(gbDaa1Hour.latest, dayOfWeek(gbDaa1Hour.latest) === 1 ? -2 : -1)
 check(gbDaa2Hour.latest >= minAcceptableDaa2, `GB DAA2 hourly lags too far behind DAA1: latest=${gbDaa2Hour.latest}, expected >= ${minAcceptableDaa2}`)
 check(gbDaa2Qh.latest >= minAcceptableDaa2, `GB DAA2 quarterhour lags too far behind DAA1: latest=${gbDaa2Qh.latest}, expected >= ${minAcceptableDaa2}`)
 

@@ -201,7 +201,7 @@ That keeps the divergence predictable and limited to generated data rather than 
 ## Runtime Notes
 
 - Use an LTS Node version across local, CI, and hosting environments.
-- The included Dockerfile uses `node:22-alpine`.
+- The included Dockerfile uses `node:24-alpine`.
 - App Service must allow outbound access to the external data providers used by the API routes.
 
 ## Verification

@@ -5,7 +5,7 @@ pr:
 - master
 
 variables:
-  node_version: '22.x'
+  node_version: '24.x'
   container_image_name: 'flex-visualization'
   refresh_image_name: 'flex-visualization-refresh'
   deploy_enabled: 'false'
