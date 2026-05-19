@@ -93,7 +93,10 @@ function healthOk() {
 }
 
 function isAccessGateDisabled() {
+  // Azure deployment is public by default; shared-secret links are opt-in only.
   const value = process.env.DISABLE_ACCESS_GATE?.toLowerCase()
+  if (value === 'false' || value === '0' || value === 'no') return false
+  if (!value) return true
   return value === 'true' || value === '1' || value === 'yes'
 }
 
