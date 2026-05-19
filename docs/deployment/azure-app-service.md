@@ -45,6 +45,7 @@ Recommended App Service Application Settings:
 Notes:
 
 - `WEBSITES_PORT=3000` is required for this container on Azure App Service because the included Docker image listens on port `3000`, not port `80`.
+- Configure App Service or Application Gateway health probes to use `GET /healthz`; authenticated app pages such as `/` or `/v2` may return `403` when the access gate is enabled.
 - `ENTSOE_API_TOKEN` is optional for the web app, but useful for ENTSO-E-backed fallback paths.
 - `ENERGY_FORECAST_TOKEN` is optional. If omitted, the app still serves `/v2`; only the forecast extension for future `DE` / `NL` prices is skipped.
 - The daily Azure refresh pipeline does not need `ENERGY_FORECAST_TOKEN`.
