@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-31T15:41:56.158Z",
+  "generatedAt": "2026-08-01T14:49:57.959Z",
   "scenario": {
     "batteryCapacityKwh": 60,
     "chargePowerKw": 7,
@@ -553,409 +553,409 @@
       "year": 2026,
       "month": 7,
       "monthKey": "2026-07",
-      "avgSpreadCtKwh": 8.04,
+      "avgSpreadCtKwh": 8.07,
       "energyPerSessionKwh": 60,
       "sessionsInMonth": 17.7,
-      "savingsEur": 85.36,
+      "savingsEur": 85.74,
       "avgDayAheadCtKwh": 10.55
     },
     {
       "year": 2026,
       "month": 8,
       "monthKey": "2026-08",
-      "avgSpreadCtKwh": 5.62,
+      "avgSpreadCtKwh": 6.31,
       "energyPerSessionKwh": 60,
       "sessionsInMonth": 17.7,
-      "savingsEur": 59.68,
-      "avgDayAheadCtKwh": 11.8
+      "savingsEur": 67.01,
+      "avgDayAheadCtKwh": 11.13
     }
   ],
   "explainer": {
-    "monthKey": "2026-06",
+    "monthKey": "2026-07",
     "avgQhProfile": [
       {
         "qhIndex": 0,
-        "ctKwh": 11.61
+        "ctKwh": 13.39
       },
       {
         "qhIndex": 1,
-        "ctKwh": 11.31
+        "ctKwh": 13.08
       },
       {
         "qhIndex": 2,
-        "ctKwh": 11.22
+        "ctKwh": 13.06
       },
       {
         "qhIndex": 3,
-        "ctKwh": 11.06
+        "ctKwh": 12.86
       },
       {
         "qhIndex": 4,
-        "ctKwh": 11.22
+        "ctKwh": 13
       },
       {
         "qhIndex": 5,
-        "ctKwh": 11
+        "ctKwh": 12.88
       },
       {
         "qhIndex": 6,
-        "ctKwh": 10.95
+        "ctKwh": 12.78
       },
       {
         "qhIndex": 7,
-        "ctKwh": 10.87
+        "ctKwh": 12.68
       },
       {
         "qhIndex": 8,
-        "ctKwh": 10.97
+        "ctKwh": 12.72
       },
       {
         "qhIndex": 9,
-        "ctKwh": 11
+        "ctKwh": 12.76
       },
       {
         "qhIndex": 10,
-        "ctKwh": 11.07
+        "ctKwh": 12.83
       },
       {
         "qhIndex": 11,
-        "ctKwh": 11.24
+        "ctKwh": 13.08
       },
       {
         "qhIndex": 12,
-        "ctKwh": 11.13
+        "ctKwh": 12.86
       },
       {
         "qhIndex": 13,
-        "ctKwh": 11.16
+        "ctKwh": 13.1
       },
       {
         "qhIndex": 14,
-        "ctKwh": 11.34
+        "ctKwh": 13.43
       },
       {
         "qhIndex": 15,
-        "ctKwh": 11.61
-      },
-      {
-        "qhIndex": 16,
-        "ctKwh": 12.13
-      },
-      {
-        "qhIndex": 17,
-        "ctKwh": 12.41
-      },
-      {
-        "qhIndex": 18,
-        "ctKwh": 12.32
-      },
-      {
-        "qhIndex": 19,
-        "ctKwh": 12.03
-      },
-      {
-        "qhIndex": 20,
-        "ctKwh": 13.24
-      },
-      {
-        "qhIndex": 21,
-        "ctKwh": 12.35
-      },
-      {
-        "qhIndex": 22,
-        "ctKwh": 11.68
-      },
-      {
-        "qhIndex": 23,
-        "ctKwh": 10.63
-      },
-      {
-        "qhIndex": 24,
-        "ctKwh": 12.36
-      },
-      {
-        "qhIndex": 25,
-        "ctKwh": 11.13
-      },
-      {
-        "qhIndex": 26,
-        "ctKwh": 10.09
-      },
-      {
-        "qhIndex": 27,
-        "ctKwh": 8.65
-      },
-      {
-        "qhIndex": 28,
-        "ctKwh": 10.21
-      },
-      {
-        "qhIndex": 29,
-        "ctKwh": 8.87
-      },
-      {
-        "qhIndex": 30,
-        "ctKwh": 7.72
-      },
-      {
-        "qhIndex": 31,
-        "ctKwh": 6.57
-      },
-      {
-        "qhIndex": 32,
-        "ctKwh": 7.7
-      },
-      {
-        "qhIndex": 33,
-        "ctKwh": 6.67
-      },
-      {
-        "qhIndex": 34,
-        "ctKwh": 5.89
-      },
-      {
-        "qhIndex": 35,
-        "ctKwh": 4.96
-      },
-      {
-        "qhIndex": 36,
-        "ctKwh": 5.85
-      },
-      {
-        "qhIndex": 37,
-        "ctKwh": 5.13
-      },
-      {
-        "qhIndex": 38,
-        "ctKwh": 4.54
-      },
-      {
-        "qhIndex": 39,
-        "ctKwh": 3.97
-      },
-      {
-        "qhIndex": 40,
-        "ctKwh": 4.46
-      },
-      {
-        "qhIndex": 41,
-        "ctKwh": 3.88
-      },
-      {
-        "qhIndex": 42,
-        "ctKwh": 3.67
-      },
-      {
-        "qhIndex": 43,
-        "ctKwh": 3.31
-      },
-      {
-        "qhIndex": 44,
-        "ctKwh": 3.59
-      },
-      {
-        "qhIndex": 45,
-        "ctKwh": 3.3
-      },
-      {
-        "qhIndex": 46,
-        "ctKwh": 3.03
-      },
-      {
-        "qhIndex": 47,
-        "ctKwh": 2.74
-      },
-      {
-        "qhIndex": 48,
-        "ctKwh": 2.81
-      },
-      {
-        "qhIndex": 49,
-        "ctKwh": 3.05
-      },
-      {
-        "qhIndex": 50,
-        "ctKwh": 3.36
-      },
-      {
-        "qhIndex": 51,
-        "ctKwh": 3.8
-      },
-      {
-        "qhIndex": 52,
-        "ctKwh": 3.28
-      },
-      {
-        "qhIndex": 53,
-        "ctKwh": 4
-      },
-      {
-        "qhIndex": 54,
-        "ctKwh": 4.65
-      },
-      {
-        "qhIndex": 55,
-        "ctKwh": 5.57
-      },
-      {
-        "qhIndex": 56,
-        "ctKwh": 4.49
-      },
-      {
-        "qhIndex": 57,
-        "ctKwh": 5.75
-      },
-      {
-        "qhIndex": 58,
-        "ctKwh": 6.94
-      },
-      {
-        "qhIndex": 59,
-        "ctKwh": 8.62
-      },
-      {
-        "qhIndex": 60,
-        "ctKwh": 6.66
-      },
-      {
-        "qhIndex": 61,
-        "ctKwh": 8.75
-      },
-      {
-        "qhIndex": 62,
-        "ctKwh": 10.14
-      },
-      {
-        "qhIndex": 63,
-        "ctKwh": 11.7
-      },
-      {
-        "qhIndex": 64,
-        "ctKwh": 9.66
-      },
-      {
-        "qhIndex": 65,
-        "ctKwh": 11.19
-      },
-      {
-        "qhIndex": 66,
-        "ctKwh": 13.14
-      },
-      {
-        "qhIndex": 67,
-        "ctKwh": 15.65
-      },
-      {
-        "qhIndex": 68,
         "ctKwh": 13.66
       },
       {
+        "qhIndex": 16,
+        "ctKwh": 14.14
+      },
+      {
+        "qhIndex": 17,
+        "ctKwh": 14.43
+      },
+      {
+        "qhIndex": 18,
+        "ctKwh": 14.25
+      },
+      {
+        "qhIndex": 19,
+        "ctKwh": 13.78
+      },
+      {
+        "qhIndex": 20,
+        "ctKwh": 15.02
+      },
+      {
+        "qhIndex": 21,
+        "ctKwh": 14.2
+      },
+      {
+        "qhIndex": 22,
+        "ctKwh": 13.4
+      },
+      {
+        "qhIndex": 23,
+        "ctKwh": 12.28
+      },
+      {
+        "qhIndex": 24,
+        "ctKwh": 14.12
+      },
+      {
+        "qhIndex": 25,
+        "ctKwh": 12.78
+      },
+      {
+        "qhIndex": 26,
+        "ctKwh": 11.42
+      },
+      {
+        "qhIndex": 27,
+        "ctKwh": 9.47
+      },
+      {
+        "qhIndex": 28,
+        "ctKwh": 11.2
+      },
+      {
+        "qhIndex": 29,
+        "ctKwh": 9.4
+      },
+      {
+        "qhIndex": 30,
+        "ctKwh": 7.98
+      },
+      {
+        "qhIndex": 31,
+        "ctKwh": 6.58
+      },
+      {
+        "qhIndex": 32,
+        "ctKwh": 7.81
+      },
+      {
+        "qhIndex": 33,
+        "ctKwh": 6.5
+      },
+      {
+        "qhIndex": 34,
+        "ctKwh": 5.62
+      },
+      {
+        "qhIndex": 35,
+        "ctKwh": 4.67
+      },
+      {
+        "qhIndex": 36,
+        "ctKwh": 5.23
+      },
+      {
+        "qhIndex": 37,
+        "ctKwh": 4.49
+      },
+      {
+        "qhIndex": 38,
+        "ctKwh": 3.98
+      },
+      {
+        "qhIndex": 39,
+        "ctKwh": 3.39
+      },
+      {
+        "qhIndex": 40,
+        "ctKwh": 3.59
+      },
+      {
+        "qhIndex": 41,
+        "ctKwh": 3.02
+      },
+      {
+        "qhIndex": 42,
+        "ctKwh": 2.69
+      },
+      {
+        "qhIndex": 43,
+        "ctKwh": 2.31
+      },
+      {
+        "qhIndex": 44,
+        "ctKwh": 2.42
+      },
+      {
+        "qhIndex": 45,
+        "ctKwh": 2.17
+      },
+      {
+        "qhIndex": 46,
+        "ctKwh": 1.92
+      },
+      {
+        "qhIndex": 47,
+        "ctKwh": 1.67
+      },
+      {
+        "qhIndex": 48,
+        "ctKwh": 1.83
+      },
+      {
+        "qhIndex": 49,
+        "ctKwh": 1.85
+      },
+      {
+        "qhIndex": 50,
+        "ctKwh": 1.98
+      },
+      {
+        "qhIndex": 51,
+        "ctKwh": 2.15
+      },
+      {
+        "qhIndex": 52,
+        "ctKwh": 2.08
+      },
+      {
+        "qhIndex": 53,
+        "ctKwh": 2.38
+      },
+      {
+        "qhIndex": 54,
+        "ctKwh": 2.77
+      },
+      {
+        "qhIndex": 55,
+        "ctKwh": 3.37
+      },
+      {
+        "qhIndex": 56,
+        "ctKwh": 2.97
+      },
+      {
+        "qhIndex": 57,
+        "ctKwh": 3.84
+      },
+      {
+        "qhIndex": 58,
+        "ctKwh": 4.8
+      },
+      {
+        "qhIndex": 59,
+        "ctKwh": 5.86
+      },
+      {
+        "qhIndex": 60,
+        "ctKwh": 5.08
+      },
+      {
+        "qhIndex": 61,
+        "ctKwh": 6.65
+      },
+      {
+        "qhIndex": 62,
+        "ctKwh": 7.72
+      },
+      {
+        "qhIndex": 63,
+        "ctKwh": 9.32
+      },
+      {
+        "qhIndex": 64,
+        "ctKwh": 8.2
+      },
+      {
+        "qhIndex": 65,
+        "ctKwh": 10.55
+      },
+      {
+        "qhIndex": 66,
+        "ctKwh": 12.39
+      },
+      {
+        "qhIndex": 67,
+        "ctKwh": 13.97
+      },
+      {
+        "qhIndex": 68,
+        "ctKwh": 12.7
+      },
+      {
         "qhIndex": 69,
-        "ctKwh": 15.93
+        "ctKwh": 14.39
       },
       {
         "qhIndex": 70,
-        "ctKwh": 19.51
+        "ctKwh": 15.81
       },
       {
         "qhIndex": 71,
-        "ctKwh": 23.3
+        "ctKwh": 17.53
       },
       {
         "qhIndex": 72,
-        "ctKwh": 20.29
+        "ctKwh": 16.1
       },
       {
         "qhIndex": 73,
-        "ctKwh": 22.54
+        "ctKwh": 16.97
       },
       {
         "qhIndex": 74,
-        "ctKwh": 24.68
+        "ctKwh": 17.81
       },
       {
         "qhIndex": 75,
-        "ctKwh": 25.85
+        "ctKwh": 18.58
       },
       {
         "qhIndex": 76,
-        "ctKwh": 24.9
+        "ctKwh": 18.05
       },
       {
         "qhIndex": 77,
-        "ctKwh": 23.62
+        "ctKwh": 17.57
       },
       {
         "qhIndex": 78,
-        "ctKwh": 21.93
+        "ctKwh": 17.26
       },
       {
         "qhIndex": 79,
-        "ctKwh": 19.81
+        "ctKwh": 16.76
       },
       {
         "qhIndex": 80,
-        "ctKwh": 21.48
+        "ctKwh": 17.62
       },
       {
         "qhIndex": 81,
-        "ctKwh": 18.94
+        "ctKwh": 16.74
       },
       {
         "qhIndex": 82,
-        "ctKwh": 16.57
+        "ctKwh": 16.38
       },
       {
         "qhIndex": 83,
-        "ctKwh": 14.91
+        "ctKwh": 15.51
       },
       {
         "qhIndex": 84,
-        "ctKwh": 15.83
+        "ctKwh": 15.98
       },
       {
         "qhIndex": 85,
-        "ctKwh": 14.58
+        "ctKwh": 15.2
       },
       {
         "qhIndex": 86,
-        "ctKwh": 13.86
+        "ctKwh": 14.94
       },
       {
         "qhIndex": 87,
-        "ctKwh": 12.95
+        "ctKwh": 14.25
       },
       {
         "qhIndex": 88,
-        "ctKwh": 14.24
+        "ctKwh": 15.26
       },
       {
         "qhIndex": 89,
-        "ctKwh": 13.17
+        "ctKwh": 14.72
       },
       {
         "qhIndex": 90,
-        "ctKwh": 12.57
+        "ctKwh": 14.16
       },
       {
         "qhIndex": 91,
-        "ctKwh": 11.92
+        "ctKwh": 13.58
       },
       {
         "qhIndex": 92,
-        "ctKwh": 12.64
+        "ctKwh": 14.37
       },
       {
         "qhIndex": 93,
-        "ctKwh": 12.11
+        "ctKwh": 13.79
       },
       {
         "qhIndex": 94,
-        "ctKwh": 11.75
+        "ctKwh": 13.52
       },
       {
         "qhIndex": 95,
-        "ctKwh": 11.34
+        "ctKwh": 13.13
       }
     ],
     "chargingWindow": {
@@ -966,9 +966,9 @@
       "startQh": 72,
       "endQh": 10
     },
-    "spreadCtKwh": 15.22,
+    "spreadCtKwh": 6.3,
     "energyPerSessionKwh": 60,
-    "sessionsInMonth": 17.1,
-    "reconciledSavingsEur": 156.2
+    "sessionsInMonth": 17.7,
+    "reconciledSavingsEur": 66.94
   }
 }
