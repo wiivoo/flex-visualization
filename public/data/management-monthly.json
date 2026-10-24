@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-23T18:00:32.674Z",
+  "generatedAt": "2026-10-24T16:55:38.186Z",
   "scenario": {
     "batteryCapacityKwh": 60,
     "chargePowerKw": 7,
@@ -583,11 +583,11 @@
       "year": 2026,
       "month": 10,
       "monthKey": "2026-10",
-      "avgSpreadCtKwh": 12.11,
+      "avgSpreadCtKwh": 11.71,
       "energyPerSessionKwh": 60,
       "sessionsInMonth": 17.7,
-      "savingsEur": 128.6,
-      "avgDayAheadCtKwh": 16.16
+      "savingsEur": 124.34,
+      "avgDayAheadCtKwh": 15.56
     }
   ],
   "explainer": {
